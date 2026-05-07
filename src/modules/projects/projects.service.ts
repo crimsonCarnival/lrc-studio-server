@@ -94,14 +94,18 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       uploadObj = { ...upload, id: upload._id.toString() };
       delete uploadObj._id;
     }
+    const lineCount = lyrics?.lines?.length || 0;
+    const syncedLineCount = lyrics?.lines?.filter((l: any) => l.timestamp != null).length || 0;
+
     return {
+      id: s._id.toString(),
       projectId: s.projectId,
       title: s.title,
       metadata: s.metadata || {},
       upload: uploadObj,
       editorMode: lyrics?.editorMode || 'lrc',
-      lineCount: lyrics?.lineCount || 0,
-      syncedLineCount: lyrics?.syncedLineCount || 0,
+      lineCount,
+      syncedLineCount,
       readOnly: s.readOnly,
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,

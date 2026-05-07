@@ -39,6 +39,8 @@ export const schema = `
     type: String
     readOnly: Boolean
     public: Boolean
+    lineCount: Int
+    syncedLineCount: Int
     lastEditedBy: ID
     expiresAt: String
     createdAt: String
@@ -106,6 +108,7 @@ export const schema = `
     user: User
     createdAt: String
     updatedAt: String
+    projects: [Project!]!
   }
 
   type Settings {

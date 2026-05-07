@@ -111,6 +111,7 @@ export interface ProjectPublic {
 }
 
 export interface ProjectListItem {
+  id: string;
   projectId: string;
   title?: string;
   metadata?: ProjectMetadata;

@@ -7,6 +7,7 @@ import Settings from '../modules/settings/settings.model.js';
 import { fetchYouTubeTitle } from '../utils/youtube.js';
 import {
   createProject as createProjectService,
+  listProjects,
   patchProject,
   deleteProject as deleteProjectService,
 } from '../modules/projects/projects.service.js';
@@ -37,10 +38,8 @@ export const resolvers = {
 
     projects: async (_root: any, { limit = 20, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
       if (!context.userId) return [];
-      return Project.find({ userId: context.userId })
-        .sort({ updatedAt: -1 })
-        .skip(offset)
-        .limit(limit);
+      // Use the service which includes line counts and proper mapping
+      return listProjects(context.userId);
     },
 
     upload: async (_root: any, { id }: { id: string }) => {
@@ -128,10 +127,13 @@ export const resolvers = {
       if (!context.userId) throw new Error('Unauthorized');
       const { source, youtubeUrl, cloudinaryUrl, spotifyTrackId } = input;
 
-      // Auto-resolve the title from the YouTube API if not provided
+      // Auto-resolve or refresh the title from the YouTube API
       let resolvedTitle = input.title || '';
-      if (source === 'youtube' && youtubeUrl && !resolvedTitle) {
-        resolvedTitle = (await fetchYouTubeTitle(youtubeUrl)) || '';
+      const isGeneric = !resolvedTitle || ['Sin título', 'Untitled', '無題', 'test'].includes(resolvedTitle);
+      
+      if (source === 'youtube' && youtubeUrl && isGeneric) {
+        const fetched = await fetchYouTubeTitle(youtubeUrl);
+        if (fetched) resolvedTitle = fetched;
       }
 
       const query: Record<string, any> = { userId: context.userId, source };
@@ -159,7 +161,7 @@ export const resolvers = {
 
   Project: {
     // Map Mongoose _id to GraphQL id
-    id: (project: any) => project._id?.toString() ?? project.id,
+    id: (project: any) => project._id?.toString() || project.id || null,
     createdAt: (project: any) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
     updatedAt: (project: any) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
     // lyrics is fetched by projectId (more reliable than lyricsId in plain objects)
@@ -172,13 +174,27 @@ export const resolvers = {
     upload: async (project: any) => {
       if (project.uploadId) return Upload.findById(project.uploadId);
       return null;
+    },
+    lineCount: async (project: any) => {
+      const lyrics = await Lyrics.findOne({ projectId: project.projectId });
+      return lyrics?.lines?.length ?? 0;
+    },
+    syncedLineCount: async (project: any) => {
+      const lyrics = await Lyrics.findOne({ projectId: project.projectId });
+      if (!lyrics?.lines) return 0;
+      return lyrics.lines.filter((l: any) => l.timestamp !== null && l.timestamp !== undefined).length;
     }
   },
 
   Upload: {
-    id: (upload: any) => upload._id?.toString() ?? upload.id,
+    id: (upload: any) => upload._id?.toString() || upload.id || null,
     createdAt: (upload: any) => upload.createdAt ? new Date(upload.createdAt).toISOString() : null,
     updatedAt: (upload: any) => upload.updatedAt ? new Date(upload.updatedAt).toISOString() : null,
+    projects: async (upload: any) => {
+      const uploadId = upload._id ?? upload.id;
+      if (!uploadId) return [];
+      return Project.find({ uploadId }).sort({ updatedAt: -1 });
+    }
   },
 
   Lyrics: {
