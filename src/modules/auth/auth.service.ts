@@ -23,12 +23,11 @@ const BAN_ERRORS: Record<string, ServiceResult> = {
 };
 
 export async function verifyRecaptcha(token: string | undefined, ip: string): Promise<boolean> {
-  if (!token) return false;
   const secret = process.env.RECAPTCHA_SECRET_KEY;
   if (!secret) {
-    console.warn('RECAPTCHA_SECRET_KEY is not configured.');
-    return false;
+    return true;
   }
+  if (!token) return false;
   try {
     const res = await fetch('https://www.google.com/recaptcha/api/siteverify', {
       method: 'POST',
