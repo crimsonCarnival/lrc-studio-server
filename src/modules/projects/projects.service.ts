@@ -11,7 +11,7 @@ export async function createProject(
   userId: string | null | undefined,
   ip: string
 ): Promise<{ projectId: string; url: string } | ServiceResult> {
-  const { title, uploadId, lyrics, state, metadata, readOnly, recaptchaToken } = data;
+  const { title, uploadId, lyrics, state, metadata, readOnly, public: isPublic, recaptchaToken } = data;
 
   if (!(await verifyRecaptcha(recaptchaToken, ip))) {
     return { error: 'recaptcha_failed', status: 403, code: 'recaptcha_failed' } as ServiceResult;
@@ -24,6 +24,7 @@ export async function createProject(
     state: state || {},
     metadata: metadata || {},
     readOnly: readOnly ?? true,
+    public: isPublic ?? true,
     type: userId ? 'saved' : 'temporary',
   };
 
@@ -339,7 +340,8 @@ export async function deleteProject(
 
 export async function getShareProject(projectId: string): Promise<ProjectPublic | null> {
   const project = await Project.findOne({ projectId })
-    .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title');
+    .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title')
+    .populate('userId', 'username avatarUrl');
 
   if (!project || project.public === false) return null;
 
@@ -366,6 +368,16 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
   pub.lyrics = lyrics
     ? { editorMode: lyrics.editorMode, language: lyrics.language || null, lines: lyrics.lines }
     : { editorMode: 'lrc', language: null, lines: [] };
+
+  if (project.userId && typeof project.userId === 'object') {
+    pub.user = {
+      id: (project.userId as any)._id?.toString() || (project.userId as any).id,
+      username: (project.userId as any).username,
+      avatarUrl: (project.userId as any).avatarUrl,
+    };
+  } else {
+    pub.user = null;
+  }
 
   delete pub.userId;
   delete pub.lastEditedBy;

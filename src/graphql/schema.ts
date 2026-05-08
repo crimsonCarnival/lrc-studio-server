@@ -279,6 +279,7 @@ export const schema = `
     upload(id: ID!): Upload
     uploads(limit: Int, offset: Int): [Upload!]!
     settings: Settings
+    getShare(id: ID!): Project
   }
 
 
@@ -537,5 +538,6 @@ export const schema = `
     resetSettings: Boolean!
     saveMedia(input: SaveMediaInput!): Upload!
     deleteMedia(id: ID!): Boolean!
+    cloneProject(id: ID!): Project!
   }
 `;

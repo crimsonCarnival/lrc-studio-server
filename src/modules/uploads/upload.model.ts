@@ -5,7 +5,7 @@ const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
 const urlSetter = (v: unknown) => sanitizeUrl(v as string);
 
 export interface IUpload {
-  userId: mongoose.Types.ObjectId;
+  userId?: mongoose.Types.ObjectId | null;
   source: 'cloudinary' | 'youtube' | 'spotify';
   cloudinaryUrl?: string | null;
   publicId?: string | null;
@@ -28,7 +28,7 @@ const uploadSchema = new mongoose.Schema<IUpload, UploadModel, IUploadMethods>(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      default: null,
       index: true,
     },
     source: {

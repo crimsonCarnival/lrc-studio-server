@@ -109,6 +109,7 @@ projectSchema.methods.isOwnedBy = function (this: mongoose.Document & { userId?:
 
 projectSchema.methods.toPublic = function (this: mongoose.Document) {
   const obj = this.toObject();
+  obj.id = obj._id?.toString() || this.id;
   delete obj.__v;
   delete obj._id;
   return obj;

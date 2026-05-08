@@ -123,10 +123,11 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
   };
 }
 
-export async function createMedia(userId: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
+export async function createMedia(userId: string | null | undefined, data: Record<string, unknown>): Promise<Record<string, unknown>> {
   const { source, cloudinaryUrl, publicId, youtubeUrl, spotifyTrackId, artist, fileName, title, duration } = data as Record<string, string | undefined>;
-
-  const query: Record<string, unknown> = { userId, source };
+  const query: Record<string, unknown> = { source };
+  if (userId) query.userId = userId;
+  else query.userId = null;
 
   if (source === 'youtube' && youtubeUrl) {
     const ytPattern = /(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/|watch\?.+&v=)|youtu\.be\/)([^&?/\s]{11})/;
@@ -172,7 +173,7 @@ export async function createMedia(userId: string, data: Record<string, unknown>)
   const upload = await Upload.findOneAndUpdate(
     query,
     {
-      userId,
+      userId: userId || null,
       source,
       cloudinaryUrl: cloudinaryUrl || null,
       publicId: publicId || null,

@@ -10,6 +10,8 @@ import {
   listProjects,
   patchProject,
   deleteProject as deleteProjectService,
+  getShareProject,
+  cloneProject,
 } from '../modules/projects/projects.service.js';
 
 interface Context extends MercuriusContext {
@@ -58,12 +60,14 @@ export const resolvers = {
       if (!context.userId) return null;
       return Settings.findOne({ userId: context.userId });
     },
+    getShare: async (_root: any, { id }: { id: string }) => {
+      return getShareProject(id);
+    },
   },
 
   Mutation: {
     // Delegates to the full service: verifies reCAPTCHA, creates Lyrics doc, links lyricsId
     createProject: async (_root: any, { input }: { input: any }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
       const result = await createProjectService(input, context.userId, context.ip || '');
       if ('error' in result) throw new Error((result as any).error);
       return Project.findOne({ projectId: (result as any).projectId });
@@ -72,7 +76,6 @@ export const resolvers = {
     // id = projectId (nanoid string). Delegates to patchProject service for version locking,
     // single-line atomic updates, and lyrics patching.
     updateProject: async (_root: any, { id, input }: { id: string; input: any }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
       const result = await patchProject(id, input, context.userId);
       if ('error' in result) {
         const err = result as any;
@@ -124,7 +127,7 @@ export const resolvers = {
 
     // Uses upsert to deduplicate by source+URL, matching the REST service behavior
     saveMedia: async (_root: any, { input }: { input: any }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
+      if (!context.userId && input.source !== 'youtube') throw new Error('Unauthorized');
       const { source, youtubeUrl, cloudinaryUrl, spotifyTrackId } = input;
 
       // Auto-resolve or refresh the title from the YouTube API
@@ -136,14 +139,14 @@ export const resolvers = {
         if (fetched) resolvedTitle = fetched;
       }
 
-      const query: Record<string, any> = { userId: context.userId, source };
+      const query: Record<string, any> = { userId: context.userId || null, source };
       if (source === 'youtube' && youtubeUrl) query.youtubeUrl = youtubeUrl;
       else if (source === 'cloudinary' && cloudinaryUrl) query.cloudinaryUrl = cloudinaryUrl;
       else if (source === 'spotify' && spotifyTrackId) query.spotifyTrackId = spotifyTrackId;
 
       return Upload.findOneAndUpdate(
         query,
-        { ...input, title: resolvedTitle, userId: context.userId },
+        { ...input, title: resolvedTitle, userId: context.userId || null },
         { upsert: true, new: true }
       );
     },
@@ -152,6 +155,12 @@ export const resolvers = {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await Upload.deleteOne({ _id: id, userId: context.userId });
       return result.deletedCount === 1;
+    },
+    cloneProject: async (_root: any, { id }: { id: string }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      const result = await cloneProject(id, context.userId);
+      if ('error' in result) throw new Error((result as any).error);
+      return Project.findOne({ projectId: (result as any).projectId });
     },
   },
 
@@ -166,12 +175,14 @@ export const resolvers = {
     updatedAt: (project: any) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
     // lyrics is fetched by projectId (more reliable than lyricsId in plain objects)
     lyrics: async (project: any) => {
+      if (project.lyrics) return project.lyrics;
       if (project.projectId) return Lyrics.findOne({ projectId: project.projectId });
       if (project.lyricsId) return Lyrics.findById(project.lyricsId);
       return null;
     },
     // Ensure upload is populated if queried
     upload: async (project: any) => {
+      if (project.upload) return project.upload;
       if (project.uploadId) return Upload.findById(project.uploadId);
       return null;
     },
