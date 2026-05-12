@@ -102,6 +102,7 @@ const interfaceSchema = sub({
   editorWidth: { type: Number, min: 20, max: 90, default: 50 },
   lockLayout: { type: Boolean, default: false },
   mobileTab: { type: String, enum: ['editor', 'preview'], default: 'editor' },
+  toastPosition: { type: String, enum: ['bottom-right', 'bottom-center', 'bottom-left'], default: 'bottom-right' },
 });
 
 const shortcutString = { type: String, maxlength: 50, match: /^[a-zA-Z0-9+\-_.?!@#$%^&*()=\[\]{}|;:',<>/~`]+$/ };
