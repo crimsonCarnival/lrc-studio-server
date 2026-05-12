@@ -81,3 +81,34 @@ export const patchProjectSchema = {
   },
   params: projectIdParam,
 };
+
+export const createGuestProjectSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', maxLength: 500 },
+      lyrics: lyricsSchema,
+      state: stateSchema,
+      metadata: metadataSchema,
+      ytUrl: { type: 'string', maxLength: 2048 },
+      cloudinaryUrl: { type: 'string', maxLength: 2048 },
+      cloudinaryPublicId: { type: 'string', maxLength: 500 },
+      fileName: { type: 'string', maxLength: 500 },
+      duration: { type: 'number', minimum: 0 },
+      recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
+    },
+    additionalProperties: false,
+  },
+};
+
+export const claimProjectSchema = {
+  body: {
+    type: 'object',
+    required: ['claimToken'],
+    properties: {
+      claimToken: { type: 'string', minLength: 1, maxLength: 128 },
+    },
+    additionalProperties: false,
+  },
+  params: projectIdParam,
+};
