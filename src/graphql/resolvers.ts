@@ -17,6 +17,7 @@ import {
 interface Context extends MercuriusContext {
   userId?: string | null;
   ip?: string;
+  tokenExpired?: boolean;
 }
 
 export const resolvers = {
@@ -76,6 +77,14 @@ export const resolvers = {
     // id = projectId (nanoid string). Delegates to patchProject service for version locking,
     // single-line atomic updates, and lyrics patching.
     updateProject: async (_root: any, { id, input }: { id: string; input: any }, context: Context) => {
+      // If a Bearer token was sent but was expired, surface a 401 so the client
+      // can refresh — otherwise optionalAuth would silently drop the userId and
+      // the ownership check would produce a confusing 403.
+      if (context.tokenExpired) {
+        const expiredErr = new Error('Token expired') as any;
+        expiredErr.status = 401;
+        throw expiredErr;
+      }
       const result = await patchProject(id, input, context.userId);
       if ('error' in result) {
         const err = result as any;
@@ -127,7 +136,8 @@ export const resolvers = {
 
     // Uses upsert to deduplicate by source+URL, matching the REST service behavior
     saveMedia: async (_root: any, { input }: { input: any }, context: Context) => {
-      if (!context.userId && input.source !== 'youtube') throw new Error('Unauthorized');
+      // Spotify always requires auth. Cloudinary and YouTube are open to guests.
+      if (!context.userId && input.source === 'spotify') throw new Error('Unauthorized');
       const { source, youtubeUrl, cloudinaryUrl, spotifyTrackId } = input;
 
       // Auto-resolve or refresh the title from the YouTube API
