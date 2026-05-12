@@ -166,7 +166,7 @@ const settingsSchema = new Schema(
     import: { type: importSchema, default: () => ({}) },
     advanced: { type: advancedSchema, default: () => ({}) },
   },
-  { timestamps: true, minimize: false }
+  { timestamps: true, minimize: false, collection: 'settings' }
 );
 
 export interface ISettingsMethods {
