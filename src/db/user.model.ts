@@ -1,8 +1,22 @@
 import mongoose, { type Document, type Model, type HydratedDocument } from 'mongoose';
+import argon2 from 'argon2';
 import bcrypt from 'bcrypt';
 import { UserPublic } from '../types/index.js';
 
-const SALT_ROUNDS = 12;
+/**
+ * Argon2id parameters — OWASP recommended minimums for interactive logins.
+ * Argon2id is the hybrid variant: resistant to GPU/ASIC brute-force AND
+ * side-channel attacks. We keep bcrypt imported only for the transparent
+ * migration path: existing hashes are verified + silently re-hashed on login.
+ */
+const ARGON2_OPTIONS: argon2.Options = {
+  type: argon2.argon2id,
+  memoryCost: 64 * 1024, // 64 MB
+  timeCost: 3,           // 3 iterations
+  parallelism: 4,        // 4 threads
+};
+
+const BCRYPT_SALT_ROUNDS = 12; // kept only for migration verification
 
 export interface IUser extends Document {
   username?: string;
@@ -153,7 +167,7 @@ const userSchema = new mongoose.Schema<IUser>(
       index: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true, collection: 'users' }
 );
 
 // At least one identifier required
@@ -164,12 +178,28 @@ userSchema.pre('validate', function (this: IUser, next: mongoose.CallbackWithout
   next();
 });
 
-userSchema.methods.verifyPassword = function (this: IUser, plain: string): Promise<boolean> {
-  return bcrypt.compare(plain, this.passwordHash);
+/**
+ * Verifies the provided plaintext password against the stored hash.
+ * Handles transparent migration from legacy bcrypt hashes:
+ * if a bcrypt hash is detected ($2b$ / $2a$), it verifies with bcrypt
+ * and rehashes to Argon2id in the background to migrate on next login.
+ */
+userSchema.methods.verifyPassword = async function (this: IUser, plain: string): Promise<boolean> {
+  // Detect legacy bcrypt hash
+  if (this.passwordHash.startsWith('$2b$') || this.passwordHash.startsWith('$2a$')) {
+    const match = await bcrypt.compare(plain, this.passwordHash);
+    if (match) {
+      // Silently migrate to Argon2id
+      this.passwordHash = await argon2.hash(plain, ARGON2_OPTIONS);
+      await this.save();
+    }
+    return match;
+  }
+  return argon2.verify(this.passwordHash, plain);
 };
 
 userSchema.statics.hashPassword = function (plain: string): Promise<string> {
-  return bcrypt.hash(plain, SALT_ROUNDS);
+  return argon2.hash(plain, ARGON2_OPTIONS);
 };
 
 // Never leak sensitive fields
