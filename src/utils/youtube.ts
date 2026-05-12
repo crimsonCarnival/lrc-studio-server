@@ -29,8 +29,8 @@ export function extractYouTubeVideoId(url: string | null | undefined): string | 
 export async function fetchYouTubeTitle(url: string): Promise<string | null> {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) {
-    console.warn('YOUTUBE_API_KEY not configured, cannot fetch video titles');
-    return null;
+    // Fallback to oEmbed which doesn't require API key
+    return fetchYouTubeTitleViaOEmbed(url);
   }
 
   const videoId = extractYouTubeVideoId(url);
@@ -69,7 +69,6 @@ export async function fetchYouTubeTitle(url: string): Promise<string | null> {
 
 export async function fetchYouTubeMetadata(url: string): Promise<YouTubeMetadata | null> {
   const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return null;
 
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) return null;
@@ -77,29 +76,40 @@ export async function fetchYouTubeMetadata(url: string): Promise<YouTubeMetadata
   const cached = ytCache.get(videoId);
   if (cached && cached.duration !== null) return cached;
 
-  try {
-    const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${encodeURIComponent(videoId)}&key=${encodeURIComponent(apiKey)}`;
-    const response = await fetch(apiUrl);
-    if (!response.ok) return null;
+  if (apiKey) {
+    // Try official API first
+    try {
+      const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${encodeURIComponent(videoId)}&key=${encodeURIComponent(apiKey)}`;
+      const response = await fetch(apiUrl);
+      if (!response.ok) return null;
 
-    const data = await response.json() as {
-      items?: Array<{
-        snippet: { title: string };
-        contentDetails: { duration: string };
-      }>;
-    };
-    if (!data.items?.length) return null;
+      const data = await response.json() as {
+        items?: Array<{
+          snippet: { title: string };
+          contentDetails: { duration: string };
+        }>;
+      };
+      if (!data.items?.length) return null;
 
-    const item = data.items[0];
-    const title = item.snippet.title;
-    const duration = parseISO8601Duration(item.contentDetails.duration);
+      const item = data.items[0];
+      const title = item.snippet.title;
+      const duration = parseISO8601Duration(item.contentDetails.duration);
 
-    const result: YouTubeMetadata = { title, duration };
-    ytCache.put(videoId, result);
-    return result;
-  } catch {
-    return null;
+      const result: YouTubeMetadata = { title, duration };
+      ytCache.put(videoId, result);
+      return result;
+    } catch {
+      // Fall through to oEmbed
+    }
   }
+
+  // Fallback to oEmbed (no API key required, but only returns title)
+  const oembedTitle = await fetchYouTubeTitleViaOEmbed(url);
+  if (oembedTitle) {
+    return { title: oembedTitle, duration: null };
+  }
+
+  return null;
 }
 
 function parseISO8601Duration(iso: string): number | null {
@@ -110,4 +120,21 @@ function parseISO8601Duration(iso: string): number | null {
   const m = parseInt(match[2] || '0', 10);
   const s = parseInt(match[3] || '0', 10);
   return h * 3600 + m * 60 + s;
+}
+
+// Fallback using YouTube oEmbed API (no API key required)
+async function fetchYouTubeTitleViaOEmbed(url: string): Promise<string | null> {
+  const videoId = extractYouTubeVideoId(url);
+  if (!videoId) return null;
+
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const response = await fetch(oembedUrl);
+    if (!response.ok) return null;
+
+    const data = await response.json() as { title?: string };
+    return data.title || null;
+  } catch {
+    return null;
+  }
 }
