@@ -48,6 +48,13 @@ export const schema = `
     expiresAt: String
     createdAt: String
     updatedAt: String
+    forkedFrom: ForkedFrom
+  }
+
+  type ForkedFrom {
+    projectId: String
+    userId: ID
+    username: String
   }
 
   type ProjectState {
@@ -223,6 +230,7 @@ export const schema = `
     editorWidth: Float
     lockLayout: Boolean
     mobileTab: String
+    toastPosition: String
   }
 
   type ShortcutsSettings {
@@ -474,6 +482,7 @@ export const schema = `
     editorWidth: Float
     lockLayout: Boolean
     mobileTab: String
+    toastPosition: String
   }
 
   input ShortcutsSettingsInput {
