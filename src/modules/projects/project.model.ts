@@ -87,7 +87,7 @@ const projectSchema = new mongoose.Schema(
 
     expiresAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true, collection: 'projects' }
 );
 
 // TTL index — MongoDB auto-deletes documents when expiresAt is reached
