@@ -1,9 +1,16 @@
 import type { FastifyLoggerInstance } from 'fastify';
+import crypto from 'crypto';
 import User from '../../db/user.model.js';
+import Session from '../../db/session.model.js';
+import { logUserAction } from '../logs/logs.service.js';
 import BannedIp from '../admin/bannedIp.model.js';
 import BannedDevice from '../admin/bannedDevice.model.js';
 import { v2 as cloudinary } from 'cloudinary';
 import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.js';
+
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 type JwtTools = {
   signAccess: (p: Record<string, unknown>) => string;
@@ -107,11 +114,37 @@ export async function register(
     deviceIds: deviceId ? [deviceId] : [],
   });
 
-  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role };
+  const familyId = crypto.randomUUID();
+  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
+  
+  const accessToken = jwt.signAccess(tokenPayload);
+  const refreshToken = jwt.signRefresh(tokenPayload);
+
+  // Expiry is roughly 7 days
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+  await Session.create({
+    userId: user._id,
+    refreshTokenHash: hashToken(refreshToken),
+    familyId,
+    isValid: true,
+    expiresAt,
+    ip: ip || 'unknown',
+    deviceId: deviceId || 'unknown',
+  });
+
+  logUserAction({
+    userId: user._id.toString(),
+    action: 'REGISTER',
+    ip,
+    deviceId,
+    metadata: { username: user.username, email: user.email },
+  });
+
   return {
     user: user.toPublic() as any,
-    accessToken: jwt.signAccess(tokenPayload),
-    refreshToken: jwt.signRefresh(tokenPayload),
+    accessToken,
+    refreshToken,
   } as any;
 }
 
@@ -141,6 +174,13 @@ export async function login(
 
   const passwordValid = user ? await user.verifyPassword(password) : false;
   if (!user || !passwordValid) {
+    logUserAction({
+      userId: user ? user._id.toString() : null,
+      action: 'FAILED_LOGIN',
+      ip,
+      deviceId,
+      metadata: { identifier },
+    });
     return err('invalid_credentials', 401) as any;
   }
 
@@ -154,11 +194,35 @@ export async function login(
   await checkDevice(deviceId, user);
   if (ipChanged && !user.isModified()) await user.save();
 
-  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role };
+  const familyId = crypto.randomUUID();
+  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
+  
+  const accessToken = jwt.signAccess(tokenPayload);
+  const refreshToken = jwt.signRefresh(tokenPayload);
+
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+  await Session.create({
+    userId: user._id,
+    refreshTokenHash: hashToken(refreshToken),
+    familyId,
+    isValid: true,
+    expiresAt,
+    ip: ip || 'unknown',
+    deviceId: deviceId || 'unknown',
+  });
+
+  logUserAction({
+    userId: user._id.toString(),
+    action: 'LOGIN',
+    ip,
+    deviceId,
+  });
+
   return {
     user: user.toPublic() as any,
-    accessToken: jwt.signAccess(tokenPayload),
-    refreshToken: jwt.signRefresh(tokenPayload),
+    accessToken,
+    refreshToken,
   } as any;
 }
 
@@ -219,11 +283,62 @@ export async function refresh(
     if (!user.isModified()) await user.save();
   }
 
-  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role };
+  const familyId = decoded.familyId as string | undefined;
+  if (!familyId) return err('token_expired', 401) as any;
+
+  // Find the session for this token family
+  const session = await Session.findOne({ familyId, userId: user._id });
+  if (!session) return err('token_expired', 401) as any;
+
+  // Breach Detection: if the session is already invalidated, someone is trying to reuse an old token
+  if (!session.isValid) {
+    // Revoke all sessions for this user!
+    await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
+    return err('token_reused', 401) as any;
+  }
+
+  // Verify the hash of the provided refresh token matches the one in DB
+  const providedHash = hashToken(refreshToken);
+  if (session.refreshTokenHash !== providedHash) {
+    // Again, token mismatch within a valid family implies reuse
+    await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
+    return err('token_reused', 401) as any;
+  }
+
+  // Issue new tokens
+  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
+  const newAccessToken = jwt.signAccess(tokenPayload);
+  const newRefreshToken = jwt.signRefresh(tokenPayload);
+
+  // Update session with new token hash and extended expiry
+  session.refreshTokenHash = hashToken(newRefreshToken);
+  session.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  session.ip = ip || session.ip;
+  session.deviceId = deviceId || session.deviceId;
+  await session.save();
+
   return {
-    accessToken: jwt.signAccess(tokenPayload),
-    refreshToken: jwt.signRefresh(tokenPayload),
+    accessToken: newAccessToken,
+    refreshToken: newRefreshToken,
   } as any;
+}
+
+export async function logout(userId: string, familyId?: string): Promise<ServiceResult<{ success: boolean }>> {
+  if (familyId) {
+    // Invalidate specific session
+    await Session.updateOne({ userId, familyId }, { $set: { isValid: false } });
+  } else {
+    // Fallback: invalidate all sessions (if familyId wasn't known)
+    await Session.updateMany({ userId }, { $set: { isValid: false } });
+  }
+
+  logUserAction({
+    userId,
+    action: 'LOGOUT',
+    metadata: { familyId },
+  });
+
+  return { success: true } as any;
 }
 
 export async function getProfile(
