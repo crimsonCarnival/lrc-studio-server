@@ -27,6 +27,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.post('/login', { schema: loginSchema, ...authRateLimit }, authController.login);
   fastify.post('/check-identifier', { schema: checkIdentifierSchema, ...authRateLimit }, authController.checkIdentifier);
   fastify.post('/refresh', { schema: refreshSchema }, authController.refresh);
+  fastify.post('/logout', { preHandler: [fastify.optionalAuth] }, authController.logout);
   fastify.get('/me', { preHandler: [fastify.requireAuth] }, authController.me);
   fastify.patch('/profile', { schema: updateProfileSchema, preHandler: [fastify.requireAuth] }, authController.updateProfile);
   fastify.post('/appeal', { preHandler: [fastify.requireAuthForAppeal] }, authController.submitAppeal);
