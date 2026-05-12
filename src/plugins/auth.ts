@@ -69,28 +69,33 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.decorateRequest('userId', null);
 
   fastify.decorate('optionalAuth', async function (request: FastifyRequest) {
-    const header = request.headers.authorization;
-    if (!header?.startsWith('Bearer ')) return;
+    const token = request.cookies.accessToken;
+    if (!token) return;
     try {
-      const decoded = verifyToken(header.slice(7)) as JwtPayload;
+      const decoded = verifyToken(token) as JwtPayload;
       const user = await lookupUser(decoded.sub);
       if (!user || user.deletedAt || user.isBanned) return;
       await user.checkBanStatus();
       if (user.isBanned) return;
       request.userId = decoded.sub;
-    } catch {
-      // Invalid token — treat as anonymous
+    } catch (err: any) {
+      // Expired token: treat as anonymous but flag it so resolvers can surface
+      // a 401 instead of silently failing ownership checks (which produce a 403).
+      if (err?.name === 'TokenExpiredError') {
+        (request as any).tokenExpired = true;
+      }
+      // Any other error (malformed token etc.) — silently treat as anonymous
     }
   });
 
   async function resolveAndCheckBan(request: FastifyRequest, reply: FastifyReply): Promise<any> {
-    const header = request.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
+    const token = request.cookies.accessToken;
+    if (!token) {
       return reply.code(401).send({ error: 'Authentication required' });
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(header.slice(7)) as JwtPayload;
+      decoded = verifyToken(token) as JwtPayload;
     } catch {
       return reply.code(401).send({ error: 'Invalid or expired token' });
     }
@@ -125,13 +130,13 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   }
 
   fastify.decorate('requireAuth', async function (request: FastifyRequest, reply: FastifyReply) {
-    const header = request.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
+    const token = request.cookies.accessToken;
+    if (!token) {
       return reply.code(401).send({ error: 'Authentication required' });
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(header.slice(7)) as JwtPayload;
+      decoded = verifyToken(token) as JwtPayload;
     } catch {
       return reply.code(401).send({ error: 'Invalid or expired token' });
     }
@@ -179,13 +184,13 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.decorate('requireAuthForAppeal', async function (request: FastifyRequest, reply: FastifyReply) {
-    const header = request.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
+    const token = request.cookies.accessToken;
+    if (!token) {
       return reply.code(401).send({ error: 'Authentication required' });
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(header.slice(7)) as JwtPayload;
+      decoded = verifyToken(token) as JwtPayload;
     } catch {
       return reply.code(401).send({ error: 'Invalid or expired token' });
     }
@@ -199,13 +204,13 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.decorate('requireAuthLax', async function (request: FastifyRequest, reply: FastifyReply) {
-    const header = request.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
+    const token = request.cookies.accessToken;
+    if (!token) {
       return reply.code(401).send({ error: 'Authentication required' });
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(header.slice(7)) as JwtPayload;
+      decoded = verifyToken(token) as JwtPayload;
     } catch {
       return reply.code(401).send({ error: 'Invalid or expired token' });
     }
