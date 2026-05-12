@@ -33,7 +33,7 @@ const adminLogSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  { timestamps: true, collection: 'admin_logs' }
 );
 
 export default mongoose.model('AdminLog', adminLogSchema);
