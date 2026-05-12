@@ -119,3 +119,27 @@ export async function clone(req: FastifyRequest, reply: FastifyReply): Promise<v
 
   return reply.code(201).send(result);
 }
+
+/**
+ * POST /projects/guest — create an anonymous temporary project (no auth required).
+ */
+export async function createGuest(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await projectService.createGuestProject(req.body, req.ip);
+  if ('error' in result) {
+    return reply.code((result as any).status || 500).send(result);
+  }
+  return reply.code(201).send(result);
+}
+
+/**
+ * POST /projects/:id/claim — transfer project ownership to the authenticated user.
+ */
+export async function claim(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const projectId = (req.params as Record<string, string>).id;
+  const { claimToken } = req.body as { claimToken: string };
+  const result = await projectService.claimProject(projectId, claimToken, req.userId!);
+  if ('error' in result) {
+    return reply.code((result as any).status || 500).send(result);
+  }
+  return reply.send(result);
+}
