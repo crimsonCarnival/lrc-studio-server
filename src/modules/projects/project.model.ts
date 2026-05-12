@@ -86,6 +86,19 @@ const projectSchema = new mongoose.Schema(
     },
 
     expiresAt: { type: Date, default: null },
+
+    forkedFrom: {
+      projectId: { type: String, default: null },
+      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      username: { type: String, default: null }
+    },
+
+    claimToken: {
+      type: String,
+      default: null,
+      index: true,
+      sparse: true,
+    },
   },
   { timestamps: true, collection: 'projects' }
 );
@@ -112,6 +125,7 @@ projectSchema.methods.toPublic = function (this: mongoose.Document) {
   obj.id = obj._id?.toString() || this.id;
   delete obj.__v;
   delete obj._id;
+  delete obj.claimToken; // never expose the claim token to clients
   return obj;
 };
 
