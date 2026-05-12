@@ -17,7 +17,7 @@ export function isCloudinaryConfigured(): boolean {
   );
 }
 
-export async function generateAudioSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
+export async function generateAudioSignature(data: Record<string, unknown>, userId: string | null | undefined, ip: string): Promise<Record<string, unknown>> {
   if (!isCloudinaryConfigured()) {
     return { error: 'Upload service not configured', status: 503 };
   }
@@ -43,7 +43,8 @@ export async function generateAudioSignature(data: Record<string, unknown>, user
 
   const apiSecret = process.env.CLOUDINARY_API_SECRET as string;
   const timestamp = Math.round(Date.now() / 1000);
-  const userFolder = UPLOAD_FOLDER + '/' + userId;
+  // Guests upload to a shared 'guests' folder; authenticated users get their own subfolder.
+  const userFolder = userId ? `${UPLOAD_FOLDER}/${userId}` : `${UPLOAD_FOLDER}/guests`;
   const params = { timestamp, folder: userFolder };
   const signature = cloudinary.utils.api_sign_request(params, apiSecret);
 
@@ -193,7 +194,7 @@ export async function createMedia(userId: string | null | undefined, data: Recor
 export async function deleteMedia(uploadId: string, userId: string, logger: Record<string, unknown>): Promise<Record<string, unknown>> {
   const upload = await Upload.findById(uploadId);
   if (!upload) return { error: 'Upload not found', status: 404 };
-  if (upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
+  if (!upload.userId || upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
 
   if (upload.source === 'cloudinary' && upload.publicId && isCloudinaryConfigured()) {
     try {
@@ -216,7 +217,7 @@ export async function deleteMedia(uploadId: string, userId: string, logger: Reco
 export async function updateMedia(uploadId: string, userId: string, updates: Record<string, unknown>): Promise<Record<string, unknown>> {
   const upload = await Upload.findById(uploadId);
   if (!upload) return { error: 'Upload not found', status: 404 };
-  if (upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
+  if (!upload.userId || upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
 
   const allowedFields = ['title', 'fileName', 'duration'];
   const updateData: Record<string, unknown> = {};
@@ -244,7 +245,7 @@ export async function updateMedia(uploadId: string, userId: string, updates: Rec
 export async function getMedia(uploadId: string, userId: string): Promise<Record<string, unknown>> {
   const upload = await Upload.findById(uploadId);
   if (!upload) return { error: 'Upload not found', status: 404 };
-  if (upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
+  if (!upload.userId || upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
 
   const projects = await Project.find({ uploadId }).select('projectId title updatedAt').lean();
 
