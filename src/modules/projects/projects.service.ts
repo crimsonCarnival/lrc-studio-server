@@ -3,6 +3,7 @@ import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
+import { logUserAction } from '../logs/logs.service.js';
 
 const ANON_EXPIRY_DAYS = 7;
 
@@ -43,6 +44,16 @@ export async function createProject(
 
   project.lyricsId = lyricsDoc._id;
   await project.save();
+
+  logUserAction({
+    userId: userId || null,
+    action: 'PROJECT_CREATE',
+    entityType: 'Project',
+    entityId: project._id.toString(),
+    ip,
+    deviceId: 'unknown', // deviceId is not passed to createProject currently, fallback to unknown
+    metadata: { projectId: project.projectId, title: project.title },
+  });
 
   return {
     projectId: project.projectId,
@@ -204,6 +215,16 @@ export async function updateProject(
     ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, lines: updatedLyrics.lines }
     : { editorMode: 'lrc', language: null, lines: [] };
 
+  logUserAction({
+    userId: userId || null,
+    action: 'PROJECT_UPDATE',
+    entityType: 'Project',
+    entityId: updatedProject?._id.toString(),
+    ip: 'unknown',
+    deviceId: 'unknown',
+    metadata: { projectId, fieldsUpdated: Object.keys(projectUpdate) },
+  });
+
   return { project: pub } as any;
 }
 
@@ -271,6 +292,16 @@ export async function patchProject(
     ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, lines: updatedLyrics.lines }
     : { editorMode: 'lrc', language: null, lines: [] };
 
+  logUserAction({
+    userId: userId || null,
+    action: 'PROJECT_UPDATE',
+    entityType: 'Project',
+    entityId: updatedProject?._id.toString(),
+    ip: 'unknown',
+    deviceId: 'unknown',
+    metadata: { projectId, fieldsUpdated: Object.keys(projectUpdate) },
+  });
+
   return { project: pub } as any;
 }
 
@@ -335,13 +366,26 @@ export async function deleteProject(
     Lyrics.deleteOne({ projectId })
   ]);
 
+  logUserAction({
+    userId,
+    action: 'PROJECT_DELETE',
+    entityType: 'Project',
+    entityId: project._id.toString(),
+    ip: 'unknown',
+    deviceId: 'unknown',
+    metadata: { projectId },
+  });
+
   return {} as any;
 }
 
 export async function getShareProject(projectId: string): Promise<ProjectPublic | null> {
   const project = await Project.findOne({ projectId })
-    .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title')
-    .populate('userId', 'username avatarUrl');
+    .populate('uploadId')
+    .populate('userId', 'username avatarUrl role isVerified isBanned');
+
+  console.log('[getShare] project found:', !!project);
+  console.log('[getShare] project.uploadId:', project?.uploadId);
 
   if (!project || project.public === false) return null;
 
@@ -350,39 +394,66 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
   const pub: any = (project as any).toPublic();
   const rawUpload = pub.uploadId;
 
-  if (rawUpload && typeof rawUpload === 'object') {
-    pub.upload = {
-      id: rawUpload._id?.toString?.() || rawUpload.id,
-      source: rawUpload.source,
-      fileName: rawUpload.fileName,
-      youtubeUrl: rawUpload.youtubeUrl,
-      cloudinaryUrl: rawUpload.cloudinaryUrl,
-      duration: rawUpload.duration,
-      title: rawUpload.title,
+  console.log('[getShare] rawUpload:', rawUpload);
+
+  // Use model toPublic for consistency and mandatory fields
+  if (project.uploadId && typeof project.uploadId === 'object') {
+    const uploadDoc = project.uploadId as any;
+    pub.upload = typeof uploadDoc.toPublic === 'function' ? uploadDoc.toPublic() : {
+      id: uploadDoc._id?.toString() || uploadDoc.id,
+      source: uploadDoc.source,
+      fileName: uploadDoc.fileName || '',
+      title: uploadDoc.title || '',
+      youtubeUrl: uploadDoc.youtubeUrl,
+      cloudinaryUrl: uploadDoc.cloudinaryUrl,
+      spotifyTrackId: uploadDoc.spotifyTrackId,
+      artist: uploadDoc.artist,
+      duration: uploadDoc.duration,
     };
   } else {
     pub.upload = null;
   }
-  delete pub.uploadId;
 
   pub.lyrics = lyrics
-    ? { editorMode: lyrics.editorMode, language: lyrics.language || null, lines: lyrics.lines }
-    : { editorMode: 'lrc', language: null, lines: [] };
-
-  if (project.userId && typeof project.userId === 'object') {
-    pub.user = {
-      id: (project.userId as any)._id?.toString() || (project.userId as any).id,
-      username: (project.userId as any).username,
-      avatarUrl: (project.userId as any).avatarUrl,
-    };
-  } else {
-    pub.user = null;
+    ? (lyrics as any).toPublic()
+    : { id: null, projectId, editorMode: 'lrc', language: null, lines: [] };
+  
+  // Ensure lyrics has id and projectId (mandatory in GraphQL schema)
+  if (pub.lyrics && lyrics) {
+    pub.lyrics.id = lyrics._id?.toString() || pub.lyrics.id;
+    pub.lyrics.projectId = projectId;
   }
 
-  delete pub.userId;
+  if (project.userId && typeof project.userId === 'object') {
+    const userDoc = project.userId as any;
+    pub.user = typeof userDoc.toPublic === 'function' ? userDoc.toPublic() : {
+      id: userDoc._id?.toString() || userDoc.id,
+      username: userDoc.username,
+      avatarUrl: userDoc.avatarUrl,
+      role: userDoc.role || 'user',
+      isVerified: userDoc.isVerified || false,
+      isBanned: userDoc.isBanned || false,
+    };
+    // Keep userId for the loader
+    pub.userId = userDoc._id?.toString() || userDoc.id;
+  } else {
+    pub.user = null;
+    pub.userId = null;
+  }
+
+  // Keep IDs for GraphQL loaders
+  pub.uploadId = project.uploadId && typeof project.uploadId === 'object' 
+    ? (project.uploadId as any)._id?.toString() || (project.uploadId as any).id
+    : (project.uploadId as any)?.toString();
+  
+  pub.lyricsId = (lyrics as any)?._id?.toString() || (project as any).lyricsId?.toString();
+
   delete pub.lastEditedBy;
   delete pub.expiresAt;
   delete pub.deletedAt;
+
+  console.log('[getShare] pub.upload:', pub.upload);
+  console.log('[getShare] pub:', JSON.stringify({ ...pub, upload: pub.upload ? '...' : null }));
 
   return pub as ProjectPublic;
 }
@@ -411,18 +482,21 @@ export async function cloneProject(
       const query: Record<string, unknown> = { userId: newUserId, source: srcUp.source };
       if (srcUp.source === 'cloudinary' && srcUp.cloudinaryUrl) query.cloudinaryUrl = srcUp.cloudinaryUrl;
       else if (srcUp.source === 'youtube' && srcUp.youtubeUrl) query.youtubeUrl = srcUp.youtubeUrl;
+      else if (srcUp.source === 'spotify' && srcUp.spotifyTrackId) query.spotifyTrackId = srcUp.spotifyTrackId;
 
       const newUpload = await Upload.findOneAndUpdate(
         query,
         {
           userId: newUserId,
           source: srcUp.source,
-          cloudinaryUrl: srcUp.cloudinaryUrl,
-          publicId: srcUp.publicId,
-          youtubeUrl: srcUp.youtubeUrl,
-          fileName: srcUp.fileName,
-          title: srcUp.title,
-          duration: srcUp.duration,
+          cloudinaryUrl: srcUp.cloudinaryUrl || null,
+          publicId: srcUp.publicId || null,
+          youtubeUrl: srcUp.youtubeUrl || null,
+          spotifyTrackId: srcUp.spotifyTrackId || null,
+          artist: srcUp.artist || null,
+          fileName: srcUp.fileName || '',
+          title: srcUp.title || '',
+          duration: srcUp.duration || null,
         },
         { upsert: true, new: true }
       );
