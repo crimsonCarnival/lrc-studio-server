@@ -1,4 +1,6 @@
 import type { ServiceResult, ProjectPublic, ProjectListItem, LyricsData } from '../../types/index.js';
+import crypto from 'crypto';
+import mongoose from 'mongoose';
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
@@ -63,7 +65,7 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('projectId title metadata uploadId readOnly createdAt updatedAt')
+    .select('projectId title metadata uploadId readOnly createdAt updatedAt forkedFrom')
     .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title')
     .sort({ updatedAt: -1 })
     .limit(100)
@@ -121,6 +123,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       readOnly: s.readOnly,
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
+      forkedFrom: s.forkedFrom?.projectId ? s.forkedFrom : null,
     };
   });
 }
@@ -145,6 +148,10 @@ export async function getProject(projectId: string): Promise<ProjectPublic | nul
   pub.lyrics = lyrics
     ? { editorMode: lyrics.editorMode, language: lyrics.language || null, lines: lyrics.lines }
     : { editorMode: 'lrc', language: null, lines: [] };
+
+  if (pub.forkedFrom && !pub.forkedFrom.projectId) {
+    pub.forkedFrom = null;
+  }
 
   return pub as ProjectPublic;
 }
@@ -462,17 +469,10 @@ export async function cloneProject(
   sourceProjectId: string,
   newUserId: string
 ): Promise<ServiceResult<{ projectId: string; url: string }>> {
-  const sourceProject = await Project.findOne({ projectId: sourceProjectId });
+  const sourceProject = await Project.findOne({ projectId: sourceProjectId }).populate('userId', 'username');
   if (!sourceProject) return { error: 'Source project not found', status: 404 } as any;
 
   const lyrics = await Lyrics.findOne({ projectId: sourceProjectId });
-
-  const newLyricsDoc = await Lyrics.create({
-    projectId: null,
-    editorMode: lyrics?.editorMode || 'lrc',
-    language: lyrics?.language,
-    lines: lyrics?.lines || [],
-  });
 
   let newUploadId = null;
   if (sourceProject.uploadId) {
@@ -506,21 +506,153 @@ export async function cloneProject(
 
   const newProject = await Project.create({
     userId: newUserId,
-    title: sourceProject.title,
+    title: `Clone - ${sourceProject.title}`,
     uploadId: newUploadId,
-    lyricsId: newLyricsDoc._id,
     state: sourceProject.state,
     metadata: sourceProject.metadata,
     readOnly: false,
     type: 'saved',
     lastEditedBy: newUserId,
+    forkedFrom: {
+      projectId: sourceProjectId,
+      userId: (sourceProject.userId as any)?._id || sourceProject.userId || null,
+      username: (sourceProject.userId as any)?.username || null
+    },
   });
 
-  newLyricsDoc.projectId = newProject.projectId;
-  await newLyricsDoc.save();
+  const newLyricsDoc = await Lyrics.create({
+    projectId: newProject.projectId,
+    editorMode: lyrics?.editorMode || 'lrc',
+    language: lyrics?.language,
+    lines: lyrics?.lines || [],
+  });
+
+  newProject.lyricsId = newLyricsDoc._id;
+  await newProject.save();
 
   return {
     projectId: newProject.projectId,
     url: `/s/${newProject.projectId}`,
   } as any;
+}
+
+export async function createGuestProject(
+  data: any,
+  ip: string
+): Promise<{ projectId: string; claimToken: string } | ServiceResult> {
+  const {
+    title, lyrics, state, metadata,
+    ytUrl, cloudinaryUrl, cloudinaryPublicId, fileName, duration,
+    recaptchaToken,
+  } = data;
+
+  if (!(await verifyRecaptcha(recaptchaToken, ip))) {
+    return { error: 'recaptcha_failed', status: 403, code: 'recaptcha_failed' } as ServiceResult;
+  }
+
+  const claimToken = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + ANON_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+
+  // Create anonymous upload if media is provided
+  let uploadId: mongoose.Types.ObjectId | null = null;
+  if (ytUrl) {
+    const upload = await Upload.create({
+      userId: null,
+      source: 'youtube',
+      youtubeUrl: ytUrl,
+      fileName: fileName || '',
+      title: title || '',
+      duration: duration ?? null,
+    });
+    uploadId = upload._id;
+  } else if (cloudinaryUrl) {
+    const upload = await Upload.create({
+      userId: null,
+      source: 'cloudinary',
+      cloudinaryUrl,
+      publicId: cloudinaryPublicId || null,
+      fileName: fileName || '',
+      title: title || '',
+      duration: duration ?? null,
+    });
+    uploadId = upload._id;
+  }
+
+  const project = await Project.create({
+    userId: null,
+    title: title || '',
+    uploadId,
+    state: state || {},
+    metadata: metadata || {},
+    readOnly: false,
+    public: false,
+    type: 'temporary',
+    expiresAt,
+    claimToken,
+  });
+
+  let lyricsDoc;
+  try {
+    lyricsDoc = await Lyrics.create({
+      projectId: project.projectId,
+      editorMode: lyrics?.editorMode || 'lrc',
+      lines: lyrics?.lines || [],
+    });
+    project.lyricsId = lyricsDoc._id;
+    await project.save();
+  } catch (err) {
+    await Project.deleteOne({ _id: project._id });
+    if (uploadId) await Upload.deleteOne({ _id: uploadId });
+    throw err;
+  }
+
+  return { projectId: project.projectId, claimToken };
+}
+
+export async function claimProject(
+  projectId: string,
+  claimToken: string,
+  userId: string
+): Promise<{ projectId: string } | ServiceResult> {
+  const project = await Project.findOne({ projectId });
+  if (!project) {
+    return { error: 'not_found', status: 404, code: 'not_found' } as ServiceResult;
+  }
+
+  if (project.userId) {
+    return { error: 'already_claimed', status: 409, code: 'already_claimed' } as ServiceResult;
+  }
+
+  if (project.expiresAt && project.expiresAt <= new Date()) {
+    return { error: 'expired', status: 404, code: 'expired' } as ServiceResult;
+  }
+
+  if ((project as any).claimToken !== claimToken) {
+    return { error: 'token_mismatch', status: 403, code: 'token_mismatch' } as ServiceResult;
+  }
+
+  await Project.updateOne(
+    { projectId },
+    { $set: { userId, type: 'saved', expiresAt: null, claimToken: null } }
+  );
+
+  // Transfer anonymous upload ownership if one exists
+  if (project.uploadId) {
+    await Upload.updateOne(
+      { _id: project.uploadId, userId: null },
+      { $set: { userId } }
+    );
+  }
+
+  logUserAction({
+    userId,
+    action: 'PROJECT_CLAIM',
+    entityType: 'Project',
+    entityId: project._id.toString(),
+    ip: 'unknown',
+    deviceId: 'unknown',
+    metadata: { projectId },
+  });
+
+  return { projectId };
 }
