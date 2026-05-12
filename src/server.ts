@@ -10,6 +10,7 @@ import mercurius from 'mercurius';
 import { schema } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
+import fastifyCookie from '@fastify/cookie';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import projectRoutes from './modules/projects/projects.routes.js';
@@ -41,6 +42,9 @@ async function build() {
     trustProxy: true,
   });
 
+  await app.register(fastifyCookie, {
+    secret: process.env.COOKIE_SECRET || process.env.JWT_SECRET, // Use COOKIE_SECRET, fallback to JWT_SECRET
+  });
   await app.register(helmet);
   await app.register(cors);
   await app.register(rateLimit);
@@ -54,7 +58,7 @@ async function build() {
     context: async (request: FastifyRequest) => {
       // Run optionalAuth so request.userId is populated for authenticated GraphQL requests.
       await (app as any).optionalAuth(request);
-      return { userId: request.userId, ip: request.ip };
+      return { userId: request.userId, ip: request.ip, tokenExpired: (request as any).tokenExpired ?? false };
     },
     graphiql: process.env.NODE_ENV === 'development',
   });
