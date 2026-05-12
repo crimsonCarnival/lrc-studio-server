@@ -23,7 +23,7 @@ const bannedDeviceSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  { timestamps: true, collection: 'banned_devices' }
 );
 
 export default mongoose.model('BannedDevice', bannedDeviceSchema);
