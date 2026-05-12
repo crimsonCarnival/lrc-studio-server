@@ -60,7 +60,7 @@ const lyricsSchema = new mongoose.Schema(
     // Optimistic locking
     version: { type: Number, default: 1 },
   },
-  { timestamps: true }
+  { timestamps: true, collection: 'lyrics' }
 );
 
 // Additional indexes for query performance
@@ -82,6 +82,7 @@ lyricsSchema.pre('validate', function (next) {
 
 lyricsSchema.methods.toPublic = function () {
   const obj = this.toObject();
+  obj.id = obj._id?.toString();
   delete obj.__v;
   delete obj._id;
   return obj;
