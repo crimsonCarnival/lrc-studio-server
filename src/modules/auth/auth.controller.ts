@@ -1,5 +1,27 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { CookieSerializeOptions } from '@fastify/cookie';
 import * as authService from './auth.service.js';
+
+const cookieOptions: CookieSerializeOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  path: '/',
+};
+
+function setAuthCookies(reply: FastifyReply, result: any) {
+  if (result.accessToken) {
+    reply.setCookie('accessToken', result.accessToken, { ...cookieOptions, maxAge: 15 * 60 });
+  }
+  if (result.refreshToken) {
+    reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 });
+  }
+}
+
+function clearAuthCookies(reply: FastifyReply) {
+  reply.clearCookie('accessToken', cookieOptions);
+  reply.clearCookie('refreshToken', cookieOptions);
+}
 
 const VALID_DEVICE_PREFIXES = ['dv_fp_', 'dv_fallback_'];
 
@@ -24,7 +46,10 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
-  return reply.code(201).send(result);
+  
+  setAuthCookies(reply, result);
+  const { accessToken, refreshToken, ...responseData } = result as any;
+  return reply.code(201).send(responseData);
 }
 
 export async function login(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -34,7 +59,10 @@ export async function login(req: FastifyRequest, reply: FastifyReply): Promise<v
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
-  return reply.send(result);
+  
+  setAuthCookies(reply, result);
+  const { accessToken, refreshToken, ...responseData } = result as any;
+  return reply.send(responseData);
 }
 
 export async function checkIdentifier(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -50,11 +78,39 @@ export async function checkIdentifier(req: FastifyRequest, reply: FastifyReply):
 export async function refresh(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const deviceId = extractDeviceId(req, reply);
   if (!deviceId) return;
-  const result = await authService.refresh((req.body as Record<string, string>).refreshToken, (req.server as any).jwt, req.ip, deviceId);
+  
+  const tokenToRefresh = req.cookies.refreshToken;
+  if (!tokenToRefresh) {
+    return reply.code(401).send({ error: 'token_expired', code: 'token_expired' });
+  }
+
+  const result = await authService.refresh(tokenToRefresh, (req.server as any).jwt, req.ip, deviceId);
   if (result.error) {
+    clearAuthCookies(reply);
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
-  return reply.send(result);
+  
+  setAuthCookies(reply, result);
+  const { accessToken, refreshToken, ...responseData } = result as any;
+  return reply.send(responseData);
+}
+
+export async function logout(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const refreshToken = req.cookies.refreshToken;
+  let familyId: string | undefined;
+  if (refreshToken) {
+    try {
+      const decoded = (req.server as any).jwt.verifyToken(refreshToken);
+      familyId = decoded.familyId;
+    } catch {}
+  }
+  
+  if (req.userId) {
+    await authService.logout(req.userId, familyId);
+  }
+  
+  clearAuthCookies(reply);
+  return reply.send({ success: true });
 }
 
 export async function me(req: FastifyRequest, reply: FastifyReply): Promise<void> {
