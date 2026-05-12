@@ -45,7 +45,7 @@ const uploadSchema = new mongoose.Schema<IUpload, UploadModel, IUploadMethods>(
     title: { type: String, default: '', maxlength: 500, set: textSetter },
     duration: { type: Number, default: null },
   },
-  { timestamps: true }
+  { timestamps: true, collection: 'uploads' }
 );
 
 uploadSchema.index({ userId: 1, source: 1, cloudinaryUrl: 1 }, { sparse: true });
