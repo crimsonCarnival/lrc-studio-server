@@ -41,6 +41,9 @@ export const schema = `
     public: Boolean
     lineCount: Int
     syncedLineCount: Int
+    userId: ID
+    uploadId: ID
+    lyricsId: ID
     lastEditedBy: ID
     expiresAt: String
     createdAt: String
