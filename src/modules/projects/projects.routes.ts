@@ -5,6 +5,8 @@ import {
   createProjectSchema,
   updateProjectSchema,
   patchProjectSchema,
+  createGuestProjectSchema,
+  claimProjectSchema,
 } from './projects.schema.js';
 
 export default async function projectRoutes(fastify: FastifyInstance): Promise<void> {
@@ -16,4 +18,6 @@ export default async function projectRoutes(fastify: FastifyInstance): Promise<v
   fastify.delete('/:id', { schema: { params: projectIdParam }, preHandler: [fastify.requireActiveUser] }, projectController.remove);
   fastify.get('/share/:id', { schema: { params: projectIdParam } }, projectController.getShare);
   fastify.post('/clone/:id', { schema: { params: projectIdParam }, preHandler: [fastify.requireActiveUser] }, projectController.clone);
+  fastify.post('/guest', { schema: createGuestProjectSchema }, projectController.createGuest);
+  fastify.post('/:id/claim', { schema: claimProjectSchema, preHandler: [fastify.requireActiveUser] }, projectController.claim);
 }
