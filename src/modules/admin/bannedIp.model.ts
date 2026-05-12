@@ -22,7 +22,7 @@ const bannedIpSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  { timestamps: true, collection: 'banned_ips' }
 );
 
 export default mongoose.model('BannedIp', bannedIpSchema);
