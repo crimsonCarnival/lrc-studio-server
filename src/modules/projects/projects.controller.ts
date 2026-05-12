@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as projectService from './projects.service.js';
+import { logUserAction } from '../logs/logs.service.js';
 
 /**
  * POST /projects — create a new project.
@@ -76,10 +77,23 @@ export async function remove(req: FastifyRequest, reply: FastifyReply): Promise<
  * GET /projects/share/:id — get a project for public sharing (read-only).
  */
 export async function getShare(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const project = await projectService.getShareProject((req.params as Record<string, string>).id);
+  const projectId = (req.params as Record<string, string>).id;
+  const project = await projectService.getShareProject(projectId);
   if (!project) {
     return reply.code(404).send({ error: 'Project not found' });
   }
+
+  // Log the view — userId is null for anonymous visitors
+  logUserAction({
+    userId: req.userId || null,
+    action: 'SHARED_PROJECT_VIEW',
+    entityType: 'Project',
+    entityId: projectId,
+    ip: req.ip,
+    deviceId: req.headers['x-device-id'] as string || 'unknown',
+    metadata: { ownerId: (project as any).userId },
+  });
+
   return reply.send({ project });
 }
 
@@ -87,9 +101,21 @@ export async function getShare(req: FastifyRequest, reply: FastifyReply): Promis
  * POST /projects/clone/:id — clone a project (requires authentication).
  */
 export async function clone(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await projectService.cloneProject((req.params as Record<string, string>).id, req.userId!);
+  const sourceProjectId = (req.params as Record<string, string>).id;
+  const result = await projectService.cloneProject(sourceProjectId, req.userId!);
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error });
   }
+
+  logUserAction({
+    userId: req.userId!,
+    action: 'PROJECT_CLONE',
+    entityType: 'Project',
+    entityId: sourceProjectId,
+    ip: req.ip,
+    deviceId: req.headers['x-device-id'] as string || 'unknown',
+    metadata: { newProjectId: (result as any).projectId },
+  });
+
   return reply.code(201).send(result);
 }
