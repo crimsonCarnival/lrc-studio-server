@@ -11,7 +11,10 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@crimson-carnival/ds-js": "^1.0.2",
@@ -22,6 +25,7 @@
     "@fastify/rate-limit": "^10.2.2",
     "argon2": "^0.44.0",
     "bcrypt": "^5.1.1",
+    "cheerio": "^1.2.0",
     "cloudinary": "^2.6.1",
     "dotenv": "^16.5.0",
     "fastify": "^5.3.3",
@@ -39,7 +43,10 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.6.0",
     "@types/nodemailer": "^8.0.0",
+    "@vitest/coverage-v8": "^4.1.6",
+    "mongodb-memory-server": "^11.1.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   }
 }
