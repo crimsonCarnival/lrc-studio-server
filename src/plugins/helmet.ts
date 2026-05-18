@@ -5,7 +5,7 @@ import fastifyHelmet from '@fastify/helmet';
 async function helmetPlugin(fastify: FastifyInstance): Promise<void> {
   await fastify.register(fastifyHelmet, {
     contentSecurityPolicy: false,
-    crossOriginOpenerPolicy: false,
+    crossOriginOpenerPolicy: { policy: 'unsafe-none' },
   });
 }
 
