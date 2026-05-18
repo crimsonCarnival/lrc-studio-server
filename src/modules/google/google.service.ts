@@ -1,0 +1,239 @@
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
+import User from '../../db/user.model.js';
+import type { JwtPayload } from '../../types/index.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+
+function getClientId(): string { return process.env.GOOGLE_CLIENT_ID || ''; }
+function getClientSecret(): string { return process.env.GOOGLE_CLIENT_SECRET || ''; }
+function getRedirectUri(): string { return process.env.GOOGLE_REDIRECT_URI || ''; }
+
+export function isGoogleConfigured(): boolean {
+  return !!(getClientId() && getClientSecret());
+}
+
+export function generateSignedState(payload: { sub?: string; nonce?: string; action?: string }): string {
+  return jwt.sign(
+    { ...payload, nonce: payload.nonce || crypto.randomBytes(8).toString('hex') },
+    JWT_SECRET,
+    { expiresIn: '10m' },
+  );
+}
+
+export function verifySignedState(state: string): Record<string, string | undefined> | null {
+  try {
+    const decoded = jwt.verify(state, JWT_SECRET) as Record<string, string | undefined>;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+export function getAuthUrl(state: string): string {
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: getClientId() || '',
+    redirect_uri: getRedirectUri(),
+    scope: 'openid email profile',
+    access_type: 'online',
+    prompt: 'select_account',
+    state,
+  });
+  return `${GOOGLE_AUTHORIZE_URL}?${params.toString()}`;
+}
+
+function decodeGoogleIdToken(idToken: string): Record<string, unknown> | null {
+  try {
+    const parts = idToken.split('.');
+    if (parts.length !== 3) return null;
+    const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+export async function handleCallback(code: string, userId: string): Promise<Record<string, unknown>> {
+  const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      client_id: getClientId() || '',
+      client_secret: getClientSecret() || '',
+      redirect_uri: getRedirectUri(),
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const body = await tokenRes.json().catch(() => ({})) as Record<string, string>;
+    return { error: body.error_description || 'Token exchange failed', status: 400 };
+  }
+
+  const tokens = await tokenRes.json() as { id_token: string; access_token?: string };
+  const idToken = decodeGoogleIdToken(tokens.id_token);
+
+  if (!idToken || idToken.aud !== getClientId()) {
+    return { error: 'Invalid id_token', status: 400 };
+  }
+
+  const googleId = idToken.sub as string;
+  const email = idToken.email as string;
+  const name = idToken.name as string;
+  const picture = idToken.picture as string;
+
+  const user = await User.findById(userId);
+  if (!user) return { error: 'User not found', status: 404 };
+
+  // Check if this Google account is already linked to another user
+  const existingUser = await User.findOne({ 'google.googleId': googleId, _id: { $ne: userId } });
+  if (existingUser) {
+    return { error: 'google_account_in_use', status: 409 };
+  }
+
+  user.google = {
+    googleId,
+    email,
+    name,
+    pictureUrl: picture,
+  };
+  await user.save();
+
+  return {
+    connected: true,
+    googleId,
+    email,
+    name,
+  };
+}
+
+export async function handleLoginCallback(code: string): Promise<Record<string, unknown>> {
+  const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      client_id: getClientId() || '',
+      client_secret: getClientSecret() || '',
+      redirect_uri: getRedirectUri(),
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const body = await tokenRes.json().catch(() => ({})) as Record<string, string>;
+    return { error: body.error_description || 'Token exchange failed', status: 400 };
+  }
+
+  const tokens = await tokenRes.json() as { id_token: string };
+  const idToken = decodeGoogleIdToken(tokens.id_token);
+
+  if (!idToken || idToken.aud !== getClientId()) {
+    return { error: 'Invalid id_token', status: 400 };
+  }
+
+  const googleId = idToken.sub as string;
+  const email = idToken.email as string;
+  const name = idToken.name as string;
+  const picture = idToken.picture as string;
+
+  // Try to find user by googleId first
+  let user = await User.findOne({ 'google.googleId': googleId });
+
+  if (!user) {
+    const existingEmailUser = await User.findOne({ email });
+    if (existingEmailUser) {
+      // Link Google account to existing user
+      user = existingEmailUser;
+      if (!user.google) user.google = {};
+      user.google.googleId = googleId;
+      user.google.email = email;
+      user.google.name = name;
+      user.google.pictureUrl = picture;
+      await user.save();
+    } else {
+      // Auto-generate username from Google name + random suffix
+      let username = name?.replace(/\s+/g, '_').toLowerCase().slice(0, 20) || 'user';
+      let usernameExists = await User.findOne({ username });
+      let attempt = 0;
+      while (usernameExists && attempt < 10) {
+        const suffix = Math.random().toString(36).substring(2, 7);
+        username = `${username}_${suffix}`;
+        usernameExists = await User.findOne({ username });
+        attempt++;
+      }
+
+      // Create new user with OAuth sentinel password
+      user = new User({
+        username,
+        email,
+        passwordHash: 'OAUTH_NO_PASSWORD',
+        isVerified: true,
+        google: {
+          googleId,
+          email,
+          name,
+          pictureUrl: picture,
+        },
+      });
+      await user.save();
+    }
+  } else {
+    // User exists, update Google info in case of profile changes
+    if (!user.google) {
+      user.google = {};
+    }
+    user.google.googleId = googleId;
+    user.google.email = email;
+    user.google.name = name;
+    user.google.pictureUrl = picture;
+    await user.save();
+  }
+
+  return {
+    userId: user._id.toString(),
+    googleId,
+    email,
+    name,
+  };
+}
+
+export async function disconnectGoogle(userId: string): Promise<Record<string, unknown>> {
+  const user = await User.findById(userId);
+  if (!user) return { error: 'User not found', status: 404 };
+
+  if (!user.google?.googleId) {
+    return { error: 'provider_not_connected', status: 409 };
+  }
+
+  // Safety check: prevent account lockout
+  const hasPassword = user.passwordHash !== 'OAUTH_NO_PASSWORD';
+  const hasSpotify = !!user.spotify?.spotifyId;
+
+  if (!hasPassword && !hasSpotify) {
+    return {
+      error: 'last_auth_method',
+      status: 409,
+      message: 'Cannot disconnect Google — it is your only sign-in method. Set a password first.',
+    };
+  }
+
+  user.google = {
+    googleId: null,
+    email: null,
+    name: null,
+    pictureUrl: null,
+  };
+  await user.save();
+
+  return { disconnected: true };
+}
