@@ -9,12 +9,19 @@ export interface Env {
   JWT_ISSUER?: string;
   JWT_AUDIENCE?: string;
   CORS_ORIGIN: string;
+  APP_URL: string;
+  APP_URLS: string[];
+  PASSWORD_RESET_URL: string;
   CLOUDINARY_CLOUD_NAME?: string;
   CLOUDINARY_API_KEY?: string;
   CLOUDINARY_API_SECRET?: string;
   YOUTUBE_API_KEY?: string;
+  GENIUS_CLIENT_ACCESS_TOKEN?: string;
   SPOTIFY_CLIENT_ID?: string;
   SPOTIFY_CLIENT_SECRET?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_REDIRECT_URI?: string;
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -25,6 +32,14 @@ function requireEnv(name: string, value: string | undefined, requiredInProductio
 }
 
 export function loadEnv(): Env {
+  const corsOrigin = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
+  const appUrlString = process.env.APP_URL ?? corsOrigin;
+  const appUrls = appUrlString
+    .split(',')
+    .map(url => url.trim())
+    .filter(url => url.length > 0);
+  const primaryAppUrl = appUrls[appUrls.length - 1] || corsOrigin;
+
   return {
     PORT: parseInt(process.env.PORT ?? '3000', 10),
     HOST: process.env.HOST ?? '0.0.0.0',
@@ -35,13 +50,20 @@ export function loadEnv(): Env {
     JWT_REFRESH_EXPIRY: process.env.JWT_REFRESH_EXPIRY ?? '30d',
     JWT_ISSUER: process.env.JWT_ISSUER,
     JWT_AUDIENCE: process.env.JWT_AUDIENCE,
-    CORS_ORIGIN: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+    CORS_ORIGIN: corsOrigin,
+    APP_URL: primaryAppUrl,
+    APP_URLS: appUrls,
+    PASSWORD_RESET_URL: process.env.PASSWORD_RESET_URL ?? primaryAppUrl,
     CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
     CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
     CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
     YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY,
+    GENIUS_CLIENT_ACCESS_TOKEN: process.env.GENIUS_CLIENT_ACCESS_TOKEN,
     SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET,
+    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
   };
 }
 
