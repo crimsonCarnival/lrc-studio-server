@@ -199,20 +199,20 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     const token = request.cookies.accessToken;
     if (!token) {
       reply.code(401).send({ error: 'Authentication required' });
-    return null;
+      return;
     }
     let decoded: JwtPayload;
     try {
       decoded = verifyToken(token) as JwtPayload;
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });
-    return null;
+      return;
     }
 
     const user = await lookupUser(decoded.sub);
     if (!user || user.deletedAt) {
       reply.code(401).send({ error: 'User not found' });
-    return null;
+      return;
     }
 
     request.userId = decoded.sub;
@@ -222,20 +222,20 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     const token = request.cookies.accessToken;
     if (!token) {
       reply.code(401).send({ error: 'Authentication required' });
-    return null;
+      return;
     }
     let decoded: JwtPayload;
     try {
       decoded = verifyToken(token) as JwtPayload;
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });
-    return null;
+      return;
     }
 
     const user = await lookupUser(decoded.sub);
     if (!user || user.deletedAt) {
       reply.code(401).send({ error: 'User not found' });
-    return null;
+      return;
     }
 
     request.userId = decoded.sub;
