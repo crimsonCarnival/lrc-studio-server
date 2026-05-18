@@ -1,13 +1,7 @@
-import { MercuriusContext } from 'mercurius';
 import Upload from '../../modules/uploads/upload.model.js';
 import Project from '../../modules/projects/project.model.js';
 import { fetchYouTubeTitle } from '../../utils/youtube.js';
-
-interface Context extends MercuriusContext {
-  userId?: string | null;
-  ip?: string;
-  tokenExpired?: boolean;
-}
+import { Context } from './context.js';
 
 export const uploadResolvers = {
   Query: {

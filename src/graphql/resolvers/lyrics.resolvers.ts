@@ -1,12 +1,6 @@
-import { MercuriusContext } from 'mercurius';
 import Project from '../../modules/projects/project.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
-
-interface Context extends MercuriusContext {
-  userId?: string | null;
-  ip?: string;
-  tokenExpired?: boolean;
-}
+import { Context } from './context.js';
 
 export const lyricsResolvers = {
   Mutation: {

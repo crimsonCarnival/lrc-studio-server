@@ -1,14 +1,8 @@
-import { MercuriusContext } from 'mercurius';
 import User from '../../db/user.model.js';
 import Project from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
-
-interface Context extends MercuriusContext {
-  userId?: string | null;
-  ip?: string;
-  tokenExpired?: boolean;
-}
+import { Context } from './context.js';
 
 export const userResolvers = {
   Query: {

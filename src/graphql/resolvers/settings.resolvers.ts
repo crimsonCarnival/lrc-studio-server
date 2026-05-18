@@ -1,11 +1,5 @@
-import { MercuriusContext } from 'mercurius';
 import Settings from '../../modules/settings/settings.model.js';
-
-interface Context extends MercuriusContext {
-  userId?: string | null;
-  ip?: string;
-  tokenExpired?: boolean;
-}
+import { Context } from './context.js';
 
 export const settingsResolvers = {
   Query: {
