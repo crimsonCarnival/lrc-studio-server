@@ -55,7 +55,11 @@ export function parseRubyMarkup(input: string): RubyParseResult {
         const word = inner.slice(0, pipeIdx);
         const reading = inner.slice(pipeIdx + 1).trim();
         plainText += word;
-        if (word) segments.push({ text: word, reading: reading || null });
+        // Only attach a reading when the word contains at least one kanji.
+        // Non-kanji tokens (kana, latin, …) inside {word|reading} blocks are
+        // treated as plain text — the reading is silently dropped.
+        const hasKanjiInWord = word && KANJI_RE.test(word);
+        if (word) segments.push({ text: word, reading: (hasKanjiInWord && reading) ? reading : null });
       }
       i = close + 1;
     } else {
