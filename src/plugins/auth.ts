@@ -91,29 +91,34 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   async function resolveAndCheckBan(request: FastifyRequest, reply: FastifyReply): Promise<any> {
     const token = request.cookies.accessToken;
     if (!token) {
-      return reply.code(401).send({ error: 'Authentication required' });
+      reply.code(401).send({ error: 'Authentication required' });
+    return null;
     }
     let decoded: JwtPayload;
     try {
       decoded = verifyToken(token) as JwtPayload;
     } catch {
-      return reply.code(401).send({ error: 'Invalid or expired token' });
+      reply.code(401).send({ error: 'Invalid or expired token' });
+    return null;
     }
 
     const user = await lookupUser(decoded.sub);
     if (!user || user.deletedAt) {
-      return reply.code(401).send({ error: 'User not found' });
+      reply.code(401).send({ error: 'User not found' });
+    return null;
     }
     await user.checkBanStatus();
     if (user.isBanned) {
-      return reply.code(403).send({ error: 'User is banned' });
+      reply.code(403).send({ error: 'User is banned' });
+    return null;
     }
 
     const deviceId = request.headers['x-device-id'];
     if (deviceId) {
       const deviceBanned = await checkDeviceBan(deviceId as string);
       if (deviceBanned) {
-        return reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
+        reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
+      return null;
       }
     }
 
@@ -121,7 +126,8 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     if (ip) {
       const ipBanned = await checkIpBan(ip);
       if (ipBanned) {
-        return reply.code(403).send({ error: 'Access restricted from this network.' });
+        reply.code(403).send({ error: 'Access restricted from this network.' });
+      return null;
       }
     }
 
@@ -132,30 +138,35 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.decorate('requireAuth', async function (request: FastifyRequest, reply: FastifyReply) {
     const token = request.cookies.accessToken;
     if (!token) {
-      return reply.code(401).send({ error: 'Authentication required' });
+      reply.code(401).send({ error: 'Authentication required' });
+    return null;
     }
     let decoded: JwtPayload;
     try {
       decoded = verifyToken(token) as JwtPayload;
     } catch {
-      return reply.code(401).send({ error: 'Invalid or expired token' });
+      reply.code(401).send({ error: 'Invalid or expired token' });
+    return null;
     }
 
     const user = await lookupUser(decoded.sub);
     if (!user || user.deletedAt) {
-      return reply.code(401).send({ error: 'User not found' });
+      reply.code(401).send({ error: 'User not found' });
+    return null;
     }
 
     await user.checkBanStatus();
     if (user.isBanned) {
-      return reply.code(403).send({ error: 'User is banned' });
+      reply.code(403).send({ error: 'User is banned' });
+    return null;
     }
 
     const deviceId = request.headers['x-device-id'];
     if (deviceId) {
       const deviceBanned = await checkDeviceBan(deviceId as string);
       if (deviceBanned) {
-        return reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
+        reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
+      return null;
       }
     }
 
@@ -163,7 +174,8 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     if (ip) {
       const ipBanned = await checkIpBan(ip);
       if (ipBanned) {
-        return reply.code(403).send({ error: 'Access restricted from this network.' });
+        reply.code(403).send({ error: 'Access restricted from this network.' });
+      return null;
       }
     }
 
@@ -186,18 +198,21 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.decorate('requireAuthForAppeal', async function (request: FastifyRequest, reply: FastifyReply) {
     const token = request.cookies.accessToken;
     if (!token) {
-      return reply.code(401).send({ error: 'Authentication required' });
+      reply.code(401).send({ error: 'Authentication required' });
+    return null;
     }
     let decoded: JwtPayload;
     try {
       decoded = verifyToken(token) as JwtPayload;
     } catch {
-      return reply.code(401).send({ error: 'Invalid or expired token' });
+      reply.code(401).send({ error: 'Invalid or expired token' });
+    return null;
     }
 
     const user = await lookupUser(decoded.sub);
     if (!user || user.deletedAt) {
-      return reply.code(401).send({ error: 'User not found' });
+      reply.code(401).send({ error: 'User not found' });
+    return null;
     }
 
     request.userId = decoded.sub;
@@ -206,18 +221,21 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.decorate('requireAuthLax', async function (request: FastifyRequest, reply: FastifyReply) {
     const token = request.cookies.accessToken;
     if (!token) {
-      return reply.code(401).send({ error: 'Authentication required' });
+      reply.code(401).send({ error: 'Authentication required' });
+    return null;
     }
     let decoded: JwtPayload;
     try {
       decoded = verifyToken(token) as JwtPayload;
     } catch {
-      return reply.code(401).send({ error: 'Invalid or expired token' });
+      reply.code(401).send({ error: 'Invalid or expired token' });
+    return null;
     }
 
     const user = await lookupUser(decoded.sub);
     if (!user || user.deletedAt) {
-      return reply.code(401).send({ error: 'User not found' });
+      reply.code(401).send({ error: 'User not found' });
+    return null;
     }
 
     request.userId = decoded.sub;
