@@ -14,7 +14,7 @@ export const lineItemSchema = {
     translation: { type: ['string', 'null'], maxLength: 2000 },
     id: { type: 'string', maxLength: 50 },
     words: {
-      type: 'array',
+      type: ['array', 'null'],
       items: {
         type: 'object',
         properties: {
@@ -25,7 +25,7 @@ export const lineItemSchema = {
       },
     },
     secondaryWords: {
-      type: 'array',
+      type: ['array', 'null'],
       items: {
         type: 'object',
         properties: {
