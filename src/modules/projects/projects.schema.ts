@@ -38,6 +38,10 @@ const metadataSchema = {
   properties: {
     description: { type: 'string', maxLength: 2000 },
     tags: { type: 'array', items: { type: 'string', maxLength: 50 }, maxItems: 20 },
+    songName: { type: 'string', maxLength: 500 },
+    songArtist: { type: 'string', maxLength: 500 },
+    songAlbum: { type: 'string', maxLength: 500 },
+    songYear: { type: 'string', maxLength: 4 },
   },
   additionalProperties: false,
 };
@@ -53,6 +57,11 @@ const projectBodySchema = {
     readOnly: { type: 'boolean' },
     public: { type: 'boolean' },
     recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
+    ytUrl: { type: 'string', maxLength: 2048 },
+    cloudinaryUrl: { type: 'string', maxLength: 2048 },
+    cloudinaryPublicId: { type: 'string', maxLength: 500 },
+    fileName: { type: 'string', maxLength: 500 },
+    duration: { type: 'number', minimum: 0 },
   },
   additionalProperties: false,
 };
@@ -82,33 +91,4 @@ export const patchProjectSchema = {
   params: projectIdParam,
 };
 
-export const createGuestProjectSchema = {
-  body: {
-    type: 'object',
-    properties: {
-      title: { type: 'string', maxLength: 500 },
-      lyrics: lyricsSchema,
-      state: stateSchema,
-      metadata: metadataSchema,
-      ytUrl: { type: 'string', maxLength: 2048 },
-      cloudinaryUrl: { type: 'string', maxLength: 2048 },
-      cloudinaryPublicId: { type: 'string', maxLength: 500 },
-      fileName: { type: 'string', maxLength: 500 },
-      duration: { type: 'number', minimum: 0 },
-      recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
-    },
-    additionalProperties: false,
-  },
-};
 
-export const claimProjectSchema = {
-  body: {
-    type: 'object',
-    required: ['claimToken'],
-    properties: {
-      claimToken: { type: 'string', minLength: 1, maxLength: 128 },
-    },
-    additionalProperties: false,
-  },
-  params: projectIdParam,
-};

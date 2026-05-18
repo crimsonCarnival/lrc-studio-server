@@ -31,6 +31,10 @@ const metadataSchema = new mongoose.Schema(
       },
       set: (v: unknown) => (Array.isArray(v) ? v.map((t: unknown) => (typeof t === 'string' ? stripHtml(t).slice(0, 50) : t)) : v),
     },
+    songName: { type: String, default: '', maxlength: 500, set: textSetter },
+    songArtist: { type: String, default: '', maxlength: 500, set: textSetter },
+    songAlbum: { type: String, default: '', maxlength: 500, set: textSetter },
+    songYear: { type: String, default: '', maxlength: 4, set: textSetter },
   },
   { _id: false }
 );
@@ -70,11 +74,6 @@ const projectSchema = new mongoose.Schema(
 
     state: { type: stateSchema, default: () => ({}) },
     metadata: { type: metadataSchema, default: () => ({}) },
-    type: {
-      type: String,
-      enum: ['temporary', 'saved'],
-      default: 'temporary',
-    },
     readOnly: { type: Boolean, default: true },
     public: { type: Boolean, default: true },
 
@@ -85,26 +84,14 @@ const projectSchema = new mongoose.Schema(
       default: null,
     },
 
-    expiresAt: { type: Date, default: null },
-
     forkedFrom: {
       projectId: { type: String, default: null },
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
       username: { type: String, default: null }
     },
-
-    claimToken: {
-      type: String,
-      default: null,
-      index: true,
-      sparse: true,
-    },
   },
   { timestamps: true, collection: 'projects' }
 );
-
-// TTL index — MongoDB auto-deletes documents when expiresAt is reached
-projectSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Supports list query: by owner, sorted by recent updates
 projectSchema.index({ userId: 1, updatedAt: -1 });
@@ -125,7 +112,6 @@ projectSchema.methods.toPublic = function (this: mongoose.Document) {
   obj.id = obj._id?.toString() || this.id;
   delete obj.__v;
   delete obj._id;
-  delete obj.claimToken; // never expose the claim token to clients
   return obj;
 };
 
