@@ -1,0 +1,30 @@
+export const uploadSchema = `
+  type Upload {
+    id: ID!
+    source: String!
+    cloudinaryUrl: String
+    publicId: String
+    youtubeUrl: String
+    spotifyTrackId: String
+    artist: String
+    fileName: String!
+    title: String!
+    duration: Float
+    user: User
+    createdAt: String
+    updatedAt: String
+    projects: [Project!]!
+  }
+
+  input SaveMediaInput {
+    source: String!
+    cloudinaryUrl: String
+    publicId: String
+    youtubeUrl: String
+    spotifyTrackId: String
+    artist: String
+    fileName: String
+    title: String
+    duration: Float
+  }
+`;
