@@ -1,11 +1,13 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CookieSerializeOptions } from '@fastify/cookie';
 import * as authService from './auth.service.js';
+import { requestPasswordReset, validateResetToken, resetPassword, changePassword as changePasswordService, PasswordResetError } from '../password-reset/password-reset.service.js';
+import { verifyRecaptcha } from './auth.service.js';
 
 const cookieOptions: CookieSerializeOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   path: '/',
 };
 
@@ -42,7 +44,23 @@ function extractDeviceId(req: FastifyRequest, reply: FastifyReply): string | nul
 export async function register(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const deviceId = extractDeviceId(req, reply);
   if (!deviceId) return;
-  const result = await authService.register(req.body as { username?: string; email?: string; password: string; recaptchaToken?: string }, (req.server as any).jwt, req.ip, deviceId);
+  const body = req.body as {
+    username?: string;
+    email?: string;
+    password: string;
+    recaptchaToken?: string;
+  };
+  const result = await authService.register(
+    {
+      username: body.username,
+      email: body.email,
+      password: body.password,
+      recaptchaToken: body.recaptchaToken,
+    },
+    (req.server as any).jwt,
+    req.ip,
+    deviceId
+  );
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
@@ -55,7 +73,21 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
 export async function login(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const deviceId = extractDeviceId(req, reply);
   if (!deviceId) return;
-  const result = await authService.login(req.body as { identifier: string; password: string; recaptchaToken?: string }, (req.server as any).jwt, req.ip, deviceId);
+  const body = req.body as {
+    identifier: string;
+    password: string;
+    recaptchaToken?: string;
+  };
+  const result = await authService.login(
+    {
+      identifier: body.identifier,
+      password: body.password,
+      recaptchaToken: body.recaptchaToken,
+    },
+    (req.server as any).jwt,
+    req.ip,
+    deviceId
+  );
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
@@ -144,4 +176,123 @@ export async function clearUnbanMessage(req: FastifyRequest, reply: FastifyReply
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
   return reply.send(result);
+}
+
+export async function forgotPassword(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { email, recaptchaToken } = req.body as { email?: string; recaptchaToken?: string };
+
+  if (!email) {
+    return reply.code(400).send({ error: 'Email is required' });
+  }
+
+  if (!(await verifyRecaptcha(recaptchaToken, req.ip))) {
+    return reply.code(403).send({ error: 'recaptcha_failed', code: 'recaptcha_failed' });
+  }
+
+  try {
+    await requestPasswordReset(email);
+  } catch (err) {
+    if (err instanceof PasswordResetError && err.status === 429) {
+      return reply.code(429).send({ error: 'Too many requests' });
+    }
+    console.error('Forgot password error:', err);
+  }
+
+  // Always return success (no enumeration)
+  return reply.code(200).send({
+    success: true,
+    message: 'If an account exists for this email, a reset link has been sent.',
+  });
+}
+
+export async function validateResetPasswordToken(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { token } = req.query as { token?: string };
+
+  if (!token) {
+    return reply.code(400).send({ error: 'Token is required' });
+  }
+
+  try {
+    const { email } = await validateResetToken(token);
+    return reply.code(200).send({ valid: true, email });
+  } catch (err) {
+    if (err instanceof PasswordResetError) {
+      return reply.code(200).send({ valid: false, reason: 'invalid' });
+    }
+    return reply.code(200).send({ valid: false, reason: 'error' });
+  }
+}
+
+export async function resetPasswordEndpoint(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { token, newPassword, confirmPassword } = req.body as any;
+
+  if (!token || !newPassword || !confirmPassword) {
+    return reply.code(400).send({ error: 'All fields required' });
+  }
+
+  if (newPassword !== confirmPassword) {
+    return reply.code(400).send({ error: 'Passwords do not match' });
+  }
+
+  try {
+    await resetPassword(token, newPassword);
+    return reply.code(200).send({ success: true, message: 'Password reset successfully.' });
+  } catch (err) {
+    if (err instanceof PasswordResetError) {
+      return reply.code(err.status).send({ error: err.message, code: err.code });
+    }
+    return reply.code(500).send({ error: 'Server error' });
+  }
+}
+
+export async function changePassword(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!req.userId) {
+    return reply.code(403).send({ error: 'Unauthorized' });
+  }
+
+  const { currentPassword, newPassword, confirmPassword } = req.body as any;
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return reply.code(400).send({ error: 'All fields required' });
+  }
+
+  if (newPassword !== confirmPassword) {
+    return reply.code(400).send({ error: 'Passwords do not match' });
+  }
+
+  try {
+    await changePasswordService(req.userId, currentPassword, newPassword);
+    return reply.code(200).send({ success: true, message: 'Password changed successfully.' });
+  } catch (err) {
+    if (err instanceof PasswordResetError) {
+      return reply.code(err.status).send({ error: err.message, code: err.code });
+    }
+    return reply.code(500).send({ error: 'Server error' });
+  }
+}
+
+export async function setPassword(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!req.userId) {
+    return reply.code(403).send({ error: 'Unauthorized' });
+  }
+
+  const { newPassword, confirmPassword } = req.body as any;
+
+  if (!newPassword || !confirmPassword) {
+    return reply.code(400).send({ error: 'All fields required' });
+  }
+
+  if (newPassword !== confirmPassword) {
+    return reply.code(400).send({ error: 'Passwords do not match' });
+  }
+
+  try {
+    await changePasswordService(req.userId, null, newPassword, true);
+    return reply.code(200).send({ success: true, message: 'Password set successfully.' });
+  } catch (err) {
+    if (err instanceof PasswordResetError) {
+      return reply.code(err.status).send({ error: err.message, code: err.code });
+    }
+    return reply.code(500).send({ error: 'Server error' });
+  }
 }
