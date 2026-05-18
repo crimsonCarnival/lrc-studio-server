@@ -1,9 +1,10 @@
+import { getHealth } from '../../modules/health/health.service.js';
+
 export const healthResolvers = {
   Query: {
-    health: async () => ({
-      status: 'ok',
-      version: process.env.npm_package_version || '1.0.0',
-      uptime: process.uptime(),
-    }),
+    health: async () => {
+      const h = await getHealth();
+      return { status: h.status, version: h.version, uptime: h.uptime };
+    },
   },
 };

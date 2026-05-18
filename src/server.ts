@@ -22,6 +22,7 @@ import { googleRoutes } from './modules/google/google.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import youtubeRoutes from './modules/youtube/youtube.routes.js';
 import geniusRoutes from './modules/genius/genius.routes.js';
+import healthRoutes from './modules/health/health.routes.js';
 
 const envToLogger: Record<string, Record<string, unknown>> = {
   development: {
@@ -111,7 +112,7 @@ async function build() {
   await app.register(lyricsRoutes, { prefix: '/editor' });
   await app.register(geniusRoutes, { prefix: '/lyrics' });
 
-  app.get('/health', async () => ({ status: 'ok', version: process.env.npm_package_version }));
+  await app.register(healthRoutes, { prefix: '/health' });
 
   return app;
 }
