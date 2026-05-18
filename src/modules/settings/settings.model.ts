@@ -88,6 +88,7 @@ const exportSchema = sub({
   includeMetadata: Boolean,
   stripEmptyLines: Boolean,
   normalizeTimestamps: Boolean,
+  wordTimestampPrecision: { type: String, enum: ['hundredths', 'thousandths', 'milliseconds', 'seconds'] },
 });
 
 const interfaceSchema = sub({
