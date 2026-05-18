@@ -77,11 +77,20 @@ export interface UserPublic {
   showUnbanMessage?: boolean;
   role: string;
   createdAt?: Date;
+  passwordChangedAt?: Date | null;
+  hasPassword?: boolean;
   spotify?: {
     connected: boolean;
     spotifyId?: string | null;
     isPremium: boolean;
     profilePictureUrl?: string | null;
+  } | null;
+  google?: {
+    connected: boolean;
+    googleId?: string | null;
+    email?: string | null;
+    name?: string | null;
+    pictureUrl?: string | null;
   } | null;
 }
 
