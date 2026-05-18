@@ -22,6 +22,7 @@ export interface IUser extends Document {
   username?: string;
   email?: string;
   passwordHash: string;
+  passwordChangedAt?: Date | null;
   avatarUrl?: string | null;
   avatarPublicId?: string | null;
   isVerified: boolean;
@@ -44,6 +45,12 @@ export interface IUser extends Document {
     expiresAt?: Date | null;
     isPremium?: boolean;
     profilePictureUrl?: string | null;
+  };
+  google?: {
+    googleId?: string | null;
+    email?: string | null;
+    name?: string | null;
+    pictureUrl?: string | null;
   };
   lastIp?: string | null;
   bio: string;
@@ -83,6 +90,10 @@ const userSchema = new mongoose.Schema<IUser>(
     passwordHash: {
       type: String,
       required: true,
+    },
+    passwordChangedAt: {
+      type: Date,
+      default: null,
     },
     avatarUrl: {
       type: String,
@@ -152,6 +163,12 @@ const userSchema = new mongoose.Schema<IUser>(
       isPremium: { type: Boolean, default: false },
       profilePictureUrl: { type: String, default: null },
     },
+    google: {
+      googleId: { type: String, default: null },
+      email: { type: String, default: null },
+      name: { type: String, default: null },
+      pictureUrl: { type: String, default: null },
+    },
     lastIp: {
       type: String,
       default: null,
@@ -178,6 +195,9 @@ userSchema.pre('validate', function (this: IUser, next: mongoose.CallbackWithout
   next();
 });
 
+// Prevent duplicate Google account links
+userSchema.index({ 'google.googleId': 1 }, { unique: true, sparse: true });
+
 /**
  * Verifies the provided plaintext password against the stored hash.
  * Handles transparent migration from legacy bcrypt hashes:
@@ -185,6 +205,9 @@ userSchema.pre('validate', function (this: IUser, next: mongoose.CallbackWithout
  * and rehashes to Argon2id in the background to migrate on next login.
  */
 userSchema.methods.verifyPassword = async function (this: IUser, plain: string): Promise<boolean> {
+  // Sentinel value for OAuth-only users (no password set)
+  if (this.passwordHash === 'OAUTH_NO_PASSWORD') return false;
+
   // Detect legacy bcrypt hash
   if (this.passwordHash.startsWith('$2b$') || this.passwordHash.startsWith('$2a$')) {
     const match = await bcrypt.compare(plain, this.passwordHash);
@@ -221,12 +244,21 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
     showUnbanMessage: this.showUnbanMessage,
     role: this.role,
     createdAt: this.createdAt,
+    passwordChangedAt: this.passwordChangedAt,
+    hasPassword: this.passwordHash !== 'OAUTH_NO_PASSWORD',
     spotify: this.spotify ? {
       connected: !!this.spotify.spotifyId,
       spotifyId: this.spotify.spotifyId || null,
       isPremium: this.spotify.isPremium || false,
       profilePictureUrl: this.spotify.profilePictureUrl || null,
-    } : null
+    } : null,
+    google: this.google?.googleId ? {
+      connected: true,
+      googleId: this.google.googleId,
+      email: this.google.email,
+      name: this.google.name,
+      pictureUrl: this.google.pictureUrl,
+    } : { connected: false }
   };
 };
 
