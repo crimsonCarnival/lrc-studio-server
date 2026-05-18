@@ -2,7 +2,8 @@ import type { FastifyLoggerInstance } from 'fastify';
 import crypto from 'crypto';
 import User from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
-import { logUserAction } from '../logs/logs.service.js';
+import { logUserAction } from '../user_logs/logs.service.js';
+import { registerAtomically, loginAtomically } from './auth.tx.service.js';
 import BannedIp from '../admin/bannedIp.model.js';
 import BannedDevice from '../admin/bannedDevice.model.js';
 import { v2 as cloudinary } from 'cloudinary';
@@ -106,32 +107,17 @@ export async function register(
   }
 
   const passwordHash = await User.hashPassword(password);
-  const user = await User.create({
-    ...(username ? { username } : {}),
-    ...(email ? { email: email.toLowerCase() } : {}),
-    passwordHash,
-    lastIp: ip,
-    deviceIds: deviceId ? [deviceId] : [],
-  });
 
-  const familyId = crypto.randomUUID();
-  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
-  
-  const accessToken = jwt.signAccess(tokenPayload);
-  const refreshToken = jwt.signRefresh(tokenPayload);
-
-  // Expiry is roughly 7 days
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-  await Session.create({
-    userId: user._id,
-    refreshTokenHash: hashToken(refreshToken),
-    familyId,
-    isValid: true,
-    expiresAt,
-    ip: ip || 'unknown',
-    deviceId: deviceId || 'unknown',
-  });
+  const { user, accessToken, refreshToken } = await registerAtomically(
+    {
+      username,
+      email: email ? email.toLowerCase() : undefined,
+      passwordHash,
+      ip,
+      deviceId,
+    },
+    jwt
+  );
 
   logUserAction({
     userId: user._id.toString(),
@@ -194,23 +180,12 @@ export async function login(
   await checkDevice(deviceId, user);
   if (ipChanged && !user.isModified()) await user.save();
 
-  const familyId = crypto.randomUUID();
-  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
-  
-  const accessToken = jwt.signAccess(tokenPayload);
-  const refreshToken = jwt.signRefresh(tokenPayload);
-
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-  await Session.create({
-    userId: user._id,
-    refreshTokenHash: hashToken(refreshToken),
-    familyId,
-    isValid: true,
-    expiresAt,
-    ip: ip || 'unknown',
-    deviceId: deviceId || 'unknown',
-  });
+  const { accessToken, refreshToken } = await loginAtomically(
+    user,
+    jwt,
+    ip,
+    deviceId
+  );
 
   logUserAction({
     userId: user._id.toString(),
@@ -218,6 +193,32 @@ export async function login(
     ip,
     deviceId,
   });
+
+  return {
+    user: user.toPublic() as any,
+    accessToken,
+    refreshToken,
+  } as any;
+}
+
+export async function loginByUserId(
+  userId: string,
+  jwt: JwtTools,
+  ip: string,
+  deviceId: string
+): Promise<ServiceResult<AuthResponse>> {
+  const user = await User.findById(userId);
+  if (!user || user.isDeleted) return err('user_not_found', 404) as any;
+
+  await user.checkBanStatus();
+  if (user.isBanned) return BAN_ERRORS.USER_BANNED as any;
+
+  const { accessToken, refreshToken } = await loginAtomically(
+    user,
+    jwt,
+    ip,
+    deviceId
+  );
 
   return {
     user: user.toPublic() as any,
@@ -253,6 +254,8 @@ export async function checkIdentifier(
     exists: true,
     username: user.username || null,
     avatarUrl: user.avatarUrl || null,
+    hasPassword: user.passwordHash !== 'OAUTH_NO_PASSWORD',
+    hasGoogle: !!user.google?.googleId,
   } as any;
 }
 
