@@ -32,4 +32,9 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.patch('/profile', { schema: updateProfileSchema, preHandler: [fastify.requireAuth] }, authController.updateProfile);
   fastify.post('/appeal', { preHandler: [fastify.requireAuthForAppeal] }, authController.submitAppeal);
   fastify.post('/clear-unban-message', { preHandler: [fastify.requireAuthLax] }, authController.clearUnbanMessage);
+  fastify.post('/forgot-password', { ...authRateLimit }, authController.forgotPassword);
+  fastify.get('/reset-password/validate', { ...authRateLimit }, authController.validateResetPasswordToken);
+  fastify.post('/reset-password', { ...authRateLimit }, authController.resetPasswordEndpoint);
+  fastify.post('/change-password', { preHandler: [fastify.requireAuth] }, authController.changePassword);
+  fastify.post('/set-password', { preHandler: [fastify.requireAuth] }, authController.setPassword);
 }
