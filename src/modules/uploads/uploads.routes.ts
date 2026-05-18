@@ -17,8 +17,7 @@ export default async function uploadRoutes(fastify: FastifyInstance): Promise<vo
   }, uploadController.avatarSignature);
   fastify.get('/media', { schema: listMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.listMedia);
   fastify.get('/media/:id', { preHandler: [fastify.requireActiveUser] }, uploadController.getMedia);
-  // Guests can persist YouTube/Cloudinary records (userId will be null in the DB).
-  fastify.post('/media', { schema: createMediaSchema, preHandler: [fastify.optionalAuth] }, uploadController.createMedia);
+  fastify.post('/media', { schema: createMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.createMedia);
   fastify.patch('/media/:id', { schema: updateMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.updateMedia);
   fastify.delete('/media/:id', { preHandler: [fastify.requireActiveUser] }, uploadController.deleteMedia);
 }
