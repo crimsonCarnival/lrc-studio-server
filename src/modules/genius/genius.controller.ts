@@ -39,14 +39,14 @@ export async function extract(request: FastifyRequest, reply: FastifyReply): Pro
     const lyrics = await extractLyrics(url);
     return reply.send({ lyrics });
   } catch (err) {
-    const error = err as Error;
+    const error = err as Error & { statusCode?: number };
     if (error.message === 'invalid_url') {
       return reply.code(400).send({ error: 'invalid_url' });
     }
     if (error.message === 'lyrics_unavailable') {
       return reply.code(422).send({ error: 'lyrics_unavailable' });
     }
-    request.log.error(error);
+    request.log.error({ err: error, geniusStatus: error.statusCode }, 'Genius extract failed');
     return reply.code(502).send({ error: 'upstream_error' });
   }
 }
