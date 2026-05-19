@@ -52,6 +52,62 @@ export async function searchSongs(query: string): Promise<GeniusSong[]> {
   }));
 }
 
+function cleanLyrics(raw: string): string {
+  return raw
+    .replace(/\[.*?\]/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/^\d+\s*Contributors?[^\n]*/gim, '')
+    .replace(/^Translations?[^\n]*/gim, '')
+    .replace(/^.+\s+Lyrics\s*$/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function extractFromPreloadedState(html: string): string | null {
+  // Genius embeds lyrics as serialized JSON in window.__PRELOADED_STATE__
+  const match = html.match(/window\.__PRELOADED_STATE__\s*=\s*JSON\.parse\('([\s\S]*?)'\)/);
+  if (!match) return null;
+
+  try {
+    // Genius escapes single quotes as \\'  inside the JSON.parse argument
+    const jsonStr = match[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+    const state = JSON.parse(jsonStr) as Record<string, unknown>;
+
+    // Walk the entity map looking for song lyrics text
+    const entities = (state as Record<string, unknown>)['entities'] as Record<string, unknown> | undefined;
+    const songs = entities?.['songs'] as Record<string, { lyrics?: { plain?: string } }> | undefined;
+    if (songs) {
+      for (const song of Object.values(songs)) {
+        if (song?.lyrics?.plain) return song.lyrics.plain;
+      }
+    }
+
+    // Alternate path: songPage.lyricsData.body.plain
+    const songPage = (state as Record<string, unknown>)['songPage'] as Record<string, unknown> | undefined;
+    const plain = (((songPage?.['lyricsData'] as Record<string, unknown>)?.['body'] as Record<string, unknown>)?.['plain']) as string | undefined;
+    if (plain) return plain;
+  } catch {
+    // malformed JSON — fall through to DOM scraping
+  }
+  return null;
+}
+
+function extractFromDom(html: string): string | null {
+  const $ = cheerio.load(html);
+
+  let containers = $('[data-lyrics-container="true"]');
+  if (!containers.length) containers = $('[class*="Lyrics__Container"]');
+  if (!containers.length) return null;
+
+  const lines: string[] = [];
+  containers.each((_, el) => {
+    $(el).find('div').remove();
+    $(el).find('br').replaceWith('\n');
+    lines.push($(el).text());
+  });
+  return lines.join('\n');
+}
+
 export async function extractLyrics(url: string): Promise<string> {
   // SSRF guard: only fetch from genius.com
   const parsed = new URL(url);
@@ -63,44 +119,25 @@ export async function extractLyrics(url: string): Promise<string> {
     headers: {
       'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
     },
   });
 
-  if (!response.ok) throw new Error('upstream_error');
+  if (!response.ok) {
+    throw Object.assign(new Error('upstream_error'), { statusCode: response.status });
+  }
 
   const html = await response.text();
-  const $ = cheerio.load(html);
 
-  // Primary selector, fallback if Genius restructures their page
-  let containers = $('[data-lyrics-container="true"]');
-  if (!containers.length) {
-    containers = $('[class*="Lyrics__Container"]');
-  }
-  if (!containers.length) {
-    throw new Error('lyrics_unavailable');
-  }
+  const raw = extractFromPreloadedState(html) ?? extractFromDom(html);
+  if (!raw) throw new Error('lyrics_unavailable');
 
-  const lines: string[] = [];
-
-  containers.each((_, el) => {
-    // Remove non-lyric blocks: Genius embeds annotation previews and song
-    // descriptions as <div> children in the server-rendered HTML, which JS
-    // replaces client-side. Actual lyric content only uses <p>, <a>, <br>.
-    $(el).find('div').remove();
-    // Replace <br> with newline placeholder before stripping tags
-    $(el).find('br').replaceWith('\n');
-    const raw = $(el).text();
-    lines.push(raw);
-  });
-
-  const combined = lines.join('\n');
-
-  return combined
-    .replace(/\[.*?\]/g, '')                    // remove [Chorus], [Verse 1], etc.
-    .replace(/\r\n/g, '\n')
-    .replace(/^\d+\s*Contributors?[^\n]*/gim, '') // strip "34 Contributors..." metadata
-    .replace(/^Translations?[^\n]*/gim, '')        // strip "Translations..." lines
-    .replace(/^.+\s+Lyrics\s*$/gim, '')            // strip "Song Title Lyrics" header
-    .replace(/\n{3,}/g, '\n\n')                    // collapse excessive blank lines
-    .trim();
+  return cleanLyrics(raw);
 }
