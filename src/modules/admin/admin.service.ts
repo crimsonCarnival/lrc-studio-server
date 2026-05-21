@@ -219,11 +219,11 @@ export async function deleteUser(userId: string, adminId: string | null = null):
 
   user.deletedAt = new Date();
   user.isDeleted = true;
-  user.bannedUntil = null;
-  user.banReason = null;
-  user.banAppeal = null;
-  user.appealAt = null;
-  user.appealStatus = 'none';
+  user.ban.active = false;
+  user.ban.reason = null;
+  user.ban.until = null;
+  user.appeal.text = null;
+  user.appeal.status = 'none';
 
   await user.save();
 
