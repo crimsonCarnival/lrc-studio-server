@@ -36,4 +36,7 @@ const adminLogSchema = new mongoose.Schema(
   { timestamps: true, collection: 'admin_logs' }
 );
 
+// Auto-expire entries after 90 days
+adminLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
+
 export default mongoose.model('AdminLog', adminLogSchema);

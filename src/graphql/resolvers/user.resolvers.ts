@@ -3,6 +3,9 @@ import Project from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
+import AccountNameHistory from '../../db/account-name-history.model.js';
+import EmailHistory from '../../db/email-history.model.js';
+import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
 
 export const userResolvers = {
   Query: {
@@ -19,18 +22,37 @@ export const userResolvers = {
       const user = await User.findById(context.userId);
       if (!user) throw new Error('User not found');
 
-      const { username, email, bio, avatarUrl } = input;
+      const { accountName, displayName, email, bio, avatarUrl } = input;
 
-      if (username && username !== user.username) {
-        const existing = await User.findOne({ username: username.trim() });
-        if (existing) throw new Error('Username already taken');
-        user.username = username.trim();
+      if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
+        const COOLDOWN_DAYS = 7;
+        if (user.lastAccountNameChangedAt) {
+          const daysSince = (Date.now() - (user.lastAccountNameChangedAt as Date).getTime()) / (1000 * 60 * 60 * 24);
+          if (daysSince < COOLDOWN_DAYS) {
+            const daysLeft = Math.ceil(COOLDOWN_DAYS - daysSince);
+            throw Object.assign(new Error('accountName_change_cooldown'), { extensions: { code: 'accountName_change_cooldown', daysLeft, status: 429 } });
+          }
+        }
+        const normalised = accountName.toLowerCase().trim();
+        if (!/^[a-z0-9_-]{3,30}$/.test(normalised)) throw new Error('accountName_invalid');
+        const existing = await User.findOne({ accountName: normalised });
+        if (existing) throw new Error('Account name already taken');
+        const previousAccountName = user.accountName;
+        user.accountName = normalised;
+        user.lastAccountNameChangedAt = new Date();
+        AccountNameHistory.create({ userId: user._id, from: previousAccountName, to: normalised }).catch(() => {});
       }
 
-      if (email && email.toLowerCase().trim() !== user.email) {
-        const existing = await User.findOne({ email: email.toLowerCase().trim() });
+      if (displayName !== undefined) {
+        user.displayName = displayName ? displayName.trim().slice(0, 50) : null;
+      }
+
+      if (email && email.toLowerCase().trim() !== user.email && email.toLowerCase().trim() !== user.pendingEmail) {
+        const normalised = email.toLowerCase().trim();
+        const existing = await User.findOne({ $or: [{ email: normalised }, { pendingEmail: normalised }] });
         if (existing) throw new Error('Email already in use');
-        user.email = email.toLowerCase().trim();
+        user.pendingEmail = normalised;
+        sendVerification(context.userId, normalised, 'email_change').catch(() => {});
       }
 
       if (bio !== undefined) {
@@ -44,6 +66,12 @@ export const userResolvers = {
       await user.save();
       return user.toPublic();
     },
+
+    sendVerificationEmail: async (_root: any, _args: any, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      await resendVerification(context.userId);
+      return true;
+    },
   },
 
   User: {
@@ -52,5 +80,29 @@ export const userResolvers = {
     projects: async (user: any) => Project.find({ userId: user._id ?? user.id }),
     uploads: async (user: any) => Upload.find({ userId: user._id ?? user.id }),
     settings: async (user: any) => Settings.findOne({ userId: user._id ?? user.id }),
+
+    previousAccountNames: (user: any) =>
+      AccountNameHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 }).then(
+        docs => docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }))
+      ),
+
+    accountNameChangeCount: (user: any) =>
+      AccountNameHistory.countDocuments({ userId: user._id ?? user.id }),
+
+    emailHistory: async (user: any, _args: any, context: Context) => {
+      const selfId = (user._id ?? user.id)?.toString();
+      if (context.userId === selfId) {
+        const docs = await EmailHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 });
+        return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
+      }
+      if (context.userId) {
+        const requester = await User.findById(context.userId).select('role').lean();
+        if ((requester as any)?.role === 'admin') {
+          const docs = await EmailHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 });
+          return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
+        }
+      }
+      return [];
+    },
   },
 };

@@ -1,5 +1,6 @@
 import type { ServiceResult, ProjectPublic } from '../../types/index.js';
 import Project from './project.model.js';
+import ProjectFork from './projectFork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import { withTransaction } from '../../db/transaction.js';
@@ -7,7 +8,7 @@ import { withTransaction } from '../../db/transaction.js';
 export async function getShareProject(projectId: string): Promise<ProjectPublic | null> {
   const project = await Project.findOne({ projectId })
     .populate('uploadId')
-    .populate('userId', 'username avatarUrl role isVerified isBanned');
+    .populate('userId', 'accountName displayName avatarUrl role isVerified ban');
 
   if (!project || project.public === false) return null;
 
@@ -48,11 +49,12 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
     const userDoc = project.userId as any;
     pub.user = typeof userDoc.toPublic === 'function' ? userDoc.toPublic() : {
       id: userDoc._id?.toString() || userDoc.id,
-      username: userDoc.username,
+      accountName: userDoc.accountName,
+      displayName: userDoc.displayName ?? null,
       avatarUrl: userDoc.avatarUrl,
       role: userDoc.role || 'user',
       isVerified: userDoc.isVerified || false,
-      isBanned: userDoc.isBanned || false,
+      ban: { active: userDoc.ban?.active || false },
     };
     // Keep userId for the loader
     pub.userId = userDoc._id?.toString() || userDoc.id;
@@ -68,7 +70,6 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
 
   pub.lyricsId = (lyrics as any)?._id?.toString() || (project as any).lyricsId?.toString();
 
-  delete pub.lastEditedBy;
   delete pub.deletedAt;
 
   return pub as ProjectPublic;
@@ -78,7 +79,7 @@ export async function cloneProject(
   sourceProjectId: string,
   newUserId: string
 ): Promise<ServiceResult<{ projectId: string; url: string }>> {
-  const sourceProject = await Project.findOne({ projectId: sourceProjectId }).populate('userId', 'username');
+  const sourceProject = await Project.findOne({ projectId: sourceProjectId }).populate('userId', 'accountName');
   if (!sourceProject) return { error: 'Source project not found', status: 404 } as any;
 
   const sourceLyrics = await Lyrics.findOne({ projectId: sourceProjectId });
@@ -122,11 +123,10 @@ export async function cloneProject(
       state: sourceProject.state,
       metadata: sourceProject.metadata,
       readOnly: false,
-      lastEditedBy: newUserId,
       forkedFrom: {
         projectId: sourceProjectId,
         userId: (sourceProject.userId as any)?._id || sourceProject.userId || null,
-        username: (sourceProject.userId as any)?.username || null,
+        accountName: (sourceProject.userId as any)?.accountName || null,
       },
     }], { session });
 
@@ -139,6 +139,15 @@ export async function cloneProject(
 
     newProject.lyricsId = newLyricsDoc._id;
     await newProject.save({ session });
+
+    await Promise.all([
+      Project.updateOne({ projectId: sourceProjectId }, { $inc: { forkCount: 1 } }, { session }),
+      ProjectFork.create([{
+        sourceProjectId,
+        forkedProjectId: newProject.projectId,
+        userId: newUserId,
+      }], { session }),
+    ]);
 
     return {
       projectId: newProject.projectId,

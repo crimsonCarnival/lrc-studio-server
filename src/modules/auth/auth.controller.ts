@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CookieSerializeOptions } from '@fastify/cookie';
 import * as authService from './auth.service.js';
 import { requestPasswordReset, validateResetToken, resetPassword, changePassword as changePasswordService, PasswordResetError } from '../password-reset/password-reset.service.js';
+import { resendVerification, verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
 import { verifyRecaptcha } from './auth.service.js';
 
 const cookieOptions: CookieSerializeOptions = {
@@ -45,14 +46,16 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
   const deviceId = extractDeviceId(req, reply);
   if (!deviceId) return;
   const body = req.body as {
-    username?: string;
+    accountName?: string;
+    displayName?: string;
     email?: string;
     password: string;
     recaptchaToken?: string;
   };
   const result = await authService.register(
     {
-      username: body.username,
+      accountName: body.accountName,
+      displayName: body.displayName,
       email: body.email,
       password: body.password,
       recaptchaToken: body.recaptchaToken,
@@ -294,5 +297,31 @@ export async function setPassword(req: FastifyRequest, reply: FastifyReply): Pro
       return reply.code(err.status).send({ error: err.message, code: err.code });
     }
     return reply.code(500).send({ error: 'Server error' });
+  }
+}
+
+export async function sendVerificationEmailHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  try {
+    await resendVerification(req.userId!);
+  } catch (err) {
+    if (err instanceof VerificationError) {
+      return reply.code(err.status).send({ error: err.code });
+    }
+    return reply.code(500).send({ error: 'server_error' });
+  }
+  return reply.send({ success: true });
+}
+
+export async function verifyEmailHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { token } = req.query as { token?: string };
+  if (!token) {
+    return reply.redirect(`${process.env.CLIENT_URL ?? ''}/verify-email?status=error&code=missing_token`);
+  }
+  try {
+    await verifyEmailToken(token);
+    return reply.redirect(`${process.env.CLIENT_URL ?? ''}/verify-email?status=success`);
+  } catch (err) {
+    const code = err instanceof VerificationError ? err.code : 'server_error';
+    return reply.redirect(`${process.env.CLIENT_URL ?? ''}/verify-email?status=error&code=${code}`);
   }
 }

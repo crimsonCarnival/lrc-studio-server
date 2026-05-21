@@ -45,10 +45,13 @@ function verifyToken(token: string): JwtPayload {
   }) as JwtPayload;
 }
 
+// Only the fields needed for auth checks — avoids loading passwordHash, spotify tokens, etc.
+const AUTH_USER_SELECT = 'ban appeal showUnbanMessage isDeleted deletedAt role accountName';
+
 async function lookupUser(userId: string | undefined): Promise<any> {
   if (!userId) return null;
   const User = (await import('../db/user.model.js')).default;
-  return User.findById(userId);
+  return User.findById(userId).select(AUTH_USER_SELECT);
 }
 
 async function checkDeviceBan(deviceId: string): Promise<any> {
@@ -74,9 +77,9 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     try {
       const decoded = verifyToken(token) as JwtPayload;
       const user = await lookupUser(decoded.sub);
-      if (!user || user.deletedAt || user.isBanned) return;
+      if (!user || user.deletedAt || user.ban?.active) return;
       await user.checkBanStatus();
-      if (user.isBanned) return;
+      if (user.ban?.active) return;
       request.userId = decoded.sub;
     } catch (err: any) {
       // Expired token: treat as anonymous but flag it so resolvers can surface
@@ -108,27 +111,26 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     return null;
     }
     await user.checkBanStatus();
-    if (user.isBanned) {
+    if (user.ban?.active) {
       reply.code(403).send({ error: 'User is banned' });
     return null;
     }
 
-    const deviceId = request.headers['x-device-id'];
-    if (deviceId) {
-      const deviceBanned = await checkDeviceBan(deviceId as string);
-      if (deviceBanned) {
-        reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
-      return null;
-      }
-    }
-
+    const deviceId = request.headers['x-device-id'] as string | undefined;
     const ip = request.ip;
-    if (ip) {
-      const ipBanned = await checkIpBan(ip);
-      if (ipBanned) {
-        reply.code(403).send({ error: 'Access restricted from this network.' });
+
+    const [deviceBanned, ipBanned] = await Promise.all([
+      deviceId ? checkDeviceBan(deviceId) : Promise.resolve(null),
+      ip ? checkIpBan(ip) : Promise.resolve(null),
+    ]);
+
+    if (deviceBanned) {
+      reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
       return null;
-      }
+    }
+    if (ipBanned) {
+      reply.code(403).send({ error: 'Access restricted from this network.' });
+      return null;
     }
 
     request.userId = decoded.sub;
@@ -156,27 +158,26 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     }
 
     await user.checkBanStatus();
-    if (user.isBanned) {
+    if (user.ban?.active) {
       reply.code(403).send({ error: 'User is banned' });
       return;
     }
 
-    const deviceId = request.headers['x-device-id'];
-    if (deviceId) {
-      const deviceBanned = await checkDeviceBan(deviceId as string);
-      if (deviceBanned) {
-        reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
-        return;
-      }
-    }
-
+    const deviceId = request.headers['x-device-id'] as string | undefined;
     const ip = request.ip;
-    if (ip) {
-      const ipBanned = await checkIpBan(ip);
-      if (ipBanned) {
-        reply.code(403).send({ error: 'Access restricted from this network.' });
-        return;
-      }
+
+    const [deviceBanned, ipBanned] = await Promise.all([
+      deviceId ? checkDeviceBan(deviceId) : Promise.resolve(null),
+      ip ? checkIpBan(ip) : Promise.resolve(null),
+    ]);
+
+    if (deviceBanned) {
+      reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
+      return;
+    }
+    if (ipBanned) {
+      reply.code(403).send({ error: 'Access restricted from this network.' });
+      return;
     }
 
     request.userId = decoded.sub;

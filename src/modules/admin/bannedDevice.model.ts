@@ -26,4 +26,7 @@ const bannedDeviceSchema = new mongoose.Schema(
   { timestamps: true, collection: 'banned_devices' }
 );
 
+// Auto-expire after 2 years
+bannedDeviceSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2 * 365 * 24 * 60 * 60 });
+
 export default mongoose.model('BannedDevice', bannedDeviceSchema);

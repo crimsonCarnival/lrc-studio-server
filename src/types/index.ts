@@ -68,12 +68,14 @@ export interface ApiSuccess<T = unknown> {
 
 export interface UserPublic {
   id: string;
-  username?: string;
+  accountName?: string;
+  displayName?: string | null;
   email?: string;
   avatarUrl?: string | null;
   bio?: string;
   isVerified: boolean;
-  isBanned: boolean;
+  ban: { active: boolean; reason?: string | null; until?: Date | null };
+  appeal?: { text?: string | null; status: string; submittedAt?: Date | null; resolvedAt?: Date | null } | null;
   showUnbanMessage?: boolean;
   role: string;
   createdAt?: Date;

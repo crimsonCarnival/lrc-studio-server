@@ -37,4 +37,6 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.post('/reset-password', { ...authRateLimit }, authController.resetPasswordEndpoint);
   fastify.post('/change-password', { preHandler: [fastify.requireAuth] }, authController.changePassword);
   fastify.post('/set-password', { preHandler: [fastify.requireAuth] }, authController.setPassword);
+  fastify.post('/send-verification', { preHandler: [fastify.requireAuth], config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, authController.sendVerificationEmailHandler);
+  fastify.get('/verify-email', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, authController.verifyEmailHandler);
 }

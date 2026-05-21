@@ -63,9 +63,8 @@ const lyricsSchema = new mongoose.Schema(
   { timestamps: true, collection: 'lyrics' }
 );
 
-// Additional indexes for query performance
-lyricsSchema.index({ updatedAt: -1 }); // For sorting by last modified
-lyricsSchema.index({ 'lines.timestamp': 1 }); // For timestamp queries
+// Sorting by last modified in admin/analytics queries
+lyricsSchema.index({ updatedAt: -1 });
 
 // Validate SRT endTime > timestamp when both are set
 lyricsSchema.pre('validate', function (next) {

@@ -16,17 +16,19 @@ export const projectSchema = `
     userId: ID
     uploadId: ID
     lyricsId: ID
-    lastEditedBy: ID
     expiresAt: String
     createdAt: String
     updatedAt: String
     forkedFrom: ForkedFrom
+    forkCount: Int
+    starCount: Int
+    isStarredByMe: Boolean
   }
 
   type ForkedFrom {
     projectId: String
     userId: ID
-    username: String
+    accountName: String
   }
 
   type ProjectState {

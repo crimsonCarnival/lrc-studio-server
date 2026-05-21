@@ -59,7 +59,7 @@ async function checkDatabase(): Promise<ServiceCheck> {
     }
     await Promise.race([
       mongoose.connection.db!.command({ ping: 1 }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
     ]);
     return { status: 'ok', responseTime: ms(start) };
   } catch (err) {

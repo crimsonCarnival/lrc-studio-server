@@ -1,6 +1,7 @@
 import Project from '../../modules/projects/project.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
+import ProjectStar from '../../modules/projects/projectStar.model.js';
 import {
   createProject as createProjectService,
   listProjects,
@@ -70,6 +71,48 @@ export const projectResolvers = {
       const result = await cloneProject(id, context.userId);
       if ('error' in result) throw new Error((result as any).error);
       return Project.findOne({ projectId: (result as any).projectId });
+    },
+
+    starProject: async (_root: any, { id }: { id: string }, context: Context) => {
+      if (!context.userId) {
+        const err = new Error('Unauthorized') as any;
+        err.status = 401;
+        throw err;
+      }
+      if (!(await Project.exists({ projectId: id }))) throw new Error('Project not found');
+
+      try {
+        // Returns null when a new document was inserted (upsert), existing doc when already starred
+        const existing = await ProjectStar.findOneAndUpdate(
+          { projectId: id, userId: context.userId },
+          { $setOnInsert: { projectId: id, userId: context.userId } },
+          { upsert: true, new: false }
+        );
+        if (!existing) {
+          await Project.updateOne({ projectId: id }, { $inc: { starCount: 1 } });
+        }
+      } catch (err: any) {
+        // E11000: concurrent star from same user — star already exists, no-op
+        if (err.code !== 11000) throw err;
+      }
+      return Project.findOne({ projectId: id });
+    },
+
+    unstarProject: async (_root: any, { id }: { id: string }, context: Context) => {
+      if (!context.userId) {
+        const err = new Error('Unauthorized') as any;
+        err.status = 401;
+        throw err;
+      }
+      // deleteOne is atomic — only one concurrent request will get deletedCount: 1
+      const { deletedCount } = await ProjectStar.deleteOne({ projectId: id, userId: context.userId });
+      if (deletedCount > 0) {
+        await Project.updateOne(
+          { projectId: id, starCount: { $gt: 0 } },
+          { $inc: { starCount: -1 } }
+        );
+      }
+      return Project.findOne({ projectId: id });
     },
   },
 

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import User from '../../db/user.model.js';
+import { sendVerification } from '../email-verification/email-verification.service.js';
 import type { JwtPayload } from '../../types/index.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
@@ -152,32 +153,41 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
   if (!user) {
     const existingEmailUser = await User.findOne({ email });
     if (existingEmailUser) {
-      // Link Google account to existing user
+      // First-time Google link to an existing email account — copy picture if they have none
       user = existingEmailUser;
       if (!user.google) user.google = {};
       user.google.googleId = googleId;
       user.google.email = email;
       user.google.name = name;
       user.google.pictureUrl = picture;
+      if (!user.avatarUrl && picture) user.avatarUrl = picture || null;
+      user.isVerified = true;
       await user.save();
     } else {
-      // Auto-generate username from Google name + random suffix
-      let username = name?.replace(/\s+/g, '_').toLowerCase().slice(0, 20) || 'user';
-      let usernameExists = await User.findOne({ username });
+      // Auto-generate accountName from Google display name
+      const nameBase = (name || 'user')
+        .toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9_-]/g, '_')
+        .replace(/_{2,}/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 22);
+      const base = nameBase || 'user';
+
+      let accountName = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
       let attempt = 0;
-      while (usernameExists && attempt < 10) {
-        const suffix = Math.random().toString(36).substring(2, 7);
-        username = `${username}_${suffix}`;
-        usernameExists = await User.findOne({ username });
+      while (await User.findOne({ accountName }) && attempt < 10) {
+        accountName = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
         attempt++;
       }
 
-      // Create new user with OAuth sentinel password
+      // Brand-new user — seed avatarUrl from Google picture
       user = new User({
-        username,
+        accountName,
+        displayName: name || accountName,
         email,
+        avatarUrl: picture || undefined,
         passwordHash: 'OAUTH_NO_PASSWORD',
-        isVerified: true,
         google: {
           googleId,
           email,
@@ -186,9 +196,10 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
         },
       });
       await user.save();
+      sendVerification(user._id.toString(), user.email, 'initial').catch(() => {});
     }
   } else {
-    // User exists, update Google info in case of profile changes
+    // Returning user — update Google metadata only, never touch avatarUrl
     if (!user.google) {
       user.google = {};
     }

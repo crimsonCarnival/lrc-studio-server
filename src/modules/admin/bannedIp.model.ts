@@ -25,4 +25,7 @@ const bannedIpSchema = new mongoose.Schema(
   { timestamps: true, collection: 'banned_ips' }
 );
 
+// Auto-expire after 2 years — dynamic IPs rotate; manual re-ban if still needed
+bannedIpSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2 * 365 * 24 * 60 * 60 });
+
 export default mongoose.model('BannedIp', bannedIpSchema);

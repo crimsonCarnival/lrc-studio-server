@@ -27,10 +27,14 @@ export const rootSchema = `
     saveMedia(input: SaveMediaInput!): Upload!
     deleteMedia(id: ID!): Boolean!
     cloneProject(id: ID!): Project!
+    starProject(id: ID!): Project!
+    unstarProject(id: ID!): Project!
+    sendVerificationEmail: Boolean!
   }
 
   input UpdateProfileInput {
-    username: String
+    accountName: String
+    displayName: String
     email: String
     bio: String
     avatarUrl: String

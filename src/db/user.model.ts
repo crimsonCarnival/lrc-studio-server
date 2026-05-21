@@ -1,4 +1,4 @@
-import mongoose, { type Document, type Model, type HydratedDocument } from 'mongoose';
+import mongoose, { type Document, type Model } from 'mongoose';
 import argon2 from 'argon2';
 import bcrypt from 'bcrypt';
 import { UserPublic } from '../types/index.js';
@@ -18,25 +18,35 @@ const ARGON2_OPTIONS: argon2.Options = {
 
 const BCRYPT_SALT_ROUNDS = 12; // kept only for migration verification
 
+export interface IBan {
+  active: boolean;
+  reason?: string | null;
+  until?: Date | null;
+}
+
+export interface IAppeal {
+  text?: string | null;
+  status: 'none' | 'pending' | 'rejected';
+  submittedAt?: Date | null;
+  resolvedAt?: Date | null;
+}
+
 export interface IUser extends Document {
-  username?: string;
+  accountName?: string;
+  displayName?: string | null;
+  lastAccountNameChangedAt?: Date | null;
   email?: string;
+  pendingEmail?: string | null;
   passwordHash: string;
   passwordChangedAt?: Date | null;
   avatarUrl?: string | null;
   avatarPublicId?: string | null;
   isVerified: boolean;
-  isBanned: boolean;
-  bannedAt?: Date | null;
-  bannedUntil?: Date | null;
-  banReason?: string | null;
-  banAppeal?: string | null;
-  appealAt?: Date | null;
-  appealResolvedAt?: Date | null;
+  ban: IBan;
+  appeal: IAppeal;
+  showUnbanMessage: boolean;
   deletedAt?: Date | null;
   isDeleted: boolean;
-  appealStatus: 'none' | 'pending' | 'rejected';
-  showUnbanMessage: boolean;
   role: 'user' | 'admin';
   spotify?: {
     spotifyId?: string | null;
@@ -54,7 +64,6 @@ export interface IUser extends Document {
   };
   lastIp?: string | null;
   bio: string;
-  deviceIds: string[];
   createdAt?: Date;
   updatedAt?: Date;
 
@@ -67,17 +76,46 @@ export interface IUserModel extends Model<IUser> {
   hashPassword(plain: string): Promise<string>;
 }
 
+const banSchema = new mongoose.Schema<IBan>(
+  {
+    active: { type: Boolean, default: false },
+    reason: { type: String, default: null, maxlength: 500 },
+    until: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
+const appealSchema = new mongoose.Schema<IAppeal>(
+  {
+    text: { type: String, default: null, maxlength: 1000 },
+    status: { type: String, enum: ['none', 'pending', 'rejected'], default: 'none' },
+    submittedAt: { type: Date, default: null },
+    resolvedAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema<IUser>(
   {
-    username: {
+    accountName: {
       type: String,
       unique: true,
       sparse: true,
-      lowercase: false,
+      lowercase: true,
       trim: true,
       minlength: 3,
       maxlength: 30,
-      match: /^[a-zA-Z0-9_.-]+$/,
+      match: /^[a-z0-9_-]+$/,
+    },
+    displayName: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: 50,
+    },
+    lastAccountNameChangedAt: {
+      type: Date,
+      default: null,
     },
     email: {
       type: String,
@@ -85,6 +123,14 @@ const userSchema = new mongoose.Schema<IUser>(
       sparse: true,
       lowercase: true,
       trim: true,
+      match: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+    },
+    pendingEmail: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true,
+      sparse: true,
       match: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
     },
     passwordHash: {
@@ -107,46 +153,17 @@ const userSchema = new mongoose.Schema<IUser>(
       type: Boolean,
       default: false,
     },
-    isBanned: {
+    ban: { type: banSchema, default: () => ({}) },
+    appeal: { type: appealSchema, default: () => ({}) },
+    showUnbanMessage: {
       type: Boolean,
       default: false,
-    },
-    bannedUntil: {
-      type: Date,
-      default: null,
-    },
-    banReason: {
-      type: String,
-      default: null,
-      maxlength: 500,
-    },
-    banAppeal: {
-      type: String,
-      default: null,
-      maxlength: 1000,
-    },
-    appealAt: {
-      type: Date,
-      default: null,
-    },
-    appealResolvedAt: {
-      type: Date,
-      default: null,
     },
     deletedAt: {
       type: Date,
       default: null,
     },
     isDeleted: {
-      type: Boolean,
-      default: false,
-    },
-    appealStatus: {
-      type: String,
-      enum: ['none', 'pending', 'rejected'],
-      default: 'none',
-    },
-    showUnbanMessage: {
       type: Boolean,
       default: false,
     },
@@ -178,19 +195,14 @@ const userSchema = new mongoose.Schema<IUser>(
       default: '',
       maxlength: 160,
     },
-    deviceIds: {
-      type: [String],
-      default: [],
-      index: true,
-    },
   },
   { timestamps: true, collection: 'users' }
 );
 
 // At least one identifier required
 userSchema.pre('validate', function (this: IUser, next: mongoose.CallbackWithoutResultAndOptionalError) {
-  if (!this.username && !this.email) {
-    return next(new Error('Either username or email is required'));
+  if (!this.accountName && !this.email) {
+    return next(new Error('Either accountName or email is required'));
   }
   next();
 });
@@ -229,22 +241,28 @@ userSchema.statics.hashPassword = function (plain: string): Promise<string> {
 userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
   return {
     id: this._id.toString(),
-    username: this.username,
+    accountName: this.accountName,
+    displayName: this.displayName ?? null,
     email: this.email,
+    pendingEmail: this.pendingEmail ?? null,
     avatarUrl: this.avatarUrl,
     bio: this.bio || '',
     isVerified: this.isVerified,
-    isBanned: this.isBanned,
-    ...(this.isBanned ? {
-      bannedUntil: this.bannedUntil,
-      banReason: this.banReason,
-      appealStatus: this.appealStatus,
-      banAppeal: this.banAppeal,
-    } : {}),
+    ban: {
+      active: this.ban?.active ?? false,
+      ...(this.ban?.active ? { reason: this.ban.reason, until: this.ban.until } : {}),
+    },
+    appeal: this.ban?.active ? {
+      text: this.appeal?.text ?? null,
+      status: this.appeal?.status ?? 'none',
+      submittedAt: this.appeal?.submittedAt ?? null,
+      resolvedAt: this.appeal?.resolvedAt ?? null,
+    } : null,
     showUnbanMessage: this.showUnbanMessage,
     role: this.role,
     createdAt: this.createdAt,
     passwordChangedAt: this.passwordChangedAt,
+    lastAccountNameChangedAt: this.lastAccountNameChangedAt ?? null,
     hasPassword: this.passwordHash !== 'OAUTH_NO_PASSWORD',
     spotify: this.spotify ? {
       connected: !!this.spotify.spotifyId,
@@ -264,20 +282,18 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
 
 /**
  * Checks if the user's ban has expired.
- * If expired, it resets the ban fields and returns true (unbanned).
- * Returns false if still banned or was never banned.
+ * If expired, clears the ban and appeal state and flags the unban message.
  */
 userSchema.methods.checkBanStatus = async function (this: IUser): Promise<boolean> {
-  if (!this.isBanned) return false;
+  if (!this.ban?.active) return false;
 
-  if (this.bannedUntil && this.bannedUntil <= new Date()) {
-    this.isBanned = false;
-    (this as any).bannedAt = null;
-    this.bannedUntil = null;
-    this.banReason = null;
-    this.banAppeal = null;
-    this.appealAt = null;
-    this.appealStatus = 'none';
+  if (this.ban.until && this.ban.until <= new Date()) {
+    this.ban.active = false;
+    this.ban.reason = null;
+    this.ban.until = null;
+    this.appeal.text = null;
+    this.appeal.status = 'none';
+    this.appeal.submittedAt = null;
     this.showUnbanMessage = true;
     await this.save();
     return true;

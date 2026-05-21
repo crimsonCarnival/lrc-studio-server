@@ -78,23 +78,23 @@ const projectSchema = new mongoose.Schema(
     public: { type: Boolean, default: true },
 
 
-    lastEditedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
-    },
-
     forkedFrom: {
       projectId: { type: String, default: null },
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-      username: { type: String, default: null }
+      accountName: { type: String, default: null },
     },
+
+    forkCount: { type: Number, default: 0 },
+    starCount: { type: Number, default: 0 },
   },
   { timestamps: true, collection: 'projects' }
 );
 
 // Supports list query: by owner, sorted by recent updates
 projectSchema.index({ userId: 1, updatedAt: -1 });
+// Supports public project discovery and trending sorts
+projectSchema.index({ public: 1, starCount: -1 });
+projectSchema.index({ public: 1, createdAt: -1 });
 
 // Methods
 export interface IProjectMethods {

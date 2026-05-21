@@ -6,8 +6,11 @@ import { logUserAction } from '../user_logs/logs.service.js';
 import { registerAtomically, loginAtomically } from './auth.tx.service.js';
 import BannedIp from '../admin/bannedIp.model.js';
 import BannedDevice from '../admin/bannedDevice.model.js';
+import UserDevice from './userDevice.model.js';
 import { v2 as cloudinary } from 'cloudinary';
 import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.js';
+import AccountNameHistory from '../../db/account-name-history.model.js';
+import { sendVerification } from '../email-verification/email-verification.service.js';
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -62,19 +65,19 @@ async function checkDevice(deviceId: string | null | undefined, user: any = null
   const deviceBanned = await BannedDevice.findOne({ deviceId });
   if (deviceBanned) return BAN_ERRORS.DEVICE_BANNED;
 
-  if (user && !user.deviceIds.includes(deviceId)) {
-    if (user.deviceIds.length >= 20) {
-      user.deviceIds.shift();
-    }
-    user.deviceIds.push(deviceId);
-    await user.save();
+  if (user) {
+    await UserDevice.findOneAndUpdate(
+      { deviceId },
+      { $set: { userId: user._id, lastSeen: new Date() } },
+      { upsert: true }
+    );
   }
 
   return {};
 }
 
 export async function register(
-  data: { username?: string; email?: string; password: string; recaptchaToken?: string },
+  data: { accountName?: string; displayName?: string; email?: string; password: string; recaptchaToken?: string },
   jwt: JwtTools,
   ip: string,
   deviceId: string
@@ -90,19 +93,21 @@ export async function register(
   if (ipBanned) return BAN_ERRORS.IP_BANNED_REGISTER as any;
   if (deviceCheck.error) return deviceCheck as any;
 
-  const { username, email, password } = data;
+  const { email, password } = data;
+  const accountName = data.accountName ? data.accountName.toLowerCase().trim() : undefined;
+  const displayName = data.displayName ? data.displayName.trim().slice(0, 50) : undefined;
 
   const query: Record<string, unknown>[] = [];
-  if (username) query.push({ username });
+  if (accountName) query.push({ accountName });
   if (email) query.push({ email: email.toLowerCase() });
   const existing = await User.findOne({ $or: query });
   if (existing) {
-    if (existing.isBanned) return err('register_account_restricted', 403) as any;
-    return err('username_taken', 409) as any;
+    if (existing.ban?.active) return err('register_account_restricted', 403) as any;
+    return err('accountName_taken', 409) as any;
   }
 
   if (ip) {
-    const bannedByIp = await User.findOne({ lastIp: ip, isBanned: true }).lean();
+    const bannedByIp = await User.findOne({ lastIp: ip, 'ban.active': true }).lean();
     if (bannedByIp) return BAN_ERRORS.IP_LINKED_BANNED_USER as any;
   }
 
@@ -110,7 +115,8 @@ export async function register(
 
   const { user, accessToken, refreshToken } = await registerAtomically(
     {
-      username,
+      accountName,
+      displayName,
       email: email ? email.toLowerCase() : undefined,
       passwordHash,
       ip,
@@ -124,8 +130,12 @@ export async function register(
     action: 'REGISTER',
     ip,
     deviceId,
-    metadata: { username: user.username, email: user.email },
+    metadata: { accountName: user.accountName, email: user.email },
   });
+
+  if (user.email) {
+    sendVerification(user._id.toString(), user.email, 'initial').catch(() => {});
+  }
 
   return {
     user: user.toPublic() as any,
@@ -155,7 +165,7 @@ export async function login(
   const normalised = identifier.toLowerCase().trim();
 
   const user = await User.findOne({
-    $or: [{ username: identifier.trim() }, { email: normalised }],
+    $or: [{ accountName: normalised }, { email: normalised }],
   });
 
   const passwordValid = user ? await user.verifyPassword(password) : false;
@@ -173,7 +183,7 @@ export async function login(
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
 
   await user.checkBanStatus();
-  if (user.isBanned) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
 
   const ipChanged = ip && user.lastIp !== ip;
   if (ipChanged) user.lastIp = ip;
@@ -211,7 +221,7 @@ export async function loginByUserId(
   if (!user || user.isDeleted) return err('user_not_found', 404) as any;
 
   await user.checkBanStatus();
-  if (user.isBanned) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
 
   const { accessToken, refreshToken } = await loginAtomically(
     user,
@@ -231,7 +241,7 @@ export async function checkIdentifier(
   identifier: string,
   ip: string,
   deviceId: string
-): Promise<ServiceResult<{ exists: boolean; username: string | null; avatarUrl: string | null }>> {
+): Promise<ServiceResult<{ exists: boolean; accountName: string | null; avatarUrl: string | null }>> {
   const [ipBanned, deviceCheck] = await Promise.all([
     ip ? BannedIp.findOne({ ip }) : Promise.resolve(null),
     checkDevice(deviceId),
@@ -241,18 +251,18 @@ export async function checkIdentifier(
 
   const normalised = identifier.toLowerCase().trim();
   const user = await User.findOne({
-    $or: [{ username: identifier.trim() }, { email: normalised }],
+    $or: [{ accountName: normalised }, { email: normalised }],
   });
 
   if (!user) return err('identifier_not_found', 404) as any;
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
 
   await user.checkBanStatus();
-  if (user.isBanned) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
 
   return {
     exists: true,
-    username: user.username || null,
+    accountName: user.accountName || null,
     avatarUrl: user.avatarUrl || null,
     hasPassword: user.passwordHash !== 'OAUTH_NO_PASSWORD',
     hasGoogle: !!user.google?.googleId,
@@ -276,7 +286,7 @@ export async function refresh(
   if (!user || user.isDeleted) return err('user_not_found', 401) as any;
 
   await user.checkBanStatus();
-  if (user.isBanned) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
 
   const deviceCheck = await checkDevice(deviceId, user);
   if (deviceCheck.error) return deviceCheck as any;
@@ -309,7 +319,7 @@ export async function refresh(
   }
 
   // Issue new tokens
-  const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
+  const tokenPayload = { sub: user._id.toString(), accountName: user.accountName, role: user.role, familyId };
   const newAccessToken = jwt.signAccess(tokenPayload);
   const newRefreshToken = jwt.signRefresh(tokenPayload);
 
@@ -370,21 +380,43 @@ export async function updateProfile(
   data: any,
   logger: FastifyLoggerInstance
 ): Promise<ServiceResult<{ user: UserPublic }>> {
-  const { avatarUrl, avatarPublicId, username, email, bio } = data;
+  const { avatarUrl, avatarPublicId, accountName, displayName, email, bio } = data;
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 } as any;
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
 
-  if (username && username !== user.username) {
-    const existing = await User.findOne({ username: username.trim() });
-    if (existing) return { error: 'Username already taken', status: 409 } as any;
-    user.username = username.trim();
+  if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
+    const ACCOUNT_NAME_COOLDOWN_DAYS = 7;
+    if (user.lastAccountNameChangedAt) {
+      const daysSince = (Date.now() - user.lastAccountNameChangedAt.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSince < ACCOUNT_NAME_COOLDOWN_DAYS) {
+        const daysLeft = Math.ceil(ACCOUNT_NAME_COOLDOWN_DAYS - daysSince);
+        return { error: 'accountName_change_cooldown', code: 'accountName_change_cooldown', status: 429, daysLeft } as any;
+      }
+    }
+    const normalised = accountName.toLowerCase().trim();
+    if (!/^[a-z0-9_-]{3,30}$/.test(normalised)) {
+      return { error: 'accountName_invalid', code: 'accountName_invalid', status: 400 } as any;
+    }
+    const existing = await User.findOne({ accountName: normalised });
+    if (existing) return { error: 'Account name already taken', status: 409 } as any;
+    const previousAccountName = user.accountName;
+    user.accountName = normalised;
+    user.lastAccountNameChangedAt = new Date();
+    AccountNameHistory.create({ userId: user._id, from: previousAccountName, to: normalised }).catch(() => {});
   }
 
-  if (email && email.toLowerCase().trim() !== user.email) {
-    const existing = await User.findOne({ email: email.toLowerCase().trim() });
+  if (displayName !== undefined) {
+    user.displayName = displayName ? displayName.trim().slice(0, 50) : null;
+  }
+
+  if (email && email.toLowerCase().trim() !== user.email && email.toLowerCase().trim() !== user.pendingEmail) {
+    const normalised = email.toLowerCase().trim();
+    const existing = await User.findOne({ $or: [{ email: normalised }, { pendingEmail: normalised }] });
     if (existing) return { error: 'Email already in use', status: 409 } as any;
-    user.email = email.toLowerCase().trim();
+    user.pendingEmail = normalised;
+    // Fire-and-forget — don't fail the profile save if email sending fails
+    sendVerification(user._id.toString(), normalised, 'email_change').catch(() => {});
   }
 
   if (bio !== undefined) {
@@ -433,14 +465,14 @@ export async function submitAppeal(
 ): Promise<ServiceResult<{ user: UserPublic }>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 } as any;
-  if (!user.isBanned) return { error: 'User is not banned', status: 400 } as any;
-  if (user.appealStatus === 'pending') {
+  if (!user.ban?.active) return { error: 'User is not banned', status: 400 } as any;
+  if (user.appeal.status === 'pending') {
     return err('appeal_already_pending', 409) as any;
   }
 
-  user.banAppeal = appealText.slice(0, 1000);
-  user.appealStatus = 'pending';
-  user.appealAt = new Date();
+  user.appeal.text = appealText.slice(0, 1000);
+  user.appeal.status = 'pending';
+  user.appeal.submittedAt = new Date();
   await user.save();
 
   return { user: user.toPublic() as any } as any;

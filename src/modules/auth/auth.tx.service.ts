@@ -3,6 +3,7 @@ import type { ClientSession } from 'mongoose';
 import User, { type IUser } from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
 import PasswordReset from '../../db/passwordReset.model.js';
+import UserDevice from './userDevice.model.js';
 import { withTransaction } from '../../db/transaction.js';
 
 type JwtTools = {
@@ -24,20 +25,24 @@ export interface RegisterResult extends AuthTokenResult {
 }
 
 export async function registerAtomically(
-  userData: { username?: string; email?: string; passwordHash: string; ip: string; deviceId?: string },
+  userData: { accountName?: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string },
   jwt: JwtTools
 ): Promise<RegisterResult> {
   return withTransaction(async (session: ClientSession) => {
     const [user] = await User.create([{
-      ...(userData.username ? { username: userData.username } : {}),
+      ...(userData.accountName ? { accountName: userData.accountName } : {}),
+      ...(userData.displayName ? { displayName: userData.displayName } : {}),
       ...(userData.email ? { email: userData.email } : {}),
       passwordHash: userData.passwordHash,
       lastIp: userData.ip,
-      deviceIds: userData.deviceId ? [userData.deviceId] : [],
     }], { session });
 
+    if (userData.deviceId) {
+      await UserDevice.create([{ userId: user._id, deviceId: userData.deviceId }], { session });
+    }
+
     const familyId = crypto.randomUUID();
-    const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
+    const tokenPayload = { sub: user._id.toString(), accountName: user.accountName, role: user.role, familyId };
     const accessToken = jwt.signAccess(tokenPayload);
     const refreshToken = jwt.signRefresh(tokenPayload);
 
@@ -63,7 +68,7 @@ export async function loginAtomically(
 ): Promise<AuthTokenResult> {
   return withTransaction(async (session: ClientSession) => {
     const familyId = crypto.randomUUID();
-    const tokenPayload = { sub: user._id.toString(), username: user.username, role: user.role, familyId };
+    const tokenPayload = { sub: user._id.toString(), accountName: user.accountName, role: user.role, familyId };
     const accessToken = jwt.signAccess(tokenPayload);
     const refreshToken = jwt.signRefresh(tokenPayload);
 

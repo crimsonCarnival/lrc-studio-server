@@ -93,7 +93,7 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('projectId title metadata uploadId readOnly createdAt updatedAt forkedFrom')
+    .select('projectId title metadata uploadId readOnly createdAt updatedAt forkedFrom forkCount starCount')
     .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title')
     .sort({ updatedAt: -1 })
     .limit(100)
@@ -149,6 +149,8 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
       forkedFrom: s.forkedFrom?.projectId ? s.forkedFrom : null,
+      forkCount: s.forkCount ?? 0,
+      starCount: s.starCount ?? 0,
     };
   });
 }
@@ -207,8 +209,6 @@ export async function updateProject(
   if (!project.userId && userId) {
     projectUpdate.userId = userId;
   }
-
-  projectUpdate.lastEditedBy = userId || null;
 
   const lyricsPromise = (() => {
     if (lyrics === undefined) return Lyrics.findOne({ projectId });
@@ -285,7 +285,6 @@ export async function patchProject(
   if (!project.userId && userId) {
     projectUpdate.userId = userId;
   }
-  projectUpdate.lastEditedBy = userId || null;
 
   const hasProjectUpdate = allowed.some(k => data[k] !== undefined) || (!project.userId && userId != null);
 
