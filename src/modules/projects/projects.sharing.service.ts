@@ -81,6 +81,7 @@ export async function cloneProject(
 ): Promise<ServiceResult<{ projectId: string; url: string }>> {
   const sourceProject = await Project.findOne({ projectId: sourceProjectId }).populate('userId', 'accountName');
   if (!sourceProject) return { error: 'Source project not found', status: 404 } as any;
+  if (!sourceProject.public && !(sourceProject as any).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404 } as any;
 
   const sourceLyrics = await Lyrics.findOne({ projectId: sourceProjectId });
 

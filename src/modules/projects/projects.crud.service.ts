@@ -155,13 +155,14 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   });
 }
 
-export async function getProject(projectId: string): Promise<ProjectPublic | null> {
+export async function getProject(projectId: string, requestingUserId?: string | null): Promise<ProjectPublic | null> {
   const [project, lyrics] = await Promise.all([
     Project.findOne({ projectId })
       .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title'),
     Lyrics.findOne({ projectId }),
   ]);
   if (!project) return null;
+  if (!project.public && !(project as any).isOwnedBy(requestingUserId)) return null;
 
   const pub: any = (project as any).toPublic();
   const rawUpload = pub.uploadId;

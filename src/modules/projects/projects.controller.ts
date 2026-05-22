@@ -25,7 +25,7 @@ export async function list(req: FastifyRequest, reply: FastifyReply): Promise<vo
  * GET /projects/:id — get a single project.
  */
 export async function get(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const project = await projectService.getProject((req.params as Record<string, string>).id);
+  const project = await projectService.getProject((req.params as Record<string, string>).id, (req as any).userId ?? null);
   if (!project) {
     return reply.code(404).send({ error: 'Project not found' });
   }

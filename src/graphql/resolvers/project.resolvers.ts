@@ -10,13 +10,14 @@ import {
   getShareProject,
   cloneProject,
 } from '../../modules/projects/projects.service.js';
+import { getProject } from '../../modules/projects/projects.crud.service.js';
 import { Context } from './context.js';
 
 export const projectResolvers = {
   Query: {
     // id is the projectId nanoid string, NOT the MongoDB _id
-    project: async (_root: any, { id }: { id: string }) => {
-      return Project.findOne({ projectId: id });
+    project: async (_root: any, { id }: { id: string }, context: Context) => {
+      return getProject(id, context.userId ?? null);
     },
 
     projects: async (_root: any, { limit = 20, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
