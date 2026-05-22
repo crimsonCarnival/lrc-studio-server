@@ -134,7 +134,7 @@ export async function register(
   });
 
   if (user.email) {
-    sendVerification(user._id.toString(), user.email, 'initial').catch(() => {});
+    sendVerification(user._id.toString(), user.email, 'initial').catch((e) => console.error('[register] sendVerification failed:', e));
   }
 
   return {
@@ -416,7 +416,7 @@ export async function updateProfile(
     if (existing) return { error: 'Email already in use', status: 409 } as any;
     user.pendingEmail = normalised;
     // Fire-and-forget — don't fail the profile save if email sending fails
-    sendVerification(user._id.toString(), normalised, 'email_change').catch(() => {});
+    sendVerification(user._id.toString(), normalised, 'email_change').catch((e) => console.error('[email_change] sendVerification failed:', e));
   }
 
   if (bio !== undefined) {

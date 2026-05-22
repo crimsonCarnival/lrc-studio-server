@@ -196,7 +196,7 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
         },
       });
       await user.save();
-      if (user.email) sendVerification(user._id.toString(), user.email, 'initial').catch(() => {});
+      if (user.email) sendVerification(user._id.toString(), user.email, 'initial').catch((e) => console.error('[google] sendVerification failed:', e));
     }
   } else {
     // Returning user — update Google metadata only, never touch avatarUrl

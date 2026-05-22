@@ -315,13 +315,13 @@ export async function sendVerificationEmailHandler(req: FastifyRequest, reply: F
 export async function verifyEmailHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { token } = req.query as { token?: string };
   if (!token) {
-    return reply.redirect(`${process.env.CLIENT_URL ?? ''}/verify-email?status=error&code=missing_token`);
+    return reply.code(400).send({ error: 'missing_token' });
   }
   try {
     await verifyEmailToken(token);
-    return reply.redirect(`${process.env.CLIENT_URL ?? ''}/verify-email?status=success`);
+    return reply.send({ success: true });
   } catch (err) {
     const code = err instanceof VerificationError ? err.code : 'server_error';
-    return reply.redirect(`${process.env.CLIENT_URL ?? ''}/verify-email?status=error&code=${code}`);
+    return reply.code(400).send({ error: code });
   }
 }
