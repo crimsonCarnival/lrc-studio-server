@@ -60,9 +60,10 @@ export const listUsersSchema = {
   querystring: {
     type: 'object',
     properties: {
-      page: { type: 'integer', minimum: 1, default: 1 },
+      cursor: { type: 'string', maxLength: 24 },
       limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
       search: { type: 'string', maxLength: 200 },
+      role: { type: 'string' },
       status: { type: 'string', enum: ['', 'all', 'active', 'banned', 'pending', 'deleted', 'verified', 'premium'] },
     },
   },

@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
 import BannedIp from './bannedIp.model.js';
 import BannedDevice from './bannedDevice.model.js';
@@ -8,7 +9,7 @@ import AdminLog from './adminLog.model.js';
 import type { AdminLogEntry } from '../../types/index.js';
 
 export async function listUsers(query: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  const { page = 1, limit = 50, search = '', role = '', status = '' } = query as Record<string, string | number>;
+  const { limit = 50, cursor = null, search = '', role = '', status = '' } = query as Record<string, string | number | null>;
 
   const filter: Record<string, unknown> = {};
   if (search) {
@@ -32,19 +33,26 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
     }
   }
 
-  const total = await User.countDocuments(filter);
-  const usersRaw = await User.find(filter)
-    .select('-passwordHash -spotify.accessToken -spotify.refreshToken')
-    .sort({ createdAt: -1 })
-    .skip((Number(page) - 1) * Number(limit))
-    .limit(Number(limit))
-    .lean();
-
-  if (usersRaw.length === 0) {
-    return { users: [], total, page: Number(page), limit: Number(limit) };
+  if (cursor) {
+    filter._id = { $gt: new mongoose.Types.ObjectId(cursor as string) };
   }
 
-  const userIds = usersRaw.map((u: Record<string, unknown>) => u._id);
+  const usersRaw = await User.find(filter)
+    .select('-passwordHash -spotify.accessToken -spotify.refreshToken')
+    .sort({ _id: 1 })
+    .limit(Number(limit) + 1)
+    .lean();
+
+  const hasMore = usersRaw.length > Number(limit);
+  const page = usersRaw.slice(0, Number(limit));
+  const nextCursor = hasMore ? (page[page.length - 1]._id as mongoose.Types.ObjectId).toString() : null;
+  const total = cursor ? null : await User.countDocuments(filter);
+
+  if (page.length === 0) {
+    return { users: [], nextCursor: null, hasMore: false, total };
+  }
+
+  const userIds = page.map((u: Record<string, unknown>) => u._id);
 
   const [projectCounts, uploadCounts] = await Promise.all([
     Project.aggregate([
@@ -60,14 +68,14 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   const projectCountMap = new Map((projectCounts as { _id: string; count: number }[]).map(r => [r._id.toString(), r.count]));
   const uploadCountMap = new Map((uploadCounts as { _id: string; count: number }[]).map(r => [r._id.toString(), r.count]));
 
-  const users = usersRaw.map((u: Record<string, unknown>) => ({
+  const users = page.map((u: Record<string, unknown>) => ({
     ...u,
-    id: (u._id as Record<string, unknown>).toString(),
-    projectCount: projectCountMap.get((u._id as Record<string, unknown>).toString()) ?? 0,
-    uploadCount: uploadCountMap.get((u._id as Record<string, unknown>).toString()) ?? 0,
+    id: (u._id as mongoose.Types.ObjectId).toString(),
+    projectCount: projectCountMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? 0,
+    uploadCount: uploadCountMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? 0,
   }));
 
-  return { users, total, page: Number(page), limit: Number(limit) };
+  return { users, nextCursor, hasMore, total };
 }
 
 export async function getStats(): Promise<Record<string, unknown>> {
