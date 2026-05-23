@@ -2,6 +2,7 @@ import 'dotenv/config';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import Fastify from 'fastify';
 import mongoose from './plugins/mongoose.js';
+import cron from './plugins/cron.js';
 import cors from './plugins/cors.js';
 import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rateLimit.js';
@@ -52,6 +53,7 @@ async function build() {
   await app.register(cors);
   await app.register(rateLimit);
   await app.register(mongoose);
+  await app.register(cron);
   await app.register(auth);
 
   await app.register(mercurius, {

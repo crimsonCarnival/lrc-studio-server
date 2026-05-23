@@ -1,0 +1,59 @@
+import type { FastifyInstance } from 'fastify';
+import fp from 'fastify-plugin';
+import { archiveDeletedUsers } from '../jobs/archive-deleted-users.js';
+
+/**
+ * Lightweight cron-like scheduler using setInterval.
+ * Runs archiveDeletedUsers weekly on Sunday at 02:00 UTC.
+ *
+ * NOTE: node-cron and fastify-cron are not installed. If a proper cron library
+ * is desired in the future, add `node-cron` to dependencies and replace this
+ * implementation with: cron.schedule('0 2 * * 0', archiveDeletedUsers).
+ */
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Returns milliseconds until next Sunday 02:00 UTC. */
+function msUntilNextSunday0200(): number {
+  const now = new Date();
+  const next = new Date(now);
+  // Find next Sunday (day 0) at 02:00 UTC
+  const daysUntilSunday = (7 - now.getUTCDay()) % 7 || 7; // at least 1 week if today is Sunday
+  next.setUTCDate(now.getUTCDate() + daysUntilSunday);
+  next.setUTCHours(2, 0, 0, 0);
+  return next.getTime() - now.getTime();
+}
+
+async function cronPlugin(fastify: FastifyInstance): Promise<void> {
+  let initialTimer: ReturnType<typeof setTimeout> | null = null;
+  let weeklyTimer: ReturnType<typeof setInterval> | null = null;
+
+  fastify.addHook('onReady', async () => {
+    const runAndReschedule = async () => {
+      try {
+        await archiveDeletedUsers();
+      } catch (err) {
+        fastify.log.error({ err }, '[cron] archiveDeletedUsers failed');
+      }
+    };
+
+    // Schedule first run at the next Sunday 02:00 UTC, then repeat weekly
+    const initialDelay = msUntilNextSunday0200();
+    fastify.log.info(
+      `[cron] archiveDeletedUsers scheduled in ${Math.round(initialDelay / 1000 / 60)} minutes`
+    );
+
+    initialTimer = setTimeout(() => {
+      initialTimer = null;
+      void runAndReschedule();
+      weeklyTimer = setInterval(runAndReschedule, WEEK_MS);
+    }, initialDelay);
+  });
+
+  fastify.addHook('onClose', async () => {
+    if (initialTimer !== null) clearTimeout(initialTimer);
+    if (weeklyTimer !== null) clearInterval(weeklyTimer);
+  });
+}
+
+export default fp(cronPlugin, { name: 'cron', dependencies: ['mongoose'] });
