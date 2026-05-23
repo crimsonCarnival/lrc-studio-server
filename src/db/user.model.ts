@@ -210,6 +210,9 @@ userSchema.pre('validate', function (this: IUser, next: mongoose.CallbackWithout
 // Prevent duplicate Google account links
 userSchema.index({ 'google.googleId': 1 }, { unique: true, sparse: true });
 
+// Enables $text search in admin user listing
+userSchema.index({ accountName: 'text', email: 'text' });
+
 /**
  * Verifies the provided plaintext password against the stored hash.
  * Handles transparent migration from legacy bcrypt hashes:
