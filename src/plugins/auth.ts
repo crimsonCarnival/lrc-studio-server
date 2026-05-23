@@ -4,6 +4,13 @@ import jwt from 'jsonwebtoken';
 import type { JwtPayload, SignOptions } from 'jsonwebtoken';
 import { getEnv } from '../config/env.js';
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    userId?: string;
+    _cachedAuthUser?: any; // cached to avoid duplicate DB lookups within one request
+  }
+}
+
 const env = getEnv();
 const JWT_SECRET = env.JWT_SECRET;
 
@@ -66,17 +73,24 @@ async function checkIpBan(ip: string): Promise<any> {
   return BannedIp.findOne({ ip });
 }
 
+async function getOrFetchUser(request: FastifyRequest, userId: string | undefined) {
+  if (request._cachedAuthUser) return request._cachedAuthUser;
+  const user = await lookupUser(userId);
+  request._cachedAuthUser = user;
+  return user;
+}
+
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.decorate('jwt', { signAccess, signRefresh, verifyToken });
 
-  fastify.decorateRequest('userId', null);
+  fastify.decorateRequest('userId', undefined as any);
 
   fastify.decorate('optionalAuth', async function (request: FastifyRequest) {
     const token = request.cookies.accessToken;
     if (!token) return;
     try {
       const decoded = verifyToken(token) as JwtPayload;
-      const user = await lookupUser(decoded.sub);
+      const user = await getOrFetchUser(request, decoded.sub);
       if (!user || user.deletedAt || user.ban?.active) return;
       await user.checkBanStatus();
       if (user.ban?.active) return;
@@ -105,7 +119,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     return null;
     }
 
-    const user = await lookupUser(decoded.sub);
+    const user = await getOrFetchUser(request, decoded.sub);
     if (!user || user.deletedAt) {
       reply.code(401).send({ error: 'User not found' });
     return null;
@@ -151,7 +165,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
       return;
     }
 
-    const user = await lookupUser(decoded.sub);
+    const user = await getOrFetchUser(request, decoded.sub);
     if (!user || user.deletedAt) {
       reply.code(401).send({ error: 'User not found' });
       return;
@@ -210,7 +224,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
       return;
     }
 
-    const user = await lookupUser(decoded.sub);
+    const user = await getOrFetchUser(request, decoded.sub);
     if (!user || user.deletedAt) {
       reply.code(401).send({ error: 'User not found' });
       return;
@@ -233,7 +247,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
       return;
     }
 
-    const user = await lookupUser(decoded.sub);
+    const user = await getOrFetchUser(request, decoded.sub);
     if (!user || user.deletedAt) {
       reply.code(401).send({ error: 'User not found' });
       return;
