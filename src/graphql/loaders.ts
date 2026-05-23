@@ -99,6 +99,43 @@ export const loaders: MercuriusLoaders = {
         return queries.map(({ obj }) => starredSet.has(obj.projectId));
       },
     },
+
+    // Batches lineCount across all projects in a single query per request
+    lineCount: {
+      loader: async (queries: Array<{ obj: any }>, _context: any) => {
+        const projectIds = queries.map(({ obj }) => obj.projectId);
+        const lyricsList = await Lyrics.find(
+          { projectId: { $in: projectIds } },
+          { projectId: 1, lines: 1 }
+        ).lean();
+        const map = new Map((lyricsList as any[]).map((l: any) => [l.projectId, l]));
+        return queries.map(({ obj }) => {
+          if (obj.lineCount !== undefined) return obj.lineCount;
+          const lyrics = map.get(obj.projectId);
+          return lyrics?.lines?.length ?? 0;
+        });
+      },
+    },
+
+    // Batches syncedLineCount across all projects in a single query per request
+    syncedLineCount: {
+      loader: async (queries: Array<{ obj: any }>, _context: any) => {
+        const projectIds = queries.map(({ obj }) => obj.projectId);
+        const lyricsList = await Lyrics.find(
+          { projectId: { $in: projectIds } },
+          { projectId: 1, lines: 1 }
+        ).lean();
+        const map = new Map((lyricsList as any[]).map((l: any) => [l.projectId, l]));
+        return queries.map(({ obj }) => {
+          if (obj.syncedLineCount !== undefined) return obj.syncedLineCount;
+          const lyrics = map.get(obj.projectId);
+          if (!lyrics?.lines) return 0;
+          return (lyrics.lines as any[]).filter(
+            (l: any) => l.timestamp !== null && l.timestamp !== undefined
+          ).length;
+        });
+      },
+    },
   },
   Upload: {
     user: {

@@ -139,16 +139,5 @@ export const projectResolvers = {
       if (project.uploadId) return Upload.findById(project.uploadId);
       return null;
     },
-    lineCount: async (project: any) => {
-      if (project.lineCount !== undefined) return project.lineCount;
-      const lyrics = await Lyrics.findOne({ projectId: project.projectId }).select('lines');
-      return lyrics?.lines?.length ?? 0;
-    },
-    syncedLineCount: async (project: any) => {
-      if (project.syncedLineCount !== undefined) return project.syncedLineCount;
-      const lyrics = await Lyrics.findOne({ projectId: project.projectId }).select('lines');
-      if (!lyrics?.lines) return 0;
-      return lyrics.lines.filter((l: any) => l.timestamp !== null && l.timestamp !== undefined).length;
-    }
   },
 };
