@@ -83,6 +83,17 @@ export async function cloneProject(
   if (!sourceProject) return { error: 'Source project not found', status: 404 } as any;
   if (!sourceProject.public && !(sourceProject as any).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404 } as any;
 
+  const MAX_PROJECTS_PER_USER = 200;
+
+  // Note: mild TOCTOU race on concurrent creates is acceptable — overage is bounded and non-critical
+  const userProjectCount = await Project.countDocuments({ userId: newUserId });
+  if (userProjectCount >= MAX_PROJECTS_PER_USER) {
+    return {
+      error: `Project limit reached (${MAX_PROJECTS_PER_USER} max). Delete old projects to create new ones.`,
+      status: 429,
+    } as ServiceResult<{ projectId: string; url: string }>;
+  }
+
   const sourceLyrics = await Lyrics.findOne({ projectId: sourceProjectId });
 
   // Upload upsert is idempotent and outside the transaction (shared resource)

@@ -21,6 +21,17 @@ export async function createProject(
     return { error: 'Authentication required', status: 401 } as ServiceResult;
   }
 
+  const MAX_PROJECTS_PER_USER = 200;
+
+  // Note: mild TOCTOU race on concurrent creates is acceptable — overage is bounded and non-critical
+  const userProjectCount = await Project.countDocuments({ userId });
+  if (userProjectCount >= MAX_PROJECTS_PER_USER) {
+    return {
+      error: `Project limit reached (${MAX_PROJECTS_PER_USER} max). Delete old projects to create new ones.`,
+      status: 429,
+    } as ServiceResult;
+  }
+
   if (!(await verifyRecaptcha(recaptchaToken, ip))) {
     return { error: 'recaptcha_failed', status: 403, code: 'recaptcha_failed' } as ServiceResult;
   }
