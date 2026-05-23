@@ -65,7 +65,7 @@ function cleanLyrics(raw: string): string {
 
 function extractFromPreloadedState(html: string): string | null {
   // Genius embeds lyrics as serialized JSON in window.__PRELOADED_STATE__
-  const match = html.match(/window\.__PRELOADED_STATE__\s*=\s*JSON\.parse\('([\s\S]*?)'\)/);
+  const match = html.match(/window\.__PRELOADED_STATE__\s*=\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/);
   if (!match) return null;
 
   try {
