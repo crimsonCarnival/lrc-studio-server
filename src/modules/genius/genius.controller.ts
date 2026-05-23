@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { searchSongs, extractLyrics } from './genius.service.js';
+import { searchSongs } from './genius.service.js';
 import { getLyricsForSong } from './musixmatch.service.js';
 
 export async function search(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -25,43 +25,20 @@ export async function search(request: FastifyRequest, reply: FastifyReply): Prom
 }
 
 export async function extract(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const query = request.query as Record<string, string>;
-  const url = query.url;
-  const track = query.track;
-  const artist = query.artist;
+  const params = request.query as Record<string, string>;
+  const track = params.track?.trim();
+  const artist = params.artist?.trim() ?? '';
 
-  if (!url) {
-    return reply.code(400).send({ error: 'Missing url parameter' });
+  if (!track) {
+    return reply.code(400).send({ error: 'Missing track parameter' });
   }
 
   try {
-    new URL(url); // validate URL format
-  } catch {
-    return reply.code(400).send({ error: 'Invalid url' });
-  }
-
-  // Try Musixmatch first when title+artist are available (avoids cloud-IP scraping)
-  if (track && artist) {
-    try {
-      const lyrics = await getLyricsForSong(track, artist);
-      if (lyrics) return reply.send({ lyrics });
-    } catch (err) {
-      request.log.warn({ err }, 'Musixmatch extract failed, falling back to Genius');
-    }
-  }
-
-  try {
-    const lyrics = await extractLyrics(url);
-    return reply.send({ lyrics });
+    const lyrics = await getLyricsForSong(track, artist);
+    if (lyrics) return reply.send({ lyrics });
+    return reply.code(422).send({ error: 'lyrics_unavailable' });
   } catch (err) {
-    const error = err as Error & { statusCode?: number };
-    if (error.message === 'invalid_url') {
-      return reply.code(400).send({ error: 'invalid_url' });
-    }
-    if (error.message === 'lyrics_unavailable') {
-      return reply.code(422).send({ error: 'lyrics_unavailable' });
-    }
-    request.log.error({ err: error, geniusStatus: error.statusCode }, 'Genius extract failed');
+    request.log.error({ err }, 'Musixmatch extract failed');
     return reply.code(502).send({ error: 'upstream_error' });
   }
 }
