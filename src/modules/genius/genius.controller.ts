@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { searchSongs, extractLyrics } from './genius.service.js';
+import { getLyricsForSong } from './musixmatch.service.js';
 
 export async function search(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const query = (request.query as Record<string, string>).q;
@@ -24,7 +25,11 @@ export async function search(request: FastifyRequest, reply: FastifyReply): Prom
 }
 
 export async function extract(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const url = (request.query as Record<string, string>).url;
+  const query = request.query as Record<string, string>;
+  const url = query.url;
+  const track = query.track;
+  const artist = query.artist;
+
   if (!url) {
     return reply.code(400).send({ error: 'Missing url parameter' });
   }
@@ -33,6 +38,16 @@ export async function extract(request: FastifyRequest, reply: FastifyReply): Pro
     new URL(url); // validate URL format
   } catch {
     return reply.code(400).send({ error: 'Invalid url' });
+  }
+
+  // Try Musixmatch first when title+artist are available (avoids cloud-IP scraping)
+  if (track && artist) {
+    try {
+      const lyrics = await getLyricsForSong(track, artist);
+      if (lyrics) return reply.send({ lyrics });
+    } catch (err) {
+      request.log.warn({ err }, 'Musixmatch extract failed, falling back to Genius');
+    }
   }
 
   try {
