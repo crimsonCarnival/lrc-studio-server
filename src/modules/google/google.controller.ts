@@ -1,14 +1,18 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as googleService from './google.service.js';
 import * as authService from '../auth/auth.service.js';
+import { getEnv } from '../../config/env.js';
 
-function callbackHtml(success: boolean, error?: string | null): string {
+function callbackHtml(success: boolean, error?: string | null, appOrigin?: string | null): string {
   const payload = { type: 'google-callback', success, error: error || null };
   const payloadStr = JSON.stringify(payload).replace(/</g, '\\u003c');
+  // Use the origin the client passed in state; fall back to primary APP_URL.
+  // Avoids '*' wildcard while supporting both dev and prod origins in the same deployment.
+  const target = JSON.stringify(appOrigin || getEnv().APP_URL);
   return `<!DOCTYPE html><html><head><title>Google</title></head><body>
 <script>
   if (window.opener) {
-    window.opener.postMessage(${payloadStr}, '*');
+    window.opener.postMessage(${payloadStr}, ${target});
   }
   window.close();
 </script>
@@ -16,11 +20,23 @@ function callbackHtml(success: boolean, error?: string | null): string {
 </body></html>`;
 }
 
+function resolveAppOrigin(requested: string | undefined): string | undefined {
+  if (!requested) return undefined;
+  const env = getEnv();
+  const allowed = new Set([
+    ...env.APP_URLS.map(u => new URL(u).origin),
+    new URL(env.CORS_ORIGIN.split(',')[0].trim()).origin,
+  ]);
+  try { return allowed.has(new URL(requested).origin) ? new URL(requested).origin : undefined; } catch { return undefined; }
+}
+
 export async function authorize(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   if (!googleService.isGoogleConfigured()) {
     return reply.code(503).send({ error: 'Google OAuth integration not configured' });
   }
-  const state = googleService.generateSignedState({ sub: req.userId!, action: 'connect' });
+  const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
+  const appOrigin = resolveAppOrigin(rawOrigin);
+  const state = googleService.generateSignedState({ sub: req.userId!, action: 'connect', appOrigin });
   return reply.send({ url: googleService.getAuthUrl(state) });
 }
 
@@ -28,7 +44,9 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   if (!googleService.isGoogleConfigured()) {
     return reply.code(503).send({ error: 'Google OAuth integration not configured' });
   }
-  const state = googleService.generateSignedState({ action: 'login' });
+  const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
+  const appOrigin = resolveAppOrigin(rawOrigin);
+  const state = googleService.generateSignedState({ action: 'login', appOrigin });
   return reply.send({ url: googleService.getAuthUrl(state) });
 }
 
@@ -49,33 +67,34 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
   }
 
   const action = statePayload.action as string;
+  const appOrigin = statePayload.appOrigin as string | undefined;
 
   if (action === 'connect') {
     // Account linking flow
     const userId = statePayload.sub as string;
     const result = await googleService.handleCallback(code, userId);
     if ((result as Record<string, unknown>).error) {
-      return reply.code((result as Record<string, number>).status).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error));
+      return reply.code((result as Record<string, number>).status).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error, appOrigin));
     }
-    return reply.type('text/html').send(callbackHtml(true));
+    return reply.type('text/html').send(callbackHtml(true, null, appOrigin));
   }
 
   if (action === 'login') {
     // Sign-in flow
     const result = await googleService.handleLoginCallback(code);
     if ((result as Record<string, unknown>).error) {
-      return reply.code((result as Record<string, number>).status).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error));
+      return reply.code((result as Record<string, number>).status).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error, appOrigin));
     }
 
     // Get tokens and set cookies
     const userId = (result as Record<string, unknown>).userId as string;
     const deviceId = (req.headers['x-device-id'] as string) || 'unknown';
-    
+
     // @ts-ignore - this refers to FastifyInstance
     const tokens = await authService.loginByUserId(userId, this.jwt, req.ip, deviceId);
 
     if (!tokens || (tokens as any).error) {
-      return reply.code(500).type('text/html').send(callbackHtml(false, (tokens as any).error || 'Failed to create session'));
+      return reply.code(500).type('text/html').send(callbackHtml(false, (tokens as any).error || 'Failed to create session', appOrigin));
     }
 
     const cookieOpts = {
@@ -83,16 +102,16 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' as const : 'lax' as const,
       path: '/',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
     };
 
     reply.setCookie('accessToken', (tokens as Record<string, string>).accessToken, cookieOpts);
     reply.setCookie('refreshToken', (tokens as Record<string, string>).refreshToken, cookieOpts);
 
-    return reply.type('text/html').send(callbackHtml(true));
+    return reply.type('text/html').send(callbackHtml(true, null, appOrigin));
   }
 
-  return reply.code(400).type('text/html').send(callbackHtml(false, 'Invalid action'));
+  return reply.code(400).type('text/html').send(callbackHtml(false, 'Invalid action', appOrigin));
 }
 
 export async function disconnect(req: FastifyRequest, reply: FastifyReply): Promise<void> {
