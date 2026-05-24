@@ -15,6 +15,27 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function parseDeviceName(ua: string): string {
+  if (!ua) return 'Unknown Device';
+  const u = ua.toLowerCase();
+  let os = 'Unknown OS';
+  if (u.includes('windows nt')) os = 'Windows';
+  else if (u.includes('mac os x') || u.includes('macos')) os = 'macOS';
+  else if (u.includes('android')) os = 'Android';
+  else if (u.includes('iphone') || u.includes('ipad') || u.includes('ipod')) os = 'iOS';
+  else if (u.includes('linux')) os = 'Linux';
+  else if (u.includes('chromeos') || u.includes('cros')) os = 'Chrome OS';
+
+  let browser = 'Unknown Browser';
+  if (u.includes('edg/') || u.includes('edge/')) browser = 'Edge';
+  else if (u.includes('opr/') || u.includes('opera/')) browser = 'Opera';
+  else if (u.includes('chrome/') && !u.includes('chromium/')) browser = 'Chrome';
+  else if (u.includes('firefox/')) browser = 'Firefox';
+  else if (u.includes('safari/') && !u.includes('chrome/')) browser = 'Safari';
+
+  return `${browser} on ${os}`;
+}
+
 export interface AuthTokenResult {
   accessToken: string;
   refreshToken: string;
@@ -25,7 +46,7 @@ export interface RegisterResult extends AuthTokenResult {
 }
 
 export async function registerAtomically(
-  userData: { accountName?: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string },
+  userData: { accountName?: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string; userAgent?: string },
   jwt: JwtTools
 ): Promise<RegisterResult> {
   return withTransaction(async (session: ClientSession) => {
@@ -46,14 +67,18 @@ export async function registerAtomically(
     const accessToken = jwt.signAccess(tokenPayload);
     const refreshToken = jwt.signRefresh(tokenPayload);
 
+    const ua = userData.userAgent || '';
     await Session.create([{
       userId: user._id,
       refreshTokenHash: hashToken(refreshToken),
       familyId,
       isValid: true,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       ip: userData.ip || 'unknown',
       deviceId: userData.deviceId || 'unknown',
+      userAgent: ua,
+      deviceName: parseDeviceName(ua),
+      lastUsedAt: new Date(),
     }], { session });
 
     return { user, accessToken, refreshToken };
@@ -64,7 +89,8 @@ export async function loginAtomically(
   user: IUser,
   jwt: JwtTools,
   ip: string,
-  deviceId: string
+  deviceId: string,
+  userAgent?: string
 ): Promise<AuthTokenResult> {
   return withTransaction(async (session: ClientSession) => {
     const familyId = crypto.randomUUID();
@@ -72,14 +98,18 @@ export async function loginAtomically(
     const accessToken = jwt.signAccess(tokenPayload);
     const refreshToken = jwt.signRefresh(tokenPayload);
 
+    const ua = userAgent || '';
     await Session.create([{
       userId: user._id,
       refreshTokenHash: hashToken(refreshToken),
       familyId,
       isValid: true,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       ip: ip || 'unknown',
       deviceId: deviceId || 'unknown',
+      userAgent: ua,
+      deviceName: parseDeviceName(ua),
+      lastUsedAt: new Date(),
     }], { session });
 
     return { accessToken, refreshToken };

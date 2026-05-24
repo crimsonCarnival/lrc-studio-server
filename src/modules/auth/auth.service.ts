@@ -12,6 +12,28 @@ import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
 
+function parseDeviceName(ua: string): string {
+  if (!ua) return 'Unknown Device';
+  const u = ua.toLowerCase();
+  let os = 'Unknown OS';
+  if (u.includes('windows nt')) os = 'Windows';
+  else if (u.includes('mac os x') || u.includes('macos')) os = 'macOS';
+  else if (u.includes('android')) os = 'Android';
+  else if (u.includes('iphone') || u.includes('ipad') || u.includes('ipod')) os = 'iOS';
+  else if (u.includes('linux')) os = 'Linux';
+  else if (u.includes('chromeos') || u.includes('cros')) os = 'Chrome OS';
+
+  let browser = 'Unknown Browser';
+  if (u.includes('edg/') || u.includes('edge/')) browser = 'Edge';
+  else if (u.includes('opr/') || u.includes('opera/')) browser = 'Opera';
+  else if (u.includes('chrome/') && !u.includes('chromium/')) browser = 'Chrome';
+  else if (u.includes('firefox/')) browser = 'Firefox';
+  else if (u.includes('safari/') && !u.includes('chrome/')) browser = 'Safari';
+
+  return `${browser} on ${os}`;
+}
+
+
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -77,7 +99,7 @@ async function checkDevice(deviceId: string | null | undefined, user: any = null
 }
 
 export async function register(
-  data: { accountName?: string; displayName?: string; email?: string; password: string; recaptchaToken?: string },
+  data: { accountName?: string; displayName?: string; email?: string; password: string; recaptchaToken?: string; userAgent?: string },
   jwt: JwtTools,
   ip: string,
   deviceId: string
@@ -121,6 +143,7 @@ export async function register(
       passwordHash,
       ip,
       deviceId,
+      userAgent: data.userAgent,
     },
     jwt
   );
@@ -145,7 +168,7 @@ export async function register(
 }
 
 export async function login(
-  data: { identifier: string; password: string; recaptchaToken?: string },
+  data: { identifier: string; password: string; recaptchaToken?: string; userAgent?: string },
   jwt: JwtTools,
   ip: string,
   deviceId: string
@@ -194,7 +217,8 @@ export async function login(
     user,
     jwt,
     ip,
-    deviceId
+    deviceId,
+    data.userAgent
   );
 
   logUserAction({
@@ -325,9 +349,10 @@ export async function refresh(
 
   // Update session with new token hash and extended expiry
   session.refreshTokenHash = hashToken(newRefreshToken);
-  session.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  session.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   session.ip = ip || session.ip;
   session.deviceId = deviceId || session.deviceId;
+  session.lastUsedAt = new Date();
   await session.save();
 
   return {
@@ -486,4 +511,75 @@ export async function clearUnbanMessage(
   user.showUnbanMessage = false;
   await user.save();
   return { success: true } as any;
+}
+
+// ─── Session Management ──────────────────────────────────────────────────────
+
+export interface SessionPublic {
+  id: string;
+  deviceName: string;
+  userAgent: string;
+  ip: string;
+  createdAt: Date;
+  lastUsedAt: Date;
+  expiresAt: Date;
+  isCurrent: boolean;
+}
+
+export async function getSessions(
+  userId: string,
+  currentFamilyId?: string
+): Promise<ServiceResult<{ sessions: SessionPublic[] }>> {
+  const raw = await Session.find({
+    userId,
+    isValid: true,
+    expiresAt: { $gt: new Date() },
+  })
+    .sort({ lastUsedAt: -1 })
+    .lean();
+
+  const sessions: SessionPublic[] = raw.map((s) => {
+    const storedName = (s as any).deviceName;
+    const ua = (s as any).userAgent || '';
+    // Re-parse on-the-fly for older sessions that were created before deviceName was tracked
+    const deviceName = storedName && storedName !== 'Unknown Device'
+      ? storedName
+      : parseDeviceName(ua);
+
+    return {
+      id: (s._id as any).toString(),
+      deviceName,
+      userAgent: ua,
+      ip: s.ip || '',
+      createdAt: (s as any).createdAt,
+      lastUsedAt: (s as any).lastUsedAt || (s as any).createdAt,
+      expiresAt: s.expiresAt,
+      isCurrent: currentFamilyId ? s.familyId === currentFamilyId : false,
+    };
+  });
+
+  return { sessions } as any;
+}
+
+export async function revokeSession(
+  userId: string,
+  sessionId: string
+): Promise<ServiceResult<{ success: boolean }>> {
+  const session = await Session.findOne({ _id: sessionId, userId });
+  if (!session) return err('session_not_found', 404) as any;
+  session.isValid = false;
+  await session.save();
+  return { success: true } as any;
+}
+
+export async function revokeAllSessions(
+  userId: string,
+  exceptFamilyId?: string
+): Promise<ServiceResult<{ revokedCount: number }>> {
+  const query: Record<string, unknown> = { userId };
+  if (exceptFamilyId) {
+    query.familyId = { $ne: exceptFamilyId };
+  }
+  const result = await Session.updateMany(query, { $set: { isValid: false } });
+  return { revokedCount: result.modifiedCount } as any;
 }
