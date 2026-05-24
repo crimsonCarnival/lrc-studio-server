@@ -8,6 +8,9 @@ export interface ISession extends Document {
   expiresAt: Date;
   ip: string;
   deviceId: string;
+  userAgent: string;
+  deviceName: string;
+  lastUsedAt: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,11 +45,23 @@ const sessionSchema = new mongoose.Schema<ISession>(
     },
     ip: {
       type: String,
-      required: true,
+      default: 'unknown',
     },
     deviceId: {
       type: String,
-      required: true,
+      default: 'unknown',
+    },
+    userAgent: {
+      type: String,
+      default: '',
+    },
+    deviceName: {
+      type: String,
+      default: 'Unknown Device',
+    },
+    lastUsedAt: {
+      type: Date,
+      default: Date.now,
     },
   },
   { timestamps: true, collection: 'sessions' }
