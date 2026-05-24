@@ -17,7 +17,7 @@ function setAuthCookies(reply: FastifyReply, result: any) {
     reply.setCookie('accessToken', result.accessToken, { ...cookieOptions, maxAge: 15 * 60 });
   }
   if (result.refreshToken) {
-    reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 });
+    reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
   }
 }
 
@@ -52,6 +52,7 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
     password: string;
     recaptchaToken?: string;
   };
+  const userAgent = (req.headers['user-agent'] as string) || '';
   const result = await authService.register(
     {
       accountName: body.accountName,
@@ -59,6 +60,7 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
       email: body.email,
       password: body.password,
       recaptchaToken: body.recaptchaToken,
+      userAgent,
     },
     (req.server as any).jwt,
     req.ip,
@@ -81,11 +83,13 @@ export async function login(req: FastifyRequest, reply: FastifyReply): Promise<v
     password: string;
     recaptchaToken?: string;
   };
+  const userAgent = (req.headers['user-agent'] as string) || '';
   const result = await authService.login(
     {
       identifier: body.identifier,
       password: body.password,
       recaptchaToken: body.recaptchaToken,
+      userAgent,
     },
     (req.server as any).jwt,
     req.ip,
@@ -324,4 +328,59 @@ export async function verifyEmailHandler(req: FastifyRequest, reply: FastifyRepl
     const code = err instanceof VerificationError ? err.code : 'server_error';
     return reply.code(400).send({ error: code });
   }
+}
+
+// ─── Session Management Handlers ───────────────────────────────────────────────
+
+export async function getSessions(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const token = req.cookies.accessToken;
+  let currentFamilyId: string | undefined;
+  if (token) {
+    try {
+      const decoded = (req.server as any).jwt.verifyToken(token);
+      currentFamilyId = decoded.familyId as string | undefined;
+    } catch {}
+  }
+
+  const result = await authService.getSessions(req.userId!, currentFamilyId);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  }
+  return reply.send(result);
+}
+
+export async function revokeSession(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { id } = req.params as { id: string };
+  if (!id || !/^[a-f\d]{24}$/i.test(id)) {
+    return reply.code(400).send({ error: 'invalid_session_id' });
+  }
+  const result = await authService.revokeSession(req.userId!, id);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error, code: (result as any).code });
+  }
+  return reply.send(result);
+}
+
+export async function logoutAll(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const body = req.body as { keepCurrent?: boolean } | undefined;
+  const keepCurrent = body?.keepCurrent === true;
+
+  let currentFamilyId: string | undefined;
+  if (keepCurrent) {
+    const token = req.cookies.accessToken;
+    if (token) {
+      try {
+        const decoded = (req.server as any).jwt.verifyToken(token);
+        currentFamilyId = decoded.familyId as string | undefined;
+      } catch {}
+    }
+  }
+
+  await authService.revokeAllSessions(req.userId!, keepCurrent ? currentFamilyId : undefined);
+
+  if (!keepCurrent) {
+    clearAuthCookies(reply);
+  }
+
+  return reply.send({ success: true });
 }
