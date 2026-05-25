@@ -1,10 +1,13 @@
 import mongoose from 'mongoose';
 
-export type NotificationType =
-  | 'star' | 'fork'
-  | 'system' | 'admin'
-  | 'verify_email' | 'set_password'
-  | 'ban' | 'password_changed';
+const NOTIFICATION_TYPES = [
+  'star', 'fork',
+  'system', 'admin',
+  'verify_email', 'set_password',
+  'ban', 'password_changed',
+] as const;
+
+export type NotificationType = typeof NOTIFICATION_TYPES[number];
 
 const actorSchema = new mongoose.Schema(
   {
@@ -18,7 +21,7 @@ const actorSchema = new mongoose.Schema(
 const notificationSchema = new mongoose.Schema(
   {
     userId:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    type:         { type: String, enum: ['star','fork','system','admin','verify_email','set_password','ban','password_changed'], required: true },
+    type:         { type: String, enum: NOTIFICATION_TYPES, required: true },
     read:         { type: Boolean, default: false },
     sticky:       { type: Boolean, default: false },
     projectId:    { type: String, default: null },
@@ -45,5 +48,24 @@ notificationSchema.index(
   { userId: 1, type: 1 },
   { unique: true, partialFilterExpression: { type: { $in: ['verify_email', 'set_password'] } } }
 );
+
+export interface INotification {
+  _id: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
+  type: NotificationType;
+  read: boolean;
+  sticky: boolean;
+  projectId: string | null;
+  projectTitle: string | null;
+  actors: Array<{
+    userId: mongoose.Types.ObjectId;
+    accountName: string;
+    avatarUrl: string | null;
+  }>;
+  actorCount: number;
+  body: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export default mongoose.model('Notification', notificationSchema);
