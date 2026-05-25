@@ -22,9 +22,10 @@ import type {
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
 } from '@simplewebauthn/server';
+import { getEnv } from '../../config/env.js';
 
 function getWebAuthnConfig() {
-  const origin = process.env.CLIENT_URL || 'http://localhost:5173';
+  const origin = getEnv().APP_URL;
   let rpID = 'localhost';
   try {
     rpID = new URL(origin).hostname;
