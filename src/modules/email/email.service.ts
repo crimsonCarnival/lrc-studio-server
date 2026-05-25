@@ -453,3 +453,66 @@ export async function sendVerificationEmail(
     html,
   });
 }
+
+export async function sendBanEmail(
+  email: string,
+  reason: string | null,
+  userName?: string
+): Promise<void> {
+  const appName = process.env.APP_NAME || 'LRC Studio';
+  const transporter = getTransporter();
+  const reasonBlock = reason
+    ? `<blockquote style="border-left:3px solid #ef4444;padding:8px 16px;margin:16px 0;color:#fca5a5">${reason}</blockquote>`
+    : '';
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+    <style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#09090b;color:#f4f4f5}
+    .container{max-width:600px;margin:0 auto;background:#18181b;border:1px solid #3f3f46;border-radius:12px;overflow:hidden}
+    .header{background:#27272a;padding:32px 24px;border-bottom:1px solid #3f3f46;text-align:center}
+    .body{padding:32px 24px}.footer{padding:16px 24px;border-top:1px solid #3f3f46;text-align:center;color:#71717a;font-size:12px}</style>
+    </head><body><div class="container">
+    <div class="header"><h1 style="margin:0;font-size:20px;color:#f4f4f5">${appName}</h1></div>
+    <div class="body">
+      <p>Hi ${userName || 'there'},</p>
+      <p>Your account has been suspended${reason ? ' for the following reason:' : '.'}</p>
+      ${reasonBlock}
+      <p>If you believe this is an error, you can submit an appeal from the app.</p>
+    </div>
+    <div class="footer">${appName} — Automated security notification.</div>
+    </div></body></html>`;
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM || `${appName} <noreply@example.com>`,
+    to: email,
+    subject: `Your ${appName} account has been suspended`,
+    html,
+  });
+}
+
+export async function sendPasswordChangedEmail(
+  email: string,
+  userName?: string
+): Promise<void> {
+  const appName = process.env.APP_NAME || 'LRC Studio';
+  const transporter = getTransporter();
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+    <style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#09090b;color:#f4f4f5}
+    .container{max-width:600px;margin:0 auto;background:#18181b;border:1px solid #3f3f46;border-radius:12px;overflow:hidden}
+    .header{background:#27272a;padding:32px 24px;border-bottom:1px solid #3f3f46;text-align:center}
+    .body{padding:32px 24px}.footer{padding:16px 24px;border-top:1px solid #3f3f46;text-align:center;color:#71717a;font-size:12px}</style>
+    </head><body><div class="container">
+    <div class="header"><h1 style="margin:0;font-size:20px;color:#f4f4f5">${appName}</h1></div>
+    <div class="body">
+      <p>Hi ${userName || 'there'},</p>
+      <p>Your password was recently changed. If you made this change, no action is needed.</p>
+      <p>If you did not change your password, please reset it immediately from the login page.</p>
+    </div>
+    <div class="footer">${appName} — Automated security notification.</div>
+    </div></body></html>`;
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM || `${appName} <noreply@example.com>`,
+    to: email,
+    subject: `Your ${appName} password was changed`,
+    html,
+  });
+}
