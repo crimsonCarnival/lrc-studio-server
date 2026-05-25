@@ -14,6 +14,7 @@ export const rootSchema = `
     uploads(limit: Int, offset: Int): [Upload!]!
     settings: Settings
     getShare(id: ID!): Project
+    publicProfile(accountName: String!): PublicUser
   }
 
   type Mutation {

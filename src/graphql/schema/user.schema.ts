@@ -65,4 +65,18 @@ export const userSchema = `
     to: String!
     changedAt: String!
   }
+
+  type PublicUser {
+    id: ID!
+    accountName: String!
+    displayName: String
+    avatarUrl: String
+    bio: String
+    isVerified: Boolean!
+    role: String!
+    createdAt: String!
+    projects: [Project!]!
+    projectCount: Int!
+    totalStarsReceived: Int!
+  }
 `;
