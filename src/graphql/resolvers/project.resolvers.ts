@@ -12,6 +12,8 @@ import {
 } from '../../modules/projects/projects.service.js';
 import { getProject } from '../../modules/projects/projects.crud.service.js';
 import { Context } from './context.js';
+import User from '../../db/user.model.js';
+import { upsertSocial } from '../../modules/notifications/notifications.service.js';
 
 export const projectResolvers = {
   Query: {
@@ -80,10 +82,10 @@ export const projectResolvers = {
         err.status = 401;
         throw err;
       }
-      if (!(await Project.exists({ projectId: id }))) throw new Error('Project not found');
+      const project = await Project.findOne({ projectId: id }).select('userId title').lean();
+      if (!project) throw new Error('Project not found');
 
       try {
-        // Returns null when a new document was inserted (upsert), existing doc when already starred
         const existing = await ProjectStar.findOneAndUpdate(
           { projectId: id, userId: context.userId },
           { $setOnInsert: { projectId: id, userId: context.userId } },
@@ -91,9 +93,24 @@ export const projectResolvers = {
         );
         if (!existing) {
           await Project.updateOne({ projectId: id }, { $inc: { starCount: 1 } });
+          const ownerId = project.userId?.toString();
+          if (ownerId) {
+            User.findById(context.userId).select('accountName avatarUrl').lean().then(actor => {
+              if (actor) {
+                upsertSocial({
+                  ownerId,
+                  type: 'star',
+                  projectId: id,
+                  projectTitle: (project as any).title || '',
+                  actorId: context.userId!,
+                  actorAccountName: (actor as any).accountName,
+                  actorAvatarUrl: (actor as any).avatarUrl || null,
+                }).catch(() => {});
+              }
+            }).catch(() => {});
+          }
         }
       } catch (err: any) {
-        // E11000: concurrent star from same user — star already exists, no-op
         if (err.code !== 11000) throw err;
       }
       return Project.findOne({ projectId: id });
