@@ -1,6 +1,9 @@
 import mongoose from 'mongoose';
-import Notification, { type NotificationType } from './notification.model.js';
+import type { FlattenMaps } from 'mongoose';
+import Notification, { type INotification, type NotificationType } from './notification.model.js';
 import { getIO } from '../../socket/socket.manager.js';
+
+export type NotificationDoc = FlattenMaps<INotification> & { _id: mongoose.Types.ObjectId };
 
 function emitToUser(userId: string, event: string, payload: unknown): void {
   try { getIO().to(`user:${userId}`).emit(event, payload); } catch { /* socket not ready */ }
@@ -26,6 +29,8 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
     avatarUrl: actorAvatarUrl,
   };
 
+  // actorCount tracks total star/fork events (may overcount if same actor re-stars).
+  // actors[] is deduplicated via $addToSet for display; actorCount is the display hint for "and N others".
   const notification = await Notification.findOneAndUpdate(
     { userId: new mongoose.Types.ObjectId(ownerId), type, projectId },
     {
@@ -91,10 +96,10 @@ export async function resolveSticky(
 
 export async function listNotifications(
   userId: string
-): Promise<{ notifications: unknown[]; unreadCount: number }> {
+): Promise<{ notifications: NotificationDoc[]; unreadCount: number }> {
   const userObjId = new mongoose.Types.ObjectId(userId);
   const [notifications, unreadCount] = await Promise.all([
-    Notification.find({ userId: userObjId }).sort({ createdAt: -1 }).limit(50).lean(),
+    Notification.find({ userId: userObjId }).sort({ createdAt: -1 }).limit(50).lean<NotificationDoc[]>(),
     Notification.countDocuments({ userId: userObjId, read: false }),
   ]);
   return { notifications, unreadCount };

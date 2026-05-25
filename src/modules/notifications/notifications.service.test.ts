@@ -107,3 +107,32 @@ describe('listNotifications', () => {
     expect(unreadCount).toBe(2);
   });
 });
+
+describe('markRead', () => {
+  it('marks specified notifications as read', async () => {
+    await service.upsertSocial({ ownerId: OWNER, type: 'star', projectId: PROJECT_ID, projectTitle: 'Song', actorId: ACTOR, actorAccountName: 'alice', actorAvatarUrl: null });
+    const doc = await Notification.findOne({ type: 'star' });
+    await service.markRead(OWNER, [doc!._id.toString()]);
+    const updated = await Notification.findById(doc!._id);
+    expect(updated!.read).toBe(true);
+  });
+
+  it('does not mark another user\'s notifications as read', async () => {
+    const OTHER = new mongoose.Types.ObjectId().toString();
+    await service.upsertSocial({ ownerId: OTHER, type: 'star', projectId: PROJECT_ID, projectTitle: 'Song', actorId: ACTOR, actorAccountName: 'alice', actorAvatarUrl: null });
+    const doc = await Notification.findOne({ type: 'star' });
+    await service.markRead(OWNER, [doc!._id.toString()]); // OWNER tries to mark OTHER's notification
+    const unchanged = await Notification.findById(doc!._id);
+    expect(unchanged!.read).toBe(false);
+  });
+});
+
+describe('markAllRead', () => {
+  it('marks all unread notifications as read for the user', async () => {
+    await service.upsertSocial({ ownerId: OWNER, type: 'star', projectId: PROJECT_ID, projectTitle: 'Song', actorId: ACTOR, actorAccountName: 'alice', actorAvatarUrl: null });
+    await service.createOnce({ userId: OWNER, type: 'verify_email', sticky: true });
+    await service.markAllRead(OWNER);
+    const unread = await Notification.countDocuments({ userId: new mongoose.Types.ObjectId(OWNER), read: false });
+    expect(unread).toBe(0);
+  });
+});
