@@ -57,3 +57,31 @@ describe('DELETE /notifications/:id on sticky', () => {
     expect(count).toBe(1);
   });
 });
+
+describe('POST /notifications/read', () => {
+  it('marks specified notifications as read and returns 200', async () => {
+    const doc = await Notification.create({ userId: USER_ID, type: 'system', read: false, sticky: false, body: 'Hello', actors: [], actorCount: 0 });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/notifications/read',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ ids: [doc._id.toString()] }),
+    });
+    expect(res.statusCode).toBe(200);
+    const updated = await Notification.findById(doc._id);
+    expect(updated!.read).toBe(true);
+  });
+});
+
+describe('POST /notifications/read-all', () => {
+  it('marks all notifications as read and returns 200', async () => {
+    await Notification.create({ userId: USER_ID, type: 'system', read: false, sticky: false, body: 'Hello', actors: [], actorCount: 0 });
+    await Notification.create({ userId: USER_ID, type: 'admin', read: false, sticky: false, body: 'World', actors: [], actorCount: 0 });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'POST', url: '/notifications/read-all' });
+    expect(res.statusCode).toBe(200);
+    const unread = await Notification.countDocuments({ userId: USER_ID, read: false });
+    expect(unread).toBe(0);
+  });
+});
