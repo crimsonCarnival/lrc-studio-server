@@ -54,6 +54,13 @@ export async function update(req: FastifyRequest, reply: FastifyReply): Promise<
     return reply.code(result.status || 500).send({ error: result.error });
   }
   emitProjectUpdated((req.params as Record<string, string>).id, req.body as Record<string, unknown>);
+  // Ack to the saving client
+  try {
+    const socketId = req.headers['x-socket-id'] as string | undefined;
+    if (socketId) {
+      getIO().to(socketId).emit('autosave:ack', { projectId: (req.params as Record<string, string>).id, savedAt: Date.now() });
+    }
+  } catch { /* socket not ready */ }
   return reply.send(result);
 }
 

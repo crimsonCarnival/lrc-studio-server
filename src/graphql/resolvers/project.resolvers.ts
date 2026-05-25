@@ -14,6 +14,8 @@ import { getProject } from '../../modules/projects/projects.crud.service.js';
 import { Context } from './context.js';
 import User from '../../db/user.model.js';
 import { upsertSocial } from '../../modules/notifications/notifications.service.js';
+import { emitProjectUpdated } from '../../modules/projects/projects.controller.js';
+import { getIO } from '../../socket/socket.manager.js';
 
 export const projectResolvers = {
   Query: {
@@ -59,6 +61,13 @@ export const projectResolvers = {
         statusErr.status = err.status;
         throw statusErr;
       }
+      emitProjectUpdated(id, input);
+      // Ack to the saving client
+      try {
+        if (context.socketId) {
+          getIO().to(context.socketId).emit('autosave:ack', { projectId: id, savedAt: Date.now() });
+        }
+      } catch { /* socket not ready */ }
       return (result as any).project;
     },
 

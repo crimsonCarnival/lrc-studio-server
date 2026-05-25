@@ -4,4 +4,5 @@ export interface Context extends MercuriusContext {
   userId?: string | null;
   ip?: string;
   tokenExpired?: boolean;
+  socketId?: string;
 }
