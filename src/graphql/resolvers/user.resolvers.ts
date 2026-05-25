@@ -14,6 +14,31 @@ export const userResolvers = {
       const user = await User.findById(context.userId);
       return user?.toPublic();
     },
+
+    publicProfile: async (_root: any, { accountName }: { accountName: string }) => {
+      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
+      if (!user) return null;
+
+      const projects = await Project.find({ userId: user._id, public: true })
+        .sort({ starCount: -1 })
+        .lean();
+
+      const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
+
+      return {
+        id: user._id.toString(),
+        accountName: user.accountName,
+        displayName: user.displayName ?? null,
+        avatarUrl: user.avatarUrl ?? null,
+        bio: user.bio ?? null,
+        isVerified: user.isVerified ?? false,
+        role: user.role ?? 'user',
+        createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : new Date().toISOString(),
+        projects,
+        projectCount: projects.length,
+        totalStarsReceived,
+      };
+    },
   },
 
   Mutation: {
