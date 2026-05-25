@@ -64,6 +64,7 @@ export interface IUser extends Document {
   };
   lastIp?: string | null;
   bio: string;
+  currentChallenge?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 
@@ -194,6 +195,10 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       default: '',
       maxlength: 160,
+    },
+    currentChallenge: {
+      type: String,
+      default: null,
     },
   },
   { timestamps: true, collection: 'users' }

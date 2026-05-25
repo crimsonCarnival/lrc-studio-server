@@ -11,6 +11,26 @@ import { v2 as cloudinary } from 'cloudinary';
 import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
+import Passkey from '../../db/passkey.model.js';
+import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+} from '@simplewebauthn/server';
+import type {
+  RegistrationResponseJSON,
+  AuthenticationResponseJSON,
+} from '@simplewebauthn/server';
+
+function getWebAuthnConfig() {
+  const origin = process.env.CLIENT_URL || 'http://localhost:5173';
+  let rpID = 'localhost';
+  try {
+    rpID = new URL(origin).hostname;
+  } catch (e) {}
+  return { rpID, origin, rpName: 'LRC Studio' };
+}
 
 function parseDeviceName(ua: string): string {
   if (!ua) return 'Unknown Device';
@@ -284,12 +304,15 @@ export async function checkIdentifier(
   await user.checkBanStatus();
   if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
 
+  const passkeyCount = await Passkey.countDocuments({ userId: user._id });
+
   return {
     exists: true,
     accountName: user.accountName || null,
     avatarUrl: user.avatarUrl || null,
     hasPassword: user.passwordHash !== 'OAUTH_NO_PASSWORD',
     hasGoogle: !!user.google?.googleId,
+    hasPasskey: passkeyCount > 0,
   } as any;
 }
 
@@ -337,9 +360,17 @@ export async function refresh(
   // Verify the hash of the provided refresh token matches the one in DB
   const providedHash = hashToken(refreshToken);
   if (session.refreshTokenHash !== providedHash) {
-    // Again, token mismatch within a valid family implies reuse
-    await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
-    return err('token_reused', 401) as any;
+    const isGracePeriodValid =
+      session.previousRefreshTokenHash === providedHash &&
+      session.previousRefreshTokenExpiry &&
+      session.previousRefreshTokenExpiry > new Date();
+
+    if (!isGracePeriodValid) {
+      // Token mismatch within a valid family implies reuse
+      await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
+      return err('token_reused', 401) as any;
+    }
+    // If it is within the grace period, we allow it to proceed and generate a new token
   }
 
   // Issue new tokens
@@ -348,6 +379,8 @@ export async function refresh(
   const newRefreshToken = jwt.signRefresh(tokenPayload);
 
   // Update session with new token hash and extended expiry
+  session.previousRefreshTokenHash = session.refreshTokenHash;
+  session.previousRefreshTokenExpiry = new Date(Date.now() + 60 * 1000); // 60 seconds grace period
   session.refreshTokenHash = hashToken(newRefreshToken);
   session.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   session.ip = ip || session.ip;
@@ -582,4 +615,203 @@ export async function revokeAllSessions(
   }
   const result = await Session.updateMany(query, { $set: { isValid: false } });
   return { revokedCount: result.modifiedCount } as any;
+}
+
+// ─── WebAuthn (Passkeys) ─────────────────────────────────────────────────────
+
+export async function getPasskeyRegistrationOptions(userId: string): Promise<ServiceResult<any>> {
+  const user = await User.findById(userId);
+  if (!user) return err('user_not_found', 404) as any;
+
+  const userPasskeys = await Passkey.find({ userId: user._id });
+  const { rpID, rpName } = getWebAuthnConfig();
+
+  const options = await generateRegistrationOptions({
+    rpName,
+    rpID,
+    userID: new Uint8Array(Buffer.from(user._id.toString())),
+    userName: user.accountName || user.email || 'user',
+    attestationType: 'none',
+    excludeCredentials: userPasskeys.map(passkey => ({
+      id: passkey.credentialID,
+      transports: passkey.transports as any,
+    })),
+    authenticatorSelection: {
+      residentKey: 'preferred',
+      userVerification: 'preferred',
+    },
+  });
+
+  user.currentChallenge = options.challenge;
+  await user.save();
+
+  return { options } as any;
+}
+
+export async function verifyPasskeyRegistration(
+  userId: string,
+  response: RegistrationResponseJSON
+): Promise<ServiceResult<{ success: boolean }>> {
+  const user = await User.findById(userId);
+  if (!user || !user.currentChallenge) return err('invalid_state', 400) as any;
+
+  const expectedChallenge = user.currentChallenge;
+  user.currentChallenge = null;
+  await user.save();
+
+  const { rpID, origin } = getWebAuthnConfig();
+
+  let verification;
+  try {
+    verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+    });
+  } catch (error: any) {
+    return err(error.message || 'verification_failed', 400) as any;
+  }
+
+  const { verified, registrationInfo } = verification;
+  if (!verified || !registrationInfo) {
+    return err('verification_failed', 400) as any;
+  }
+
+  const existingPasskey = await Passkey.findOne({ credentialID: registrationInfo.credential.id });
+  if (existingPasskey) {
+    return err('credential_already_in_use', 400) as any;
+  }
+
+  await Passkey.create({
+    credentialID: registrationInfo.credential.id,
+    credentialPublicKey: Buffer.from(registrationInfo.credential.publicKey),
+    counter: registrationInfo.credential.counter,
+    transports: registrationInfo.credential.transports,
+    userId: user._id,
+  });
+
+  return { success: true } as any;
+}
+
+export async function getPasskeyLoginOptions(identifier: string): Promise<ServiceResult<any>> {
+  const normalised = identifier.toLowerCase().trim();
+  const user = await User.findOne({
+    $or: [{ accountName: normalised }, { email: normalised }],
+  });
+  if (!user) return err('invalid_credentials', 401) as any;
+
+  const userPasskeys = await Passkey.find({ userId: user._id });
+  if (!userPasskeys.length) return err('no_passkeys_registered', 400) as any;
+
+  const { rpID } = getWebAuthnConfig();
+
+  const options = await generateAuthenticationOptions({
+    rpID,
+    allowCredentials: userPasskeys.map(passkey => ({
+      id: passkey.credentialID,
+      transports: passkey.transports as any,
+    })),
+    userVerification: 'preferred',
+  });
+
+  user.currentChallenge = options.challenge;
+  await user.save();
+
+  return { options } as any;
+}
+
+export async function verifyPasskeyLogin(
+  identifier: string,
+  response: AuthenticationResponseJSON,
+  jwt: JwtTools,
+  ip: string,
+  deviceId: string,
+  userAgent?: string
+): Promise<ServiceResult<AuthResponse>> {
+  const normalised = identifier.toLowerCase().trim();
+  const user = await User.findOne({
+    $or: [{ accountName: normalised }, { email: normalised }],
+  });
+  if (!user || !user.currentChallenge) return err('invalid_credentials', 401) as any;
+
+  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
+  await user.checkBanStatus();
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
+
+  const passkey = await Passkey.findOne({ credentialID: response.id, userId: user._id });
+  if (!passkey) return err('credential_not_found', 401) as any;
+
+  const expectedChallenge = user.currentChallenge;
+  user.currentChallenge = null;
+  await user.save();
+
+  const { rpID, origin } = getWebAuthnConfig();
+
+  let verification;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      credential: {
+        id: passkey.credentialID,
+        publicKey: new Uint8Array(passkey.credentialPublicKey),
+        counter: passkey.counter,
+        transports: passkey.transports as any,
+      },
+    });
+  } catch (error: any) {
+    return err(error.message || 'verification_failed', 401) as any;
+  }
+
+  if (!verification.verified) {
+    return err('verification_failed', 401) as any;
+  }
+
+  passkey.counter = verification.authenticationInfo.newCounter;
+  await passkey.save();
+
+  // Issue tokens
+  const { accessToken, refreshToken } = await loginAtomically(
+    user,
+    jwt,
+    ip,
+    deviceId,
+    userAgent
+  );
+
+  logUserAction({
+    userId: user._id.toString(),
+    action: 'PASSKEY_LOGIN',
+    ip,
+    deviceId,
+  });
+
+  return {
+    user: user.toPublic() as any,
+    accessToken,
+    refreshToken,
+  } as any;
+}
+
+export async function getPasskeysForUser(userId: string): Promise<ServiceResult<{ passkeys: any[] }>> {
+  const passkeys = await Passkey.find({ userId }).sort({ createdAt: -1 });
+  const sanitized = passkeys.map(p => ({
+    id: p._id.toString(),
+    credentialID: p.credentialID,
+    createdAt: p.createdAt,
+    lastUsedAt: p.updatedAt, // Passkey models don't have lastUsedAt specifically yet, updatedAt works
+    transports: p.transports || []
+  }));
+  return { passkeys: sanitized } as any;
+}
+
+export async function deletePasskeyForUser(userId: string, passkeyId: string): Promise<ServiceResult<{ success: boolean }>> {
+  const result = await Passkey.deleteOne({ _id: passkeyId, userId });
+  if (result.deletedCount === 0) {
+    return err('passkey_not_found', 404) as any;
+  }
+  return { success: true } as any;
 }

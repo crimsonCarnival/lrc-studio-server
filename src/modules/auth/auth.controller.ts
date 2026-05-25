@@ -384,3 +384,78 @@ export async function logoutAll(req: FastifyRequest, reply: FastifyReply): Promi
 
   return reply.send({ success: true });
 }
+
+// ─── WebAuthn / Passkeys ─────────────────────────────────────────────────────
+
+export async function generateRegistrationOptionsHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await authService.getPasskeyRegistrationOptions(req.userId!);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  }
+  return reply.send(result);
+}
+
+export async function verifyRegistrationResponseHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await authService.verifyPasskeyRegistration(req.userId!, req.body as any);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  }
+  return reply.send(result);
+}
+
+export async function generateAuthenticationOptionsHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { identifier } = req.body as { identifier: string };
+  if (!identifier) {
+    return reply.code(400).send({ error: 'identifier_required' });
+  }
+  const result = await authService.getPasskeyLoginOptions(identifier);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  }
+  return reply.send(result);
+}
+
+export async function verifyAuthenticationResponseHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const deviceId = extractDeviceId(req, reply);
+  if (!deviceId) return;
+  
+  const { identifier, response } = req.body as { identifier: string; response: any };
+  const userAgent = (req.headers['user-agent'] as string) || '';
+
+  const result = await authService.verifyPasskeyLogin(
+    identifier,
+    response,
+    (req.server as any).jwt,
+    req.ip,
+    deviceId,
+    userAgent
+  );
+
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error, code: result.code });
+  }
+
+  setAuthCookies(reply, result);
+  const { accessToken, refreshToken, ...responseData } = result as any;
+  return reply.send(responseData);
+}
+
+export async function getPasskeys(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await authService.getPasskeysForUser(req.userId!);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  }
+  return reply.send(result);
+}
+
+export async function deletePasskey(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { id } = req.params as { id: string };
+  if (!id || !/^[a-f\d]{24}$/i.test(id)) {
+    return reply.code(400).send({ error: 'invalid_passkey_id' });
+  }
+  const result = await authService.deletePasskeyForUser(req.userId!, id);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  }
+  return reply.send(result);
+}

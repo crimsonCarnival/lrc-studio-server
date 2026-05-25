@@ -42,4 +42,14 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.get('/sessions', { preHandler: [fastify.requireAuth] }, authController.getSessions);
   fastify.delete('/sessions/:id', { preHandler: [fastify.requireAuth] }, authController.revokeSession);
   fastify.post('/logout-all', { preHandler: [fastify.requireAuth] }, authController.logoutAll);
+
+  // Passkey / WebAuthn Routes
+  fastify.get('/passkey/register/options', { preHandler: [fastify.requireAuth] }, authController.generateRegistrationOptionsHandler);
+  fastify.post('/passkey/register/verify', { preHandler: [fastify.requireAuth] }, authController.verifyRegistrationResponseHandler);
+  fastify.post('/passkey/login/options', { ...authRateLimit }, authController.generateAuthenticationOptionsHandler);
+  fastify.post('/passkey/login/verify', { ...authRateLimit }, authController.verifyAuthenticationResponseHandler);
+  
+  // Passkey Management
+  fastify.get('/passkeys', { preHandler: [fastify.requireAuth] }, authController.getPasskeys);
+  fastify.delete('/passkeys/:id', { preHandler: [fastify.requireAuth] }, authController.deletePasskey);
 }
