@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import mongoose from './plugins/mongoose.js';
 import cron from './plugins/cron.js';
 import cors from './plugins/cors.js';
+import socket from './plugins/socket.js';
 import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rateLimit.js';
 import auth from './plugins/auth.js';
@@ -52,6 +53,7 @@ async function build() {
   });
   await app.register(helmet);
   await app.register(cors);
+  await app.register(socket);
   await app.register(rateLimit);
   await app.register(mongoose);
   await app.register(cron);
