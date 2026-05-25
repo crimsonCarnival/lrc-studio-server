@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
-import fastifySocketIO from 'fastify-socket.io';
+import { Server } from 'socket.io';
 import { setIO } from '../socket/socket.manager.js';
 
 async function socketPlugin(fastify: FastifyInstance): Promise<void> {
@@ -8,20 +8,19 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     .split(',')
     .map((o: string) => o.trim());
 
-  // @ts-ignore – fastify-socket.io types target Fastify 4.x but runtime is compatible with 5.x
-  await fastify.register(fastifySocketIO, {
-    cors: {
-      origin: origins,
-      credentials: true,
-    },
-    pingInterval: 25000,
-    pingTimeout: 60000,
-  });
+  fastify.addHook('onListen', async () => {
+    const io = new Server(fastify.server, {
+      cors: {
+        origin: origins,
+        credentials: true,
+      },
+      pingInterval: 25000,
+      pingTimeout: 60000,
+    });
 
-  fastify.ready(() => {
-    setIO((fastify as any).io);
+    setIO(io);
 
-    (fastify as any).io.on('connection', (socket: any) => {
+    io.on('connection', (socket) => {
       fastify.log.info({ socketId: socket.id }, 'socket connected');
 
       socket.on('join:user', (userId: string) => {
