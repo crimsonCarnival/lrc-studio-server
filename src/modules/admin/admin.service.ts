@@ -7,6 +7,9 @@ import Project from '../projects/project.model.js';
 import Upload from '../uploads/upload.model.js';
 import AdminLog from './adminLog.model.js';
 import type { AdminLogEntry } from '../../types/index.js';
+import { createOnce } from '../notifications/notifications.service.js';
+import { sendBanEmail } from '../email/email.service.js';
+import { getIO } from '../../socket/socket.manager.js';
 
 export async function listUsers(query: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const { limit = 50, cursor = null, search = '', role = '', status = '' } = query as Record<string, string | number | null>;
@@ -156,6 +159,14 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   }
 
   await user.save();
+
+  if (banStatus) {
+    createOnce({ userId, type: 'ban', sticky: false, body: reason || null }).catch(() => {});
+    if (user.email) {
+      sendBanEmail(user.email, reason || null, (user as any).displayName || user.accountName).catch(() => {});
+    }
+    try { getIO().to(`user:${userId}`).emit('user:banned', { reason }); } catch { /* socket not ready */ }
+  }
 
   if (adminId) {
     const admin = await User.findById(adminId);

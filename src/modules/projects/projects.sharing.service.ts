@@ -4,6 +4,8 @@ import ProjectFork from './projectFork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import { withTransaction } from '../../db/transaction.js';
+import { upsertSocial } from '../notifications/notifications.service.js';
+import User from '../../db/user.model.js';
 
 export async function getShareProject(projectId: string): Promise<ProjectPublic | null> {
   const project = await Project.findOne({ projectId })
@@ -160,6 +162,23 @@ export async function cloneProject(
         userId: newUserId,
       }], { session }),
     ]);
+
+    const ownerId = (sourceProject.userId as any)?._id?.toString() || (sourceProject as any).userId?.toString();
+    if (ownerId) {
+      User.findById(newUserId).select('accountName avatarUrl').lean().then(actor => {
+        if (actor) {
+          upsertSocial({
+            ownerId,
+            type: 'fork',
+            projectId: sourceProjectId,
+            projectTitle: sourceProject.title || '',
+            actorId: newUserId,
+            actorAccountName: (actor as any).accountName,
+            actorAvatarUrl: (actor as any).avatarUrl || null,
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
 
     return {
       projectId: newProject.projectId,
