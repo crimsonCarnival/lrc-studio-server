@@ -6,6 +6,7 @@ import Upload from '../uploads/upload.model.js';
 import { withTransaction } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
 import User from '../../db/user.model.js';
+import { getIO } from '../../socket/socket.manager.js';
 
 export async function getShareProject(projectId: string): Promise<ProjectPublic | null> {
   const project = await Project.findOne({ projectId })
@@ -179,6 +180,13 @@ export async function cloneProject(
         }
       }).catch(() => {});
     }
+
+    try {
+      getIO().to(`project:${sourceProjectId}`).emit('project:forked', {
+        projectId: sourceProjectId,
+        forkCount: (await Project.findOne({ projectId: sourceProjectId }).select('forkCount'))?.forkCount ?? 0,
+      });
+    } catch { /* socket not ready */ }
 
     return {
       projectId: newProject.projectId,

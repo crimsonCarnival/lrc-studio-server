@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as adminService from './admin.service.js';
+import { getIO } from '../../socket/socket.manager.js';
 
 export async function getUsers(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await adminService.listUsers(req.query as Record<string, unknown>);
@@ -8,8 +9,21 @@ export async function getUsers(req: FastifyRequest, reply: FastifyReply): Promis
 
 export async function banUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { reason, bannedUntil, banIp, banDevice } = req.body as Record<string, unknown>;
-  const result = await adminService.toggleBan((req.params as Record<string, string>).id, true, reason as string, bannedUntil as string | null, banIp as boolean, banDevice as boolean, req.userId!);
-  if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
+  const result = await adminService.toggleBan(
+    (req.params as Record<string, string>).id,
+    true,
+    reason as string,
+    bannedUntil as string | null,
+    banIp as boolean,
+    banDevice as boolean,
+    req.userId!
+  );
+  if ((result as Record<string, unknown>).error) {
+    return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
+  }
+  try {
+    getIO().to(`user:${(req.params as Record<string, string>).id}`).emit('user:banned', { reason });
+  } catch { /* socket not ready */ }
   return reply.send(result);
 }
 
