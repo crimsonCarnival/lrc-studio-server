@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import User from '../../db/user.model.js';
 import PasswordReset from '../../db/passwordReset.model.js';
-import { sendPasswordResetEmail } from '../email/email.service.js';
+import { sendPasswordResetEmail, sendPasswordChangedEmail } from '../email/email.service.js';
+import { resolveSticky, createOnce } from '../notifications/notifications.service.js';
 import { resetPasswordAtomically, changePasswordAtomically } from '../auth/auth.tx.service.js';
 import { getEnv } from '../../config/env.js';
 
@@ -124,4 +125,9 @@ export async function changePassword(userId: string, currentPassword: string | n
 
   // Update atomically
   await changePasswordAtomically(userId, passwordHash);
+  resolveSticky(userId, 'set_password').catch(() => {});
+  createOnce({ userId, type: 'password_changed', sticky: false }).catch(() => {});
+  if (user.email) {
+    sendPasswordChangedEmail(user.email, (user as any).displayName || user.accountName).catch(() => {});
+  }
 }

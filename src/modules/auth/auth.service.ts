@@ -11,6 +11,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
+import { createOnce } from '../notifications/notifications.service.js';
 import Passkey from '../../db/passkey.model.js';
 import {
   generateRegistrationOptions,
@@ -179,6 +180,7 @@ export async function register(
 
   if (user.email) {
     sendVerification(user._id.toString(), user.email, 'initial').catch((e) => console.error('[register] sendVerification failed:', e));
+    createOnce({ userId: user._id.toString(), type: 'verify_email', sticky: true }).catch(() => {});
   }
 
   return {
@@ -623,6 +625,7 @@ export async function revokeAllSessions(
 export async function getPasskeyRegistrationOptions(userId: string): Promise<ServiceResult<any>> {
   const user = await User.findById(userId);
   if (!user) return err('user_not_found', 404) as any;
+  if (!user.isVerified) return err('email_not_verified', 403) as any;
 
   const userPasskeys = await Passkey.find({ userId: user._id });
   const { rpID, rpName } = getWebAuthnConfig();

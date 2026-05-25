@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import User from '../../db/user.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
+import { createOnce } from '../notifications/notifications.service.js';
 import type { JwtPayload } from '../../types/index.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
@@ -196,7 +197,11 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
         },
       });
       await user.save();
-      if (user.email) sendVerification(user._id.toString(), user.email, 'initial').catch((e) => console.error('[google] sendVerification failed:', e));
+      if (user.email) {
+        sendVerification(user._id.toString(), user.email, 'initial').catch((e) => console.error('[google] sendVerification failed:', e));
+        createOnce({ userId: user._id.toString(), type: 'verify_email', sticky: true }).catch(() => {});
+      }
+      createOnce({ userId: user._id.toString(), type: 'set_password', sticky: true }).catch(() => {});
     }
   } else {
     // Returning user — update Google metadata only, never touch avatarUrl
