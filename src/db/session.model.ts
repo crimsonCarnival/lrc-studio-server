@@ -13,6 +13,8 @@ export interface ISession extends Document {
   lastUsedAt: Date;
   createdAt: Date;
   updatedAt: Date;
+  previousRefreshTokenHash?: string;
+  previousRefreshTokenExpiry?: Date;
 }
 
 export interface ISessionModel extends Model<ISession> {}
@@ -62,6 +64,14 @@ const sessionSchema = new mongoose.Schema<ISession>(
     lastUsedAt: {
       type: Date,
       default: Date.now,
+    },
+    previousRefreshTokenHash: {
+      type: String,
+      default: null,
+    },
+    previousRefreshTokenExpiry: {
+      type: Date,
+      default: null,
     },
   },
   { timestamps: true, collection: 'sessions' }

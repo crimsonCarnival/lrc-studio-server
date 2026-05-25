@@ -37,7 +37,7 @@ export async function authorize(req: FastifyRequest, reply: FastifyReply): Promi
   const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
   const state = googleService.generateSignedState({ sub: req.userId!, action: 'connect', appOrigin });
-  return reply.send({ url: googleService.getAuthUrl(state) });
+  return reply.redirect(googleService.getAuthUrl(state));
 }
 
 export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -47,7 +47,7 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
   const state = googleService.generateSignedState({ action: 'login', appOrigin });
-  return reply.send({ url: googleService.getAuthUrl(state) });
+  return reply.redirect(googleService.getAuthUrl(state));
 }
 
 export async function callback(req: FastifyRequest, reply: FastifyReply): Promise<void> {

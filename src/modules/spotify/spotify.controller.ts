@@ -25,7 +25,7 @@ export async function authorize(req: FastifyRequest, reply: FastifyReply): Promi
     return reply.code(503).send({ error: 'Spotify integration not configured' });
   }
   const state = spotifyService.generateSignedState(req.userId!);
-  return reply.send({ url: spotifyService.getAuthUrl(state) });
+  return reply.redirect(spotifyService.getAuthUrl(state));
 }
 
 export async function callback(req: FastifyRequest, reply: FastifyReply): Promise<void> {
