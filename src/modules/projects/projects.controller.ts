@@ -1,6 +1,15 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as projectService from './projects.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
+import { getIO } from '../../socket/socket.manager.js';
+
+export function emitProjectUpdated(projectId: string, patch: Record<string, unknown>): void {
+  try {
+    getIO().to(`project:${projectId}`).emit('project:updated', { projectId, ...patch });
+  } catch {
+    // socket not initialized — safe to ignore
+  }
+}
 
 /**
  * POST /projects — create a new project.
@@ -44,6 +53,7 @@ export async function update(req: FastifyRequest, reply: FastifyReply): Promise<
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error });
   }
+  emitProjectUpdated((req.params as Record<string, string>).id, req.body as Record<string, unknown>);
   return reply.send(result);
 }
 
@@ -59,6 +69,7 @@ export async function patch(req: FastifyRequest, reply: FastifyReply): Promise<v
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error });
   }
+  emitProjectUpdated((req.params as Record<string, string>).id, req.body as Record<string, unknown>);
   return reply.send(result);
 }
 
