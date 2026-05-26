@@ -7,7 +7,7 @@ import Project from '../projects/project.model.js';
 import Upload from '../uploads/upload.model.js';
 import AdminLog from './adminLog.model.js';
 import type { AdminLogEntry } from '../../types/index.js';
-import { createOnce } from '../notifications/notifications.service.js';
+import { createOnce, notifyAdminGranted } from '../notifications/notifications.service.js';
 import { sendBanEmail } from '../email/email.service.js';
 import { getIO } from '../../socket/socket.manager.js';
 
@@ -215,6 +215,10 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
 
   user.role = newRole as 'user' | 'admin';
   await user.save();
+
+  if (newRole === 'admin') {
+    notifyAdminGranted(user._id.toString()).catch(() => {});
+  }
 
   if (adminId) {
     const admin = await User.findById(adminId);

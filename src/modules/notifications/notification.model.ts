@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 
 const NOTIFICATION_TYPES = [
   'star', 'fork',
+  'follow',
+  'admin_granted',
   'system', 'admin',
   'verify_email', 'set_password',
   'ban', 'password_changed',
@@ -46,7 +48,13 @@ notificationSchema.index(
 // One sticky notification per user per type
 notificationSchema.index(
   { userId: 1, type: 1 },
-  { unique: true, partialFilterExpression: { type: { $in: ['verify_email', 'set_password'] } } }
+  { unique: true, partialFilterExpression: { type: { $in: ['verify_email', 'set_password'] } }, name: 'unique_sticky_per_user' }
+);
+
+// One aggregated follow notification per user
+notificationSchema.index(
+  { userId: 1, type: 1 },
+  { unique: true, partialFilterExpression: { type: 'follow' }, name: 'unique_follow_per_user' }
 );
 
 export interface INotification {

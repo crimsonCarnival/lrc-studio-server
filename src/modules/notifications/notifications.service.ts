@@ -45,6 +45,52 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
   emitToUser(ownerId, 'notification:push', notification.toObject());
 }
 
+export interface UpsertFollowParams {
+  ownerId: string;
+  actorId: string;
+  actorAccountName: string;
+  actorAvatarUrl: string | null;
+}
+
+export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
+  const { ownerId, actorId, actorAccountName, actorAvatarUrl } = params;
+  if (ownerId === actorId) return;
+
+  const actor = {
+    userId: new mongoose.Types.ObjectId(actorId),
+    accountName: actorAccountName,
+    avatarUrl: actorAvatarUrl,
+  };
+
+  const notification = await Notification.findOneAndUpdate(
+    { userId: new mongoose.Types.ObjectId(ownerId), type: 'follow' },
+    {
+      $setOnInsert: { sticky: false, body: null, projectId: null, projectTitle: null },
+      $set: { read: false },
+      $addToSet: { actors: actor },
+      $inc: { actorCount: 1 },
+    },
+    { upsert: true, new: true }
+  );
+
+  emitToUser(ownerId, 'notification:push', notification.toObject());
+}
+
+export async function notifyAdminGranted(userId: string): Promise<void> {
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(userId),
+    type: 'admin_granted',
+    sticky: false,
+    body: null,
+    projectId: null,
+    projectTitle: null,
+    actors: [],
+    actorCount: 0,
+    read: false,
+  });
+  emitToUser(userId, 'notification:push', notification.toObject());
+}
+
 export async function createOnce(params: {
   userId: string;
   type: NotificationType;
