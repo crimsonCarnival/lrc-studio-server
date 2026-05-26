@@ -2,15 +2,15 @@ import nodemailer from 'nodemailer';
 
 function getTransporter() {
   return nodemailer.createTransport({
-    host: process.env.EMAIL_SMTP_HOST,
-    port: parseInt(process.env.EMAIL_SMTP_PORT || '465'),
-    secure: process.env.EMAIL_SMTP_SECURE === 'true',
-    family: 4, // force IPv4 — nodemailer types omit this but it's a valid net.connect option
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    secure: false,
+    requireTLS: true,
     auth: {
-      user: process.env.EMAIL_SMTP_USER,
-      pass: process.env.EMAIL_SMTP_PASS,
+      user: process.env.BREVO_SMTP_USER,
+      pass: process.env.BREVO_SMTP_KEY,
     },
-  } as any);
+  });
 }
 
 export async function sendPasswordResetEmail(
@@ -109,14 +109,7 @@ export async function sendPasswordResetEmail(
           font-weight: 600;
           font-size: 15px;
           letter-spacing: 0.5px;
-          transition: all 0.2s ease;
           box-shadow: 0 4px 12px rgba(29, 185, 84, 0.25);
-          border: none;
-          cursor: pointer;
-        }
-        .button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 6px 20px rgba(29, 185, 84, 0.35);
         }
         .info-box {
           background: rgba(29, 185, 84, 0.05);
@@ -171,16 +164,9 @@ export async function sendPasswordResetEmail(
           color: #1DB954;
         }
         @media (max-width: 600px) {
-          .container {
-            border-radius: 0;
-          }
-          .content {
-            padding: 24px 16px;
-          }
-          .button {
-            padding: 12px 32px;
-            font-size: 14px;
-          }
+          .container { border-radius: 0; }
+          .content { padding: 24px 16px; }
+          .button { padding: 12px 32px; font-size: 14px; }
         }
       </style>
     </head>
@@ -191,29 +177,21 @@ export async function sendPasswordResetEmail(
             <p class="logo-text">${appName}</p>
           </div>
         </div>
-
         <div class="content">
           <p class="greeting">Reset Your Password</p>
           <p class="subheading">Hello${userName ? ` ${userName}` : ''},</p>
-
-          <p class="message">
-            You requested a password reset. Click the button below to create a new password:
-          </p>
-
+          <p class="message">You requested a password reset. Click the button below to create a new password:</p>
           <div class="button-container">
             <a href="${resetLink}" class="button">Reset Password</a>
           </div>
-
           <div class="info-box">
             <p class="info-box-title">⏱️ Link Expires Soon</p>
             <p class="info-box-text">This reset link is valid for 30 minutes. After that, you'll need to request a new one.</p>
           </div>
-
           <div class="security-notice">
             <p class="security-notice-text">💡 Didn't request this? If you didn't ask for a password reset, you can safely ignore this email. Your account remains secure.</p>
           </div>
         </div>
-
         <div class="footer">
           <p class="footer-text">
             © ${new Date().getFullYear()} <span class="footer-brand">${appName}</span><br>
@@ -225,9 +203,8 @@ export async function sendPasswordResetEmail(
     </html>
   `;
 
-  const transporter = getTransporter();
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM || `${appName} <noreply@example.com>`,
+  await getTransporter().sendMail({
+    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
     to: email,
     subject: `Reset Your ${appName} Password`,
     html,
@@ -330,14 +307,7 @@ export async function sendVerificationEmail(
           font-weight: 600;
           font-size: 15px;
           letter-spacing: 0.5px;
-          transition: all 0.2s ease;
           box-shadow: 0 4px 12px rgba(29, 185, 84, 0.25);
-          border: none;
-          cursor: pointer;
-        }
-        .button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 6px 20px rgba(29, 185, 84, 0.35);
         }
         .info-box {
           background: rgba(29, 185, 84, 0.05);
@@ -392,16 +362,9 @@ export async function sendVerificationEmail(
           color: #1DB954;
         }
         @media (max-width: 600px) {
-          .container {
-            border-radius: 0;
-          }
-          .content {
-            padding: 24px 16px;
-          }
-          .button {
-            padding: 12px 32px;
-            font-size: 14px;
-          }
+          .container { border-radius: 0; }
+          .content { padding: 24px 16px; }
+          .button { padding: 12px 32px; font-size: 14px; }
         }
       </style>
     </head>
@@ -412,29 +375,21 @@ export async function sendVerificationEmail(
             <p class="logo-text">${appName}</p>
           </div>
         </div>
-
         <div class="content">
           <p class="greeting">Verify Your Email Address</p>
           <p class="subheading">Hello${userName ? ` ${userName}` : ''},</p>
-
-          <p class="message">
-            Click the button below to verify your email address:
-          </p>
-
+          <p class="message">Click the button below to verify your email address:</p>
           <div class="button-container">
             <a href="${verifyLink}" class="button">Verify Email Address</a>
           </div>
-
           <div class="info-box">
             <p class="info-box-title">⏱️ Link Expires in 24 Hours</p>
             <p class="info-box-text">This verification link is valid for 24 hours. After that, you can request a new one from your account settings.</p>
           </div>
-
           <div class="security-notice">
             <p class="security-notice-text">💡 Didn't request this? If you didn't ask to verify this email, you can safely ignore it. Your account remains secure.</p>
           </div>
         </div>
-
         <div class="footer">
           <p class="footer-text">
             © ${new Date().getFullYear()} <span class="footer-brand">${appName}</span><br>
@@ -446,9 +401,8 @@ export async function sendVerificationEmail(
     </html>
   `;
 
-  const transporter = getTransporter();
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM || `${appName} <noreply@example.com>`,
+  await getTransporter().sendMail({
+    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
     to: email,
     subject: `Verify Your ${appName} Email`,
     html,
@@ -461,7 +415,6 @@ export async function sendBanEmail(
   userName?: string
 ): Promise<void> {
   const appName = process.env.APP_NAME || 'LRC Studio';
-  const transporter = getTransporter();
   const reasonBlock = reason
     ? `<blockquote style="border-left:3px solid #ef4444;padding:8px 16px;margin:16px 0;color:#fca5a5">${reason}</blockquote>`
     : '';
@@ -481,8 +434,8 @@ export async function sendBanEmail(
     <div class="footer">${appName} — Automated security notification.</div>
     </div></body></html>`;
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM || `${appName} <noreply@example.com>`,
+  await getTransporter().sendMail({
+    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
     to: email,
     subject: `Your ${appName} account has been suspended`,
     html,
@@ -494,7 +447,6 @@ export async function sendPasswordChangedEmail(
   userName?: string
 ): Promise<void> {
   const appName = process.env.APP_NAME || 'LRC Studio';
-  const transporter = getTransporter();
   const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
     <style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#09090b;color:#f4f4f5}
     .container{max-width:600px;margin:0 auto;background:#18181b;border:1px solid #3f3f46;border-radius:12px;overflow:hidden}
@@ -510,8 +462,8 @@ export async function sendPasswordChangedEmail(
     <div class="footer">${appName} — Automated security notification.</div>
     </div></body></html>`;
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM || `${appName} <noreply@example.com>`,
+  await getTransporter().sendMail({
+    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
     to: email,
     subject: `Your ${appName} password was changed`,
     html,

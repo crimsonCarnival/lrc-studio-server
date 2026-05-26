@@ -1,6 +1,4 @@
 import 'dotenv/config';
-import dns from 'dns';
-dns.setDefaultResultOrder('ipv4first');
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import Fastify from 'fastify';
 import mongoose from './plugins/mongoose.js';
