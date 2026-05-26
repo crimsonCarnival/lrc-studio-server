@@ -19,10 +19,13 @@ export const userResolvers = {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
       if (!user || (user as any).isDeleted || (user as any).ban?.active) return null;
 
-      const projects = await Project.find({ userId: user._id, public: true })
-        .sort({ starCount: -1 })
-        .limit(50)
-        .lean();
+      const [projects, projectCount] = await Promise.all([
+        Project.find({ userId: user._id, public: true })
+          .sort({ starCount: -1 })
+          .limit(50)
+          .lean(),
+        Project.countDocuments({ userId: user._id, public: true }),
+      ]);
 
       const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
 
@@ -36,7 +39,7 @@ export const userResolvers = {
         isAdmin: (user as any).role === 'admin',
         createdAt: (user as any).createdAt ? new Date((user as any).createdAt).toISOString() : null,
         projects,
-        projectCount: projects.length,
+        projectCount,
         totalStarsReceived,
       };
     },
