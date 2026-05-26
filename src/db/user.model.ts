@@ -31,6 +31,12 @@ export interface IAppeal {
   resolvedAt?: Date | null;
 }
 
+export interface ISocial {
+  followerCount: number;
+  followingCount: number;
+  showFollowers: boolean;
+}
+
 export interface IUser extends Document {
   accountName?: string;
   displayName?: string | null;
@@ -62,6 +68,7 @@ export interface IUser extends Document {
     name?: string | null;
     pictureUrl?: string | null;
   };
+  social?: ISocial;
   lastIp?: string | null;
   bio: string;
   currentChallenge?: string | null;
@@ -92,6 +99,15 @@ const appealSchema = new mongoose.Schema<IAppeal>(
     status: { type: String, enum: ['none', 'pending', 'rejected'], default: 'none' },
     submittedAt: { type: Date, default: null },
     resolvedAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
+const socialSchema = new mongoose.Schema<ISocial>(
+  {
+    followerCount: { type: Number, default: 0, min: 0 },
+    followingCount: { type: Number, default: 0, min: 0 },
+    showFollowers: { type: Boolean, default: true },
   },
   { _id: false }
 );
@@ -196,6 +212,7 @@ const userSchema = new mongoose.Schema<IUser>(
       default: '',
       maxlength: 160,
     },
+    social: { type: socialSchema, default: () => ({}) },
     currentChallenge: {
       type: String,
       default: null,
@@ -284,7 +301,8 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
       email: this.google.email,
       name: this.google.name,
       pictureUrl: this.google.pictureUrl,
-    } : { connected: false }
+    } : { connected: false },
+    showFollowers: this.social?.showFollowers ?? true,
   };
 };
 
