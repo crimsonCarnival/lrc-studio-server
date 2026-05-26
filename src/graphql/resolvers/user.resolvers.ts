@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
 import Project from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
@@ -6,6 +7,8 @@ import { Context } from './context.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
+import Follow from '../../db/follow.model.js';
+import { upsertFollow } from '../../modules/notifications/notifications.service.js';
 
 export const userResolvers = {
   Query: {
@@ -15,7 +18,7 @@ export const userResolvers = {
       return user?.toPublic();
     },
 
-    publicProfile: async (_root: any, { accountName }: { accountName: string }) => {
+    publicProfile: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
       if (!user || (user as any).isDeleted || (user as any).ban?.active) return null;
 
@@ -27,7 +30,12 @@ export const userResolvers = {
         Project.countDocuments({ userId: user._id, public: true }),
       ]);
 
-      const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
+      const totalStarsReceived = projects.reduce((sum, p) => sum + ((p as any).starCount ?? 0), 0);
+      const totalForksReceived = projects.reduce((sum, p) => sum + ((p as any).forkCount ?? 0), 0);
+
+      const isFollowedByMe = context.userId
+        ? !!(await Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }))
+        : false;
 
       return {
         id: user._id.toString(),
@@ -41,7 +49,63 @@ export const userResolvers = {
         projects,
         projectCount,
         totalStarsReceived,
+        totalForksReceived,
+        followerCount: (user as any).social?.followerCount ?? 0,
+        followingCount: (user as any).social?.followingCount ?? 0,
+        isFollowedByMe,
+        showFollowers: (user as any).social?.showFollowers ?? true,
       };
+    },
+
+    followList: async (
+      _root: any,
+      { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING'; offset?: number }
+    ) => {
+      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
+      if (!user || (user as any).isDeleted || (user as any).ban?.active) return { users: [], total: 0 };
+      if (!(user as any).social?.showFollowers) return { users: [], total: 0 };
+
+      const LIMIT = 50;
+
+      if (type === 'FOLLOWERS') {
+        const follows = await Follow.find({ followingId: user._id })
+          .sort({ createdAt: -1 })
+          .skip(offset)
+          .limit(LIMIT)
+          .lean();
+        const followerIds = follows.map(f => f.followerId);
+        const users = await User.find({ _id: { $in: followerIds }, isDeleted: { $ne: true } })
+          .select('accountName displayName avatarUrl')
+          .lean();
+        return {
+          users: users.map(u => ({
+            id: u._id.toString(),
+            accountName: (u as any).accountName,
+            displayName: (u as any).displayName ?? null,
+            avatarUrl: (u as any).avatarUrl ?? null,
+          })),
+          total: (user as any).social?.followerCount ?? 0,
+        };
+      } else {
+        const follows = await Follow.find({ followerId: user._id })
+          .sort({ createdAt: -1 })
+          .skip(offset)
+          .limit(LIMIT)
+          .lean();
+        const followingIds = follows.map(f => f.followingId);
+        const users = await User.find({ _id: { $in: followingIds }, isDeleted: { $ne: true } })
+          .select('accountName displayName avatarUrl')
+          .lean();
+        return {
+          users: users.map(u => ({
+            id: u._id.toString(),
+            accountName: (u as any).accountName,
+            displayName: (u as any).displayName ?? null,
+            avatarUrl: (u as any).avatarUrl ?? null,
+          })),
+          total: (user as any).social?.followingCount ?? 0,
+        };
+      }
     },
   },
 
@@ -92,6 +156,11 @@ export const userResolvers = {
         user.avatarUrl = avatarUrl;
       }
 
+      if (input.showFollowers !== undefined) {
+        if (!(user as any).social) (user as any).social = {};
+        (user as any).social.showFollowers = input.showFollowers;
+      }
+
       await user.save();
       return user.toPublic();
     },
@@ -99,6 +168,66 @@ export const userResolvers = {
     sendVerificationEmail: async (_root: any, _args: any, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       await resendVerification(context.userId);
+      return true;
+    },
+
+    follow: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+
+      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
+      if (!target || (target as any).isDeleted || (target as any).ban?.active) throw new Error('User not found');
+
+      const targetId = (target as any)._id.toString();
+      if (targetId === context.userId) throw new Error('Cannot follow yourself');
+
+      try {
+        await Follow.create({
+          followerId: new mongoose.Types.ObjectId(context.userId),
+          followingId: (target as any)._id,
+        });
+        await Promise.all([
+          User.updateOne({ _id: (target as any)._id }, { $inc: { 'social.followerCount': 1 } }),
+          User.updateOne({ _id: new mongoose.Types.ObjectId(context.userId) }, { $inc: { 'social.followingCount': 1 } }),
+        ]);
+        const follower = await User.findById(context.userId).lean();
+        if (follower) {
+          upsertFollow({
+            ownerId: targetId,
+            actorId: context.userId,
+            actorAccountName: (follower as any).accountName,
+            actorAvatarUrl: (follower as any).avatarUrl ?? null,
+          }).catch(() => {});
+        }
+      } catch (err: any) {
+        if (err.code === 11000) return true; // already following — idempotent
+        throw err;
+      }
+      return true;
+    },
+
+    unfollow: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+
+      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
+      if (!target) return true;
+
+      const result = await Follow.deleteOne({
+        followerId: new mongoose.Types.ObjectId(context.userId),
+        followingId: (target as any)._id,
+      });
+
+      if (result.deletedCount > 0) {
+        await Promise.all([
+          User.updateOne(
+            { _id: (target as any)._id, 'social.followerCount': { $gt: 0 } },
+            { $inc: { 'social.followerCount': -1 } }
+          ),
+          User.updateOne(
+            { _id: new mongoose.Types.ObjectId(context.userId), 'social.followingCount': { $gt: 0 } },
+            { $inc: { 'social.followingCount': -1 } }
+          ),
+        ]);
+      }
       return true;
     },
   },
