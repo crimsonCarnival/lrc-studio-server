@@ -78,5 +78,27 @@ export const userSchema = `
     projects: [Project!]!
     projectCount: Int!
     totalStarsReceived: Int!
+    totalForksReceived: Int!
+    followerCount: Int!
+    followingCount: Int!
+    isFollowedByMe: Boolean!
+    showFollowers: Boolean!
+  }
+
+  type FollowUser {
+    id: ID!
+    accountName: String!
+    displayName: String
+    avatarUrl: String
+  }
+
+  type FollowListResult {
+    users: [FollowUser!]!
+    total: Int!
+  }
+
+  enum FollowListType {
+    FOLLOWERS
+    FOLLOWING
   }
 `;

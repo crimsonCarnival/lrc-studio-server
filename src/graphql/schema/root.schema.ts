@@ -15,6 +15,7 @@ export const rootSchema = `
     settings: Settings
     getShare(id: ID!): Project
     publicProfile(accountName: String!): PublicUser
+    followList(accountName: String!, type: FollowListType!, offset: Int): FollowListResult!
   }
 
   type Mutation {
@@ -31,6 +32,8 @@ export const rootSchema = `
     starProject(id: ID!): Project!
     unstarProject(id: ID!): Project!
     sendVerificationEmail: Boolean!
+    follow(accountName: String!): Boolean!
+    unfollow(accountName: String!): Boolean!
   }
 
   input UpdateProfileInput {
@@ -39,5 +42,6 @@ export const rootSchema = `
     email: String
     bio: String
     avatarUrl: String
+    showFollowers: Boolean
   }
 `;
