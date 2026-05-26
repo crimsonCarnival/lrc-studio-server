@@ -676,11 +676,13 @@ export async function verifyPasskeyRegistration(
       expectedRPID: rpID,
     });
   } catch (error: any) {
+    console.error('[WebAuthn] verifyRegistrationResponse threw:', error.message, { rpID, origins });
     return err(error.message || 'verification_failed', 400) as any;
   }
 
   const { verified, registrationInfo } = verification;
   if (!verified || !registrationInfo) {
+    console.error('[WebAuthn] verification returned unverified', { rpID, origins });
     return err('verification_failed', 400) as any;
   }
 
