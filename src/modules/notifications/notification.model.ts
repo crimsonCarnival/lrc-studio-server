@@ -48,7 +48,7 @@ notificationSchema.index(
 // One sticky notification per user per type
 notificationSchema.index(
   { userId: 1, type: 1 },
-  { unique: true, partialFilterExpression: { type: { $in: ['verify_email', 'set_password'] } }, name: 'unique_sticky_per_user' }
+  { unique: true, partialFilterExpression: { type: { $in: ['verify_email', 'set_password'] } } }
 );
 
 // One aggregated follow notification per user
