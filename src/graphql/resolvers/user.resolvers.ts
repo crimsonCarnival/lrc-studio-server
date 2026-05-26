@@ -17,10 +17,11 @@ export const userResolvers = {
 
     publicProfile: async (_root: any, { accountName }: { accountName: string }) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
-      if (!user) return null;
+      if (!user || (user as any).isDeleted || (user as any).ban?.active) return null;
 
       const projects = await Project.find({ userId: user._id, public: true })
         .sort({ starCount: -1 })
+        .limit(50)
         .lean();
 
       const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
@@ -28,12 +29,12 @@ export const userResolvers = {
       return {
         id: user._id.toString(),
         accountName: user.accountName,
-        displayName: user.displayName ?? null,
-        avatarUrl: user.avatarUrl ?? null,
-        bio: user.bio ?? null,
-        isVerified: user.isVerified ?? false,
-        role: user.role ?? 'user',
-        createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : new Date().toISOString(),
+        displayName: (user as any).displayName ?? null,
+        avatarUrl: (user as any).avatarUrl ?? null,
+        bio: (user as any).bio ?? null,
+        isVerified: (user as any).isVerified ?? false,
+        isAdmin: (user as any).role === 'admin',
+        createdAt: (user as any).createdAt ? new Date((user as any).createdAt).toISOString() : null,
         projects,
         projectCount: projects.length,
         totalStarsReceived,

@@ -73,8 +73,8 @@ export const userSchema = `
     avatarUrl: String
     bio: String
     isVerified: Boolean!
-    role: String!
-    createdAt: String!
+    isAdmin: Boolean!
+    createdAt: String
     projects: [Project!]!
     projectCount: Int!
     totalStarsReceived: Int!
