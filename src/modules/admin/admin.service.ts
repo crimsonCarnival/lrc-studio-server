@@ -213,10 +213,11 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
   if (!user) return { error: 'User not found', status: 404 };
   if (!['user', 'admin'].includes(newRole)) return { error: 'Invalid role', status: 400 };
 
+  const previousRole = user.role;
   user.role = newRole as 'user' | 'admin';
   await user.save();
 
-  if (newRole === 'admin') {
+  if (previousRole !== 'admin' && newRole === 'admin') {
     notifyAdminGranted(user._id.toString()).catch(() => {});
   }
 

@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import type { FlattenMaps } from 'mongoose';
 import Notification, { type INotification, type NotificationType } from './notification.model.js';
 import { getIO } from '../../socket/socket.manager.js';
+import Follow from '../../db/follow.model.js';
 
 export type NotificationDoc = FlattenMaps<INotification> & { _id: mongoose.Types.ObjectId };
 
@@ -62,13 +63,20 @@ export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
     avatarUrl: actorAvatarUrl,
   };
 
+  // Count total followers for accurate actorCount
+  const totalFollowers = await Follow.countDocuments({ followingId: new mongoose.Types.ObjectId(ownerId) });
+
   const notification = await Notification.findOneAndUpdate(
     { userId: new mongoose.Types.ObjectId(ownerId), type: 'follow' },
     {
       $setOnInsert: { sticky: false, body: null, projectId: null, projectTitle: null },
-      $set: { read: false },
-      $addToSet: { actors: actor },
-      $inc: { actorCount: 1 },
+      $set: { read: false, actorCount: totalFollowers },
+      $push: {
+        actors: {
+          $each: [actor],
+          $slice: -5,  // keep 5 most recent actors
+        },
+      },
     },
     { upsert: true, new: true }
   );

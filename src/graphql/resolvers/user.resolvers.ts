@@ -59,11 +59,13 @@ export const userResolvers = {
 
     followList: async (
       _root: any,
-      { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING'; offset?: number }
+      { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING'; offset?: number },
+      context: Context
     ) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
       if (!user || (user as any).isDeleted || (user as any).ban?.active) return { users: [], total: 0 };
-      if (!(user as any).social?.showFollowers) return { users: [], total: 0 };
+      const isOwner = context.userId && context.userId === (user as any)._id.toString();
+      if (!(user as any).social?.showFollowers && !isOwner) return { users: [], total: 0 };
 
       const LIMIT = 50;
 
