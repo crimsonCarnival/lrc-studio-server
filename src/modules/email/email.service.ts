@@ -5,12 +5,12 @@ function getTransporter() {
     host: process.env.EMAIL_SMTP_HOST,
     port: parseInt(process.env.EMAIL_SMTP_PORT || '465'),
     secure: process.env.EMAIL_SMTP_SECURE === 'true',
-    family: 4,
+    family: 4, // force IPv4 — nodemailer types omit this but it's a valid net.connect option
     auth: {
       user: process.env.EMAIL_SMTP_USER,
       pass: process.env.EMAIL_SMTP_PASS,
     },
-  });
+  } as any);
 }
 
 export async function sendPasswordResetEmail(
