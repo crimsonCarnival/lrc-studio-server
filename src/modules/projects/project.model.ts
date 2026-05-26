@@ -35,6 +35,7 @@ const metadataSchema = new mongoose.Schema(
     songArtist: { type: String, default: '', maxlength: 500, set: textSetter },
     songAlbum: { type: String, default: '', maxlength: 500, set: textSetter },
     songYear: { type: String, default: '', maxlength: 4, set: textSetter },
+    albumArt: { type: String, default: '', maxlength: 2000, set: textSetter },
   },
   { _id: false }
 );
@@ -74,6 +75,7 @@ const projectSchema = new mongoose.Schema(
 
     state: { type: stateSchema, default: () => ({}) },
     metadata: { type: metadataSchema, default: () => ({}) },
+    coverImage: { type: String, default: '', maxlength: 2000, set: textSetter },
     readOnly: { type: Boolean, default: true },
     public: { type: Boolean, default: true },
 

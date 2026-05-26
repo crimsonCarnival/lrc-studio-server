@@ -19,6 +19,7 @@ export const projectSchema = `
     expiresAt: String
     createdAt: String
     updatedAt: String
+    coverImage: String
     forkedFrom: ForkedFrom
     forkCount: Int
     starCount: Int
@@ -48,6 +49,7 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
+    albumArt: String
   }
 
   input WordInput {
@@ -85,6 +87,7 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
+    albumArt: String
   }
 
   input ProjectLyricsInput {
@@ -104,6 +107,7 @@ export const projectSchema = `
     readOnly: Boolean
     public: Boolean
     metadata: ProjectMetadataInput
+    coverImage: String
     state: ProjectStateInput
     lyrics: ProjectLyricsInput
     recaptchaToken: String
@@ -116,6 +120,7 @@ export const projectSchema = `
     readOnly: Boolean
     version: Int
     metadata: ProjectMetadataInput
+    coverImage: String
     state: ProjectStateInput
     lyrics: ProjectLyricsInput
   }

@@ -289,7 +289,7 @@ export async function patchProject(
   }
 
   const projectUpdate: Record<string, unknown> = {};
-  const allowed = ['title', 'uploadId', 'state', 'metadata', 'readOnly', 'public'];
+  const allowed = ['title', 'uploadId', 'state', 'metadata', 'readOnly', 'public', 'coverImage'];
   for (const key of allowed) {
     if (data[key] !== undefined) projectUpdate[key] = data[key];
   }

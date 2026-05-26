@@ -15,6 +15,15 @@ export default async function uploadRoutes(fastify: FastifyInstance): Promise<vo
       }
     }
   }, uploadController.avatarSignature);
+  fastify.post('/cover-signature', {
+    preHandler: [fastify.requireAuth],
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: '1 hour'
+      }
+    }
+  }, uploadController.coverSignature);
   fastify.get('/media', { schema: listMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.listMedia);
   fastify.get('/media/:id', { preHandler: [fastify.requireActiveUser] }, uploadController.getMedia);
   fastify.post('/media', { schema: createMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.createMedia);

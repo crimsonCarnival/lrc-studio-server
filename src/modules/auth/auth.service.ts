@@ -26,12 +26,14 @@ import type {
 import { getEnv } from '../../config/env.js';
 
 function getWebAuthnConfig() {
-  const origin = getEnv().APP_URL;
+  const env = getEnv();
+  const primaryOrigin = env.APP_URL;
+  const origins = env.APP_URLS.length > 0 ? env.APP_URLS : [primaryOrigin];
   let rpID = 'localhost';
   try {
-    rpID = new URL(origin).hostname;
+    rpID = new URL(primaryOrigin).hostname;
   } catch (e) {}
-  return { rpID, origin, rpName: 'LRC Studio' };
+  return { rpID, origins, rpName: 'LRC Studio' };
 }
 
 function parseDeviceName(ua: string): string {
@@ -663,14 +665,14 @@ export async function verifyPasskeyRegistration(
   user.currentChallenge = null;
   await user.save();
 
-  const { rpID, origin } = getWebAuthnConfig();
+  const { rpID, origins } = getWebAuthnConfig();
 
   let verification;
   try {
     verification = await verifyRegistrationResponse({
       response,
       expectedChallenge,
-      expectedOrigin: origin,
+      expectedOrigin: origins,
       expectedRPID: rpID,
     });
   } catch (error: any) {
@@ -750,14 +752,14 @@ export async function verifyPasskeyLogin(
   user.currentChallenge = null;
   await user.save();
 
-  const { rpID, origin } = getWebAuthnConfig();
+  const { rpID, origins } = getWebAuthnConfig();
 
   let verification;
   try {
     verification = await verifyAuthenticationResponse({
       response,
       expectedChallenge,
-      expectedOrigin: origin,
+      expectedOrigin: origins,
       expectedRPID: rpID,
       credential: {
         id: passkey.credentialID,
@@ -817,5 +819,22 @@ export async function deletePasskeyForUser(userId: string, passkeyId: string): P
   if (result.deletedCount === 0) {
     return err('passkey_not_found', 404) as any;
   }
+  return { success: true } as any;
+}
+
+export async function deactivateUser(userId: string): Promise<ServiceResult<{ success: boolean }>> {
+  const user = await User.findById(userId);
+  if (!user) return { error: 'User not found', status: 404 } as any;
+  if (user.role === 'admin') return { error: 'Cannot deactivate an admin', status: 403 } as any;
+
+  user.deletedAt = new Date();
+  user.isDeleted = true;
+  user.ban.active = false;
+  user.ban.reason = null;
+  user.ban.until = null;
+  user.appeal.text = null;
+  user.appeal.status = 'none';
+
+  await user.save();
   return { success: true } as any;
 }

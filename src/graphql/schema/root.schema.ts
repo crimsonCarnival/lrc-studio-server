@@ -16,6 +16,9 @@ export const rootSchema = `
     getShare(id: ID!): Project
     publicProfile(accountName: String!): PublicUser
     followList(accountName: String!, type: FollowListType!, offset: Int): FollowListResult!
+    playlist(id: ID!): Playlist
+    playlists(accountName: String!): [Playlist!]!
+    savedPlaylists: [Playlist!]!
   }
 
   type Mutation {
@@ -34,6 +37,14 @@ export const rootSchema = `
     sendVerificationEmail: Boolean!
     follow(accountName: String!): Boolean!
     unfollow(accountName: String!): Boolean!
+    createPlaylist(input: CreatePlaylistInput!): Playlist!
+    updatePlaylist(id: ID!, input: UpdatePlaylistInput!): Playlist!
+    deletePlaylist(id: ID!): Boolean!
+    addProjectToPlaylist(playlistId: ID!, projectId: ID!): Playlist!
+    removeProjectFromPlaylist(playlistId: ID!, projectId: ID!): Playlist!
+    reorderPlaylist(playlistId: ID!, projectIds: [ID!]!): Playlist!
+    savePlaylist(playlistId: ID!): Boolean!
+    unsavePlaylist(playlistId: ID!): Boolean!
   }
 
   input UpdateProfileInput {

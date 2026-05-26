@@ -18,6 +18,14 @@ export async function avatarSignature(req: FastifyRequest, reply: FastifyReply):
   return reply.send(result);
 }
 
+export async function coverSignature(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await uploadService.generateCoverSignature(req.body as Record<string, unknown> || {}, req.userId!, req.ip);
+  if ((result as Record<string, unknown>).error) {
+    return reply.code((result as Record<string, number>).status).send({ error: (result as Record<string, unknown>).error });
+  }
+  return reply.send(result);
+}
+
 export async function listMedia(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { limit, offset } = req.query as { limit?: string; offset?: string };
   const result = await uploadService.listMedia(req.userId!, { limit, offset });

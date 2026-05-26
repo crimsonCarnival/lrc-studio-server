@@ -52,4 +52,6 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   // Passkey Management
   fastify.get('/passkeys', { preHandler: [fastify.requireAuth] }, authController.getPasskeys);
   fastify.delete('/passkeys/:id', { preHandler: [fastify.requireAuth] }, authController.deletePasskey);
+
+  fastify.post('/deactivate', { preHandler: [fastify.requireAuth] }, authController.deactivate);
 }

@@ -459,3 +459,12 @@ export async function deletePasskey(req: FastifyRequest, reply: FastifyReply): P
   }
   return reply.send(result);
 }
+
+export async function deactivate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await authService.deactivateUser(req.userId!);
+  if ((result as any).error) {
+    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  }
+  clearAuthCookies(reply);
+  return reply.send({ success: true });
+}
