@@ -38,7 +38,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.post('/change-password', { preHandler: [fastify.requireAuth] }, authController.changePassword);
   fastify.post('/set-password', { preHandler: [fastify.requireAuth] }, authController.setPassword);
   fastify.post('/send-verification', { preHandler: [fastify.requireAuth], config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, authController.sendVerificationEmailHandler);
-  fastify.get('/verify-email', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, authController.verifyEmailHandler);
+  fastify.post('/verify-email', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, authController.verifyEmailHandler);
   fastify.get('/sessions', { preHandler: [fastify.requireAuth] }, authController.getSessions);
   fastify.delete('/sessions/:id', { preHandler: [fastify.requireAuth] }, authController.revokeSession);
   fastify.post('/logout-all', { preHandler: [fastify.requireAuth] }, authController.logoutAll);

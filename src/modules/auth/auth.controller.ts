@@ -317,7 +317,7 @@ export async function sendVerificationEmailHandler(req: FastifyRequest, reply: F
 }
 
 export async function verifyEmailHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { token } = req.query as { token?: string };
+  const { token } = req.body as { token?: string };
   if (!token) {
     return reply.code(400).send({ error: 'missing_token' });
   }

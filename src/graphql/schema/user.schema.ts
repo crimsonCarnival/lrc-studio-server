@@ -24,6 +24,7 @@ export const userSchema = `
     projects: [Project!]!
     uploads: [Upload!]!
     settings: Settings
+    showFollowers: Boolean!
   }
 
   type UserBan {
