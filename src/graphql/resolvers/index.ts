@@ -4,6 +4,7 @@ import { projectResolvers } from './project.resolvers.js';
 import { lyricsResolvers } from './lyrics.resolvers.js';
 import { uploadResolvers } from './upload.resolvers.js';
 import { settingsResolvers } from './settings.resolvers.js';
+import { playlistResolvers } from './playlist.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -12,6 +13,7 @@ export const resolvers = {
     ...projectResolvers.Query,
     ...uploadResolvers.Query,
     ...settingsResolvers.Query,
+    ...playlistResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -19,6 +21,7 @@ export const resolvers = {
     ...lyricsResolvers.Mutation,
     ...uploadResolvers.Mutation,
     ...settingsResolvers.Mutation,
+    ...playlistResolvers.Mutation,
   },
   User: userResolvers.User,
   Project: projectResolvers.Project,
