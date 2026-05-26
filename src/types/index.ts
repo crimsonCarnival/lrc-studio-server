@@ -94,6 +94,7 @@ export interface UserPublic {
     name?: string | null;
     pictureUrl?: string | null;
   } | null;
+  showFollowers?: boolean;
 }
 
 export interface AuthTokens {

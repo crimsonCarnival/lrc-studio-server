@@ -14,11 +14,7 @@ const followSchema = new mongoose.Schema<IFollow>(
   { timestamps: { createdAt: true, updatedAt: false }, collection: 'follows' }
 );
 
-// Prevent duplicate follows
 followSchema.index({ followerId: 1, followingId: 1 }, { unique: true });
-// Efficient "who follows this user" queries
 followSchema.index({ followingId: 1 });
-// Efficient "who does this user follow" queries
-followSchema.index({ followerId: 1 });
 
 export default mongoose.model<IFollow>('Follow', followSchema);
