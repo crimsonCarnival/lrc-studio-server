@@ -21,6 +21,7 @@ export const rootSchema = `
     savedPlaylists: [Playlist!]!
     feed(offset: Int, limit: Int): FeedResult!
     searchProjects(query: String!, sortBy: SearchSort, offset: Int, limit: Int): SearchResult!
+    searchUsers(query: String!, limit: Int): [FollowUser!]!
   }
 
   type Mutation {
