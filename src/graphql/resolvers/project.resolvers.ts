@@ -17,6 +17,7 @@ import { upsertSocial } from '../../modules/notifications/notifications.service.
 import { emitProjectUpdated } from '../../modules/projects/projects.controller.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
+import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
 
 export const projectResolvers = {
   Query: {
@@ -33,6 +34,15 @@ export const projectResolvers = {
 
     getShare: async (_root: any, { id }: { id: string }) => {
       return getShareProject(id);
+    },
+
+    searchProjects: async (
+      _root: any,
+      { query, sortBy = 'RELEVANCE', offset = 0, limit = 20 }:
+        { query: string; sortBy?: string; offset?: number; limit?: number }
+    ) => {
+      if (!query.trim()) return { projects: [], total: 0 };
+      return searchProjectsService(query, sortBy as any, offset, Math.min(limit, 50));
     },
   },
 
