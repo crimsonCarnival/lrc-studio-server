@@ -16,6 +16,8 @@ import User from '../../db/user.model.js';
 import { upsertSocial } from '../../modules/notifications/notifications.service.js';
 import { emitProjectUpdated } from '../../modules/projects/projects.controller.js';
 import { getIO } from '../../socket/socket.manager.js';
+import { writeActivity } from '../../modules/activity/activity.service.js';
+import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
 
 export const projectResolvers = {
   Query: {
@@ -32,6 +34,15 @@ export const projectResolvers = {
 
     getShare: async (_root: any, { id }: { id: string }) => {
       return getShareProject(id);
+    },
+
+    searchProjects: async (
+      _root: any,
+      { query, sortBy = 'RELEVANCE', offset = 0, limit = 20 }:
+        { query: string; sortBy?: string; offset?: number; limit?: number }
+    ) => {
+      if (!query.trim()) return { projects: [], total: 0 };
+      return searchProjectsService(query, sortBy as any, offset, Math.min(limit, 50));
     },
   },
 
@@ -80,8 +91,24 @@ export const projectResolvers = {
 
     cloneProject: async (_root: any, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
+
+      // Fetch source metadata before cloning — needed for the activity payload
+      const sourceProject = await Project.findOne({ projectId: id })
+        .select('title coverImage')
+        .lean();
+
       const result = await cloneProject(id, context.userId);
       if ('error' in result) throw new Error((result as any).error);
+
+      // Activity links to the SOURCE project (discovery: "Alice forked [original]")
+      writeActivity({
+        actorId:      context.userId,
+        type:         'project_forked',
+        projectId:    id,
+        projectTitle: (sourceProject as any)?.title || '',
+        coverImage:   (sourceProject as any)?.coverImage || '',
+      }).catch(() => {});
+
       return Project.findOne({ projectId: (result as any).projectId });
     },
 
@@ -91,9 +118,10 @@ export const projectResolvers = {
         err.status = 401;
         throw err;
       }
-      const project = await Project.findOne({ projectId: id }).select('userId title').lean();
+      const project = await Project.findOne({ projectId: id }).select('userId title coverImage').lean();
       if (!project) throw new Error('Project not found');
 
+      let isNewStar = false;
       try {
         const existing = await ProjectStar.findOneAndUpdate(
           { projectId: id, userId: context.userId },
@@ -101,6 +129,7 @@ export const projectResolvers = {
           { upsert: true, new: false }
         );
         if (!existing) {
+          isNewStar = true;
           await Project.updateOne({ projectId: id }, { $inc: { starCount: 1 } });
           const ownerId = project.userId?.toString();
           if (ownerId) {
@@ -121,6 +150,17 @@ export const projectResolvers = {
         }
       } catch (err: any) {
         if (err.code !== 11000) throw err;
+      }
+      // writeActivity is outside the upsert try/catch so a duplicate-key swallow
+      // doesn't silently suppress the activity error path
+      if (isNewStar) {
+        writeActivity({
+          actorId:      context.userId!,
+          type:         'project_starred',
+          projectId:    id,
+          projectTitle: (project as any).title || '',
+          coverImage:   (project as any).coverImage || '',
+        }).catch(() => {});
       }
       return Project.findOne({ projectId: id });
     },

@@ -9,6 +9,7 @@ import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
 import Follow from '../../db/follow.model.js';
 import { upsertFollow } from '../../modules/notifications/notifications.service.js';
+import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
 
 export const userResolvers = {
   Query: {
@@ -55,6 +56,10 @@ export const userResolvers = {
         isFollowedByMe,
         showFollowers: (user as any).social?.showFollowers ?? true,
       };
+    },
+
+    searchUsers: async (_root: any, { query, limit = 10 }: { query: string; limit?: number }) => {
+      return searchUsersService(query, limit);
     },
 
     followList: async (
