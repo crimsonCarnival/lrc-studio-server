@@ -8,18 +8,19 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     .split(',')
     .map((o: string) => o.trim());
 
+  const io = new Server(fastify.server, {
+    cors: {
+      origin: origins,
+      credentials: true,
+    },
+    pingInterval: 25000,
+    pingTimeout: 60000,
+  });
+
+  setIO(io);
+  fastify.addHook('onClose', () => new Promise<void>(res => io.close(() => res())));
+
   fastify.addHook('onListen', async () => {
-    const io = new Server(fastify.server, {
-      cors: {
-        origin: origins,
-        credentials: true,
-      },
-      pingInterval: 25000,
-      pingTimeout: 60000,
-    });
-
-    setIO(io);
-
     io.on('connection', (socket) => {
       fastify.log.info({ socketId: socket.id }, 'socket connected');
 
