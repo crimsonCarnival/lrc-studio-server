@@ -6,6 +6,7 @@ import Upload from '../uploads/upload.model.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
+import { writeActivity } from '../activity/activity.service.js';
 
 export async function createProject(
   data: any,
@@ -288,6 +289,10 @@ export async function patchProject(
     return { error: 'Version conflict — reload and retry', status: 409 } as any;
   }
 
+  // Detect publish transition (false → true) before the transaction overwrites the doc
+  const wasPublic = !!(project as any).public;
+  const isPublishing = data.public === true && !wasPublic;
+
   const projectUpdate: Record<string, unknown> = {};
   const allowed = ['title', 'uploadId', 'state', 'metadata', 'readOnly', 'public', 'coverImage'];
   for (const key of allowed) {
@@ -345,6 +350,16 @@ export async function patchProject(
     deviceId: 'unknown',
     metadata: { projectId, fieldsUpdated: Object.keys(projectUpdate) },
   });
+
+  if (isPublishing && userId) {
+    writeActivity({
+      actorId:      userId,
+      type:         'project_published',
+      projectId,
+      projectTitle: (updatedProject as any)?.title || '',
+      coverImage:   (updatedProject as any)?.coverImage || '',
+    }).catch(() => {});
+  }
 
   return { project: pub } as any;
 }
