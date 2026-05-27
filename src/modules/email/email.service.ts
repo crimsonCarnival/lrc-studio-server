@@ -1,16 +1,33 @@
-import nodemailer from 'nodemailer';
+const BREVO_API = 'https://api.brevo.com/v3/smtp/email';
 
-function getTransporter() {
-  return nodemailer.createTransport({
-    host: 'smtp-relay.brevo.com',
-    port: 587,
-    secure: false,
-    requireTLS: true,
-    auth: {
-      user: process.env.BREVO_SMTP_USER,
-      pass: process.env.BREVO_SMTP_KEY,
+async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+  const apiKey = process.env.BREVO_SMTP_KEY;
+  const fromEmail = process.env.BREVO_SMTP_USER;
+  const appName = process.env.APP_NAME || 'LRC Studio';
+
+  if (!apiKey || !fromEmail) {
+    throw new Error('Brevo credentials not configured (BREVO_SMTP_KEY, BREVO_SMTP_USER)');
+  }
+
+  const res = await fetch(BREVO_API, {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
     },
+    body: JSON.stringify({
+      sender: { name: appName, email: fromEmail },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
   });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Brevo API error ${res.status}: ${body}`);
+  }
 }
 
 export async function sendPasswordResetEmail(
@@ -203,12 +220,7 @@ export async function sendPasswordResetEmail(
     </html>
   `;
 
-  await getTransporter().sendMail({
-    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
-    to: email,
-    subject: `Reset Your ${appName} Password`,
-    html,
-  });
+  await sendEmail(email, `Reset Your ${appName} Password`, html);
 }
 
 export async function sendVerificationEmail(
@@ -401,12 +413,7 @@ export async function sendVerificationEmail(
     </html>
   `;
 
-  await getTransporter().sendMail({
-    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
-    to: email,
-    subject: `Verify Your ${appName} Email`,
-    html,
-  });
+  await sendEmail(email, `Verify Your ${appName} Email`, html);
 }
 
 export async function sendBanEmail(
@@ -434,12 +441,7 @@ export async function sendBanEmail(
     <div class="footer">${appName} — Automated security notification.</div>
     </div></body></html>`;
 
-  await getTransporter().sendMail({
-    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
-    to: email,
-    subject: `Your ${appName} account has been suspended`,
-    html,
-  });
+  await sendEmail(email, `Your ${appName} account has been suspended`, html);
 }
 
 export async function sendPasswordChangedEmail(
@@ -462,10 +464,5 @@ export async function sendPasswordChangedEmail(
     <div class="footer">${appName} — Automated security notification.</div>
     </div></body></html>`;
 
-  await getTransporter().sendMail({
-    from: process.env.EMAIL_FROM || `LRC Studio <${process.env.BREVO_SMTP_USER}>`,
-    to: email,
-    subject: `Your ${appName} password was changed`,
-    html,
-  });
+  await sendEmail(email, `Your ${appName} password was changed`, html);
 }
