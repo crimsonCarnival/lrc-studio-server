@@ -1,10 +1,11 @@
-import { healthResolvers } from './health.resolvers.js';
-import { userResolvers } from './user.resolvers.js';
-import { projectResolvers } from './project.resolvers.js';
-import { lyricsResolvers } from './lyrics.resolvers.js';
-import { uploadResolvers } from './upload.resolvers.js';
+import { healthResolvers }   from './health.resolvers.js';
+import { userResolvers }     from './user.resolvers.js';
+import { projectResolvers }  from './project.resolvers.js';
+import { lyricsResolvers }   from './lyrics.resolvers.js';
+import { uploadResolvers }   from './upload.resolvers.js';
 import { settingsResolvers } from './settings.resolvers.js';
 import { playlistResolvers } from './playlist.resolvers.js';
+import { activityResolvers } from './activity.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -14,6 +15,7 @@ export const resolvers = {
     ...uploadResolvers.Query,
     ...settingsResolvers.Query,
     ...playlistResolvers.Query,
+    ...activityResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -23,8 +25,9 @@ export const resolvers = {
     ...settingsResolvers.Mutation,
     ...playlistResolvers.Mutation,
   },
-  User: userResolvers.User,
-  Project: projectResolvers.Project,
-  Lyrics: lyricsResolvers.Lyrics,
-  Upload: uploadResolvers.Upload,
+  User:     userResolvers.User,
+  Project:  projectResolvers.Project,
+  Lyrics:   lyricsResolvers.Lyrics,
+  Upload:   uploadResolvers.Upload,
+  Activity: activityResolvers.Activity,
 };
