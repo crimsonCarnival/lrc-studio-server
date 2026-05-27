@@ -5,5 +5,9 @@ import { uploadSchema } from './upload.schema.js';
 import { settingsSchema } from './settings.schema.js';
 import { rootSchema } from './root.schema.js';
 import { playlistSchema } from './playlist.schema.js';
+import { activitySchema } from './activity.schema.js';
 
-export const schemaString = [userSchema, projectSchema, lyricsSchema, uploadSchema, settingsSchema, playlistSchema, rootSchema].join('\n');
+export const schemaString = [
+  userSchema, projectSchema, lyricsSchema, uploadSchema,
+  settingsSchema, playlistSchema, activitySchema, rootSchema,
+].join('\n');
