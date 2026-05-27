@@ -1,16 +1,20 @@
 # Build stage
 FROM node:22-alpine AS builder
 
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm ci
+COPY package.json pnpm-lock.yaml .npmrc ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 # Prune dev dependencies
-RUN npm prune --production
+RUN pnpm prune --prod
 
 # Production stage
 FROM node:22-alpine
@@ -20,7 +24,7 @@ WORKDIR /app
 # Copy production node_modules and built files
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/package.json ./
 
 EXPOSE 3000
 
