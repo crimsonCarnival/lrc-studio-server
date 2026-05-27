@@ -11,7 +11,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
-import { createOnce } from '../notifications/notifications.service.js';
+import { createOnce, resolveSticky } from '../notifications/notifications.service.js';
 import Passkey from '../../db/passkey.model.js';
 import {
   generateRegistrationOptions,
@@ -698,6 +698,8 @@ export async function verifyPasskeyRegistration(
     transports: registrationInfo.credential.transports,
     userId: user._id,
   });
+
+  resolveSticky(user._id.toString(), 'set_password').catch(() => {});
 
   return { success: true } as any;
 }
