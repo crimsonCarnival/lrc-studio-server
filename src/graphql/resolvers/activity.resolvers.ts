@@ -27,7 +27,15 @@ export const activityResolvers = {
       const user = await User.findById(a.actorId)
         .select('accountName displayName avatarUrl')
         .lean();
-      if (!user) return null;
+      // User may have been deleted after the activity was written — return a
+      // sentinel rather than null so the non-nullable `actor: FollowUser!`
+      // field doesn't null-bubble the entire Activity object.
+      if (!user) return {
+        id: a.actorId?.toString() ?? 'deleted',
+        accountName: '[deleted]',
+        displayName: null,
+        avatarUrl: null,
+      };
       return {
         id: (user as any)._id.toString(),
         accountName: (user as any).accountName,

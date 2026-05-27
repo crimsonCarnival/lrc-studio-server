@@ -121,6 +121,7 @@ export const projectResolvers = {
       const project = await Project.findOne({ projectId: id }).select('userId title coverImage').lean();
       if (!project) throw new Error('Project not found');
 
+      let isNewStar = false;
       try {
         const existing = await ProjectStar.findOneAndUpdate(
           { projectId: id, userId: context.userId },
@@ -128,6 +129,7 @@ export const projectResolvers = {
           { upsert: true, new: false }
         );
         if (!existing) {
+          isNewStar = true;
           await Project.updateOne({ projectId: id }, { $inc: { starCount: 1 } });
           const ownerId = project.userId?.toString();
           if (ownerId) {
@@ -145,16 +147,20 @@ export const projectResolvers = {
               }
             }).catch(() => {});
           }
-          writeActivity({
-            actorId:      context.userId!,
-            type:         'project_starred',
-            projectId:    id,
-            projectTitle: (project as any).title || '',
-            coverImage:   (project as any).coverImage || '',
-          }).catch(() => {});
         }
       } catch (err: any) {
         if (err.code !== 11000) throw err;
+      }
+      // writeActivity is outside the upsert try/catch so a duplicate-key swallow
+      // doesn't silently suppress the activity error path
+      if (isNewStar) {
+        writeActivity({
+          actorId:      context.userId!,
+          type:         'project_starred',
+          projectId:    id,
+          projectTitle: (project as any).title || '',
+          coverImage:   (project as any).coverImage || '',
+        }).catch(() => {});
       }
       return Project.findOne({ projectId: id });
     },
