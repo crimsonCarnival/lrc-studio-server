@@ -84,12 +84,24 @@ export const userResolvers = {
         const users = await User.find({ _id: { $in: followerIds }, isDeleted: { $ne: true } })
           .select('accountName displayName avatarUrl')
           .lean();
+
+        // Batch-check which followers the viewer already follows back
+        const myFollowedSet = new Set<string>();
+        if (context.userId && followerIds.length > 0) {
+          const myFollows = await Follow.find({
+            followerId: new mongoose.Types.ObjectId(context.userId),
+            followingId: { $in: followerIds },
+          }).select('followingId').lean();
+          myFollows.forEach(f => myFollowedSet.add(f.followingId.toString()));
+        }
+
         return {
           users: users.map(u => ({
             id: u._id.toString(),
             accountName: (u as any).accountName,
             displayName: (u as any).displayName ?? null,
             avatarUrl: (u as any).avatarUrl ?? null,
+            isFollowedByMe: myFollowedSet.has(u._id.toString()),
           })),
           total: (user as any).social?.followerCount ?? 0,
         };
@@ -103,12 +115,24 @@ export const userResolvers = {
         const users = await User.find({ _id: { $in: followingIds }, isDeleted: { $ne: true } })
           .select('accountName displayName avatarUrl')
           .lean();
+
+        // Batch-check which following users the viewer also follows
+        const myFollowedSet = new Set<string>();
+        if (context.userId && followingIds.length > 0) {
+          const myFollows = await Follow.find({
+            followerId: new mongoose.Types.ObjectId(context.userId),
+            followingId: { $in: followingIds },
+          }).select('followingId').lean();
+          myFollows.forEach(f => myFollowedSet.add(f.followingId.toString()));
+        }
+
         return {
           users: users.map(u => ({
             id: u._id.toString(),
             accountName: (u as any).accountName,
             displayName: (u as any).displayName ?? null,
             avatarUrl: (u as any).avatarUrl ?? null,
+            isFollowedByMe: myFollowedSet.has(u._id.toString()),
           })),
           total: (user as any).social?.followingCount ?? 0,
         };
