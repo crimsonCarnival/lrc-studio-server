@@ -22,6 +22,7 @@ export const rootSchema = `
     feed(offset: Int, limit: Int): FeedResult!
     searchProjects(query: String!, sortBy: SearchSort, offset: Int, limit: Int): SearchResult!
     searchUsers(query: String!, limit: Int): [FollowUser!]!
+    publicProject(projectId: String!): Project
   }
 
   type Mutation {

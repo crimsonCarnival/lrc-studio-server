@@ -24,6 +24,7 @@ import type {
   AuthenticationResponseJSON,
 } from '@simplewebauthn/server';
 import { getEnv } from '../../config/env.js';
+import { isValidAccountName, isReservedAccountName } from './auth.validation.js';
 
 function getWebAuthnConfig() {
   const env = getEnv();
@@ -142,6 +143,12 @@ export async function register(
   const { email, password } = data;
   const accountName = data.accountName ? data.accountName.toLowerCase().trim() : undefined;
   const displayName = data.displayName ? data.displayName.trim().slice(0, 50) : undefined;
+
+  if (accountName) {
+    if (!isValidAccountName(accountName) || isReservedAccountName(accountName)) {
+      return err('accountName_taken', 409) as any;
+    }
+  }
 
   const query: Record<string, unknown>[] = [];
   if (accountName) query.push({ accountName });
@@ -458,11 +465,14 @@ export async function updateProfile(
       }
     }
     const normalised = accountName.toLowerCase().trim();
-    if (!/^[a-z0-9_-]{3,30}$/.test(normalised)) {
+    if (!isValidAccountName(normalised)) {
       return { error: 'accountName_invalid', code: 'accountName_invalid', status: 400 } as any;
     }
+    if (isReservedAccountName(normalised)) {
+      return { error: 'accountName_taken', code: 'accountName_taken', status: 409 } as any;
+    }
     const existing = await User.findOne({ accountName: normalised });
-    if (existing) return { error: 'Account name already taken', status: 409 } as any;
+    if (existing) return { error: 'accountName_taken', code: 'accountName_taken', status: 409 } as any;
     const previousAccountName = user.accountName;
     user.accountName = normalised;
     user.lastAccountNameChangedAt = new Date();
@@ -494,7 +504,8 @@ export async function updateProfile(
     const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
     const urlLower = avatarUrl.toLowerCase();
     const isImage = ALLOWED_IMAGE_EXTENSIONS.some((ext: string) => urlLower.endsWith(`.${ext}`) || urlLower.includes(`.${ext}?`)) ||
-      (avatarUrl.includes('cloudinary.com') && avatarUrl.includes('/image/upload/'));
+      (avatarUrl.includes('cloudinary.com') && avatarUrl.includes('/image/upload/')) ||
+      urlLower.includes('googleusercontent.com');
     if (!isImage) {
       return { error: 'Invalid image URL format. Only JPG, PNG, GIF, and WEBP are allowed.', status: 400 } as any;
     }

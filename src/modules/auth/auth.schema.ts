@@ -13,7 +13,7 @@ export const registerSchema = {
   body: {
     type: 'object',
     properties: {
-      username: { type: 'string', minLength: 3, maxLength: 30, pattern: '^[a-zA-Z0-9_-]+$' },
+      username: { type: 'string', minLength: 3, maxLength: 30, pattern: '^[a-z0-9_.:-]+$' },
       email: { type: 'string', format: 'email', maxLength: 254 },
       password: { type: 'string', minLength: 8, maxLength: 128 },
       recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
@@ -83,7 +83,7 @@ export const updateProfileSchema = {
     properties: {
       avatarUrl: { type: ['string', 'null'], maxLength: 500 },
       avatarPublicId: { type: ['string', 'null'], maxLength: 500 },
-      username: { type: 'string', minLength: 3, maxLength: 30, pattern: '^[a-zA-Z0-9_.-]+$' },
+      username: { type: 'string', minLength: 3, maxLength: 30, pattern: '^[a-z0-9_.:-]+$' },
       email: { type: 'string', format: 'email', maxLength: 254 },
       bio: { type: 'string', maxLength: 160 },
     },

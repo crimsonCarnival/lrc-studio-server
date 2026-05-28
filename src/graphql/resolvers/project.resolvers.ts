@@ -36,6 +36,11 @@ export const projectResolvers = {
       return getShareProject(id);
     },
 
+    publicProject: async (_root: any, { projectId }: { projectId: string }) => {
+      const project = await Project.findOne({ projectId, public: true }).lean();
+      return project ?? null;
+    },
+
     searchProjects: async (
       _root: any,
       { query, sortBy = 'RELEVANCE', offset = 0, limit = 20 }:

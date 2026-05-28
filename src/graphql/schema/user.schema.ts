@@ -91,6 +91,7 @@ export const userSchema = `
     accountName: String!
     displayName: String
     avatarUrl: String
+    isFollowedByMe: Boolean!
   }
 
   type FollowListResult {
