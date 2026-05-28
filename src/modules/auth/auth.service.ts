@@ -504,7 +504,8 @@ export async function updateProfile(
     const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
     const urlLower = avatarUrl.toLowerCase();
     const isImage = ALLOWED_IMAGE_EXTENSIONS.some((ext: string) => urlLower.endsWith(`.${ext}`) || urlLower.includes(`.${ext}?`)) ||
-      (avatarUrl.includes('cloudinary.com') && avatarUrl.includes('/image/upload/'));
+      (avatarUrl.includes('cloudinary.com') && avatarUrl.includes('/image/upload/')) ||
+      urlLower.includes('googleusercontent.com');
     if (!isImage) {
       return { error: 'Invalid image URL format. Only JPG, PNG, GIF, and WEBP are allowed.', status: 400 } as any;
     }
