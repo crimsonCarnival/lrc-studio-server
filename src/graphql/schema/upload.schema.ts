@@ -10,6 +10,7 @@ export const uploadSchema = `
     fileName: String!
     title: String!
     duration: Float
+    coverImage: String
     user: User
     createdAt: String
     updatedAt: String
