@@ -3,6 +3,7 @@ import { stripHtml } from '../../utils/sanitize.js';
 import Upload from './upload.model.js';
 import Project from '../projects/project.model.js';
 import { fetchYouTubeTitle, fetchYouTubeMetadata } from '../../utils/youtube.js';
+import { youtubeThumbnail } from '../../utils/cover-image.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -158,6 +159,7 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
       fileName: u.fileName,
       title: u.title,
       duration: u.duration,
+      coverImage: u.coverImage,
       createdAt: u.createdAt,
     })),
     total,
@@ -166,7 +168,7 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
 }
 
 export async function createMedia(userId: string | null | undefined, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { source, cloudinaryUrl, publicId, youtubeUrl, spotifyTrackId, artist, fileName, title, duration } = data as Record<string, string | undefined>;
+  const { source, cloudinaryUrl, publicId, youtubeUrl, spotifyTrackId, artist, fileName, title, duration, coverImage } = data as Record<string, string | undefined>;
   const query: Record<string, unknown> = { source };
   if (userId) query.userId = userId;
   else query.userId = null;
@@ -212,6 +214,11 @@ export async function createMedia(userId: string | null | undefined, data: Recor
     }
   }
 
+  let finalCover: string | null = (coverImage as string) || null;
+  if (!finalCover && source === 'youtube' && youtubeUrl) {
+    finalCover = youtubeThumbnail(youtubeUrl);
+  }
+
   const upload = await Upload.findOneAndUpdate(
     query,
     {
@@ -225,6 +232,7 @@ export async function createMedia(userId: string | null | undefined, data: Recor
       fileName: fileName || '',
       title: finalTitle,
       duration: finalDuration,
+      coverImage: finalCover,
     },
     { upsert: true, new: true }
   );

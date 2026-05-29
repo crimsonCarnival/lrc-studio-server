@@ -2,6 +2,7 @@ import type { FastifyLoggerInstance } from 'fastify';
 import crypto from 'crypto';
 import User from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
+import { getIO } from '../../socket/socket.manager.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { registerAtomically, loginAtomically } from './auth.tx.service.js';
 import BannedIp from '../admin/bannedIp.model.js';
@@ -618,6 +619,7 @@ export async function revokeSession(
   if (!session) return err('session_not_found', 404) as any;
   session.isValid = false;
   await session.save();
+  try { getIO().to(`user:${userId}`).emit('session:revoked', { sessionId }); } catch { /* socket not ready */ }
   return { success: true } as any;
 }
 
@@ -630,6 +632,9 @@ export async function revokeAllSessions(
     query.familyId = { $ne: exceptFamilyId };
   }
   const result = await Session.updateMany(query, { $set: { isValid: false } });
+  if (result.modifiedCount > 0) {
+    try { getIO().to(`user:${userId}`).emit('session:revoked', {}); } catch { /* socket not ready */ }
+  }
   return { revokedCount: result.modifiedCount } as any;
 }
 

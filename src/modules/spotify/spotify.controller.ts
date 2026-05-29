@@ -81,6 +81,7 @@ export async function createUpload(req: FastifyRequest, reply: FastifyReply): Pr
     artist: (resolved as Record<string, unknown>).artist as string,
     duration: (resolved as Record<string, unknown>).duration ? ((resolved as Record<string, number>).duration / 1000) : null,
     fileName: '',
+    coverImage: (resolved as Record<string, unknown>).albumArt as string | null,
   });
 
   return reply.send({ ...upload, trackMeta: resolved });
