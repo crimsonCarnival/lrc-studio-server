@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { archiveDeletedUsers } from '../jobs/archive-deleted-users.js';
+import { recomputeTrendingScores } from '../jobs/trending.job.js';
 
 /**
  * Lightweight cron-like scheduler using setInterval.
@@ -12,6 +13,7 @@ import { archiveDeletedUsers } from '../jobs/archive-deleted-users.js';
  */
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 /** Returns milliseconds until next Sunday 02:00 UTC. */
 function msUntilNextSunday0200(): number {
@@ -54,6 +56,17 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
     if (initialTimer !== null) clearTimeout(initialTimer);
     if (weeklyTimer !== null) clearInterval(weeklyTimer);
   });
+
+  const runTrending = async () => {
+    try {
+      await recomputeTrendingScores();
+    } catch (err) {
+      fastify.log.error({ err }, '[cron] recomputeTrendingScores failed');
+    }
+  };
+  void runTrending();
+  const trendingTimer = setInterval(runTrending, HOUR_MS);
+  fastify.addHook('onClose', async () => clearInterval(trendingTimer));
 }
 
 export default fp(cronPlugin, { name: 'cron', dependencies: ['mongoose'] });
