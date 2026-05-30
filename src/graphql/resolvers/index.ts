@@ -7,6 +7,7 @@ import { settingsResolvers } from './settings.resolvers.js';
 import { playlistResolvers } from './playlist.resolvers.js';
 import { activityResolvers } from './activity.resolvers.js';
 import { exploreResolvers }  from './explore.resolvers.js';
+import { commentResolvers }  from './comment.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -18,6 +19,7 @@ export const resolvers = {
     ...playlistResolvers.Query,
     ...activityResolvers.Query,
     ...exploreResolvers.Query,
+    ...commentResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -26,6 +28,7 @@ export const resolvers = {
     ...uploadResolvers.Mutation,
     ...settingsResolvers.Mutation,
     ...playlistResolvers.Mutation,
+    ...commentResolvers.Mutation,
   },
   User:     userResolvers.User,
   Project:  projectResolvers.Project,
