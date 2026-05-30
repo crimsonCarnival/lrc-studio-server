@@ -26,6 +26,7 @@ import youtubeRoutes from './modules/youtube/youtube.routes.js';
 import geniusRoutes from './modules/genius/genius.routes.js';
 import healthRoutes from './modules/health/health.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
+import ogRoutes from './modules/og/og.routes.js';
 
 const envToLogger: Record<string, Record<string, unknown>> = {
   development: {
@@ -119,6 +120,7 @@ async function build() {
 
   await app.register(healthRoutes, { prefix: '/health' });
   await app.register(notificationsRoutes, { prefix: '/notifications' });
+  await app.register(ogRoutes, { prefix: '/og' });
 
   return app;
 }
