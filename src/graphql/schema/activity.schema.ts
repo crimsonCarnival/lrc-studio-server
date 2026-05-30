@@ -6,6 +6,7 @@ export const activitySchema = `
     projectId: String!
     projectTitle: String!
     coverImage: String
+    targetPath: String
     createdAt: String!
   }
 
@@ -13,6 +14,9 @@ export const activitySchema = `
     PROJECT_PUBLISHED
     PROJECT_STARRED
     PROJECT_FORKED
+    PROJECT_BOOSTED
+    PLAYLIST_CREATED
+    USER_FOLLOWED
   }
 
   type FeedResult {

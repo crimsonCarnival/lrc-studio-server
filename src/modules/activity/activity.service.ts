@@ -9,6 +9,7 @@ export interface WriteActivityParams {
   projectId: string;
   projectTitle: string;
   coverImage: string;
+  targetPath?: string;
 }
 
 function emitFeedNew(userId: string, activity: unknown): void {
@@ -16,7 +17,7 @@ function emitFeedNew(userId: string, activity: unknown): void {
 }
 
 export async function writeActivity(params: WriteActivityParams): Promise<void> {
-  const { actorId, type, projectId, projectTitle, coverImage } = params;
+  const { actorId, type, projectId, projectTitle, coverImage, targetPath } = params;
 
   const activity = await Activity.create({
     actorId: new mongoose.Types.ObjectId(actorId),
@@ -24,6 +25,7 @@ export async function writeActivity(params: WriteActivityParams): Promise<void> 
     projectId,
     projectTitle,
     coverImage,
+    targetPath: targetPath ?? '',
   });
 
   // Fan-out to followers — fire-and-forget, never blocks the caller
