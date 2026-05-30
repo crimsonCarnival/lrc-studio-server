@@ -35,16 +35,23 @@ export function verifySignedState(state: string): Record<string, string | undefi
   }
 }
 
-export function getAuthUrl(state: string): string {
+export function getAuthUrl(state: string, loginHint?: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: getClientId() || '',
     redirect_uri: getRedirectUri(),
     scope: 'openid email profile',
     access_type: 'online',
-    prompt: 'select_account',
     state,
   });
+  // When we already know which account the user picked (saved-account login),
+  // hint it to Google and skip the chooser so the flow continues directly.
+  // Otherwise force the account chooser for a fresh sign-in.
+  if (loginHint) {
+    params.set('login_hint', loginHint);
+  } else {
+    params.set('prompt', 'select_account');
+  }
   return `${GOOGLE_AUTHORIZE_URL}?${params.toString()}`;
 }
 
