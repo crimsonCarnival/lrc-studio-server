@@ -6,6 +6,7 @@ import { uploadResolvers }   from './upload.resolvers.js';
 import { settingsResolvers } from './settings.resolvers.js';
 import { playlistResolvers } from './playlist.resolvers.js';
 import { activityResolvers } from './activity.resolvers.js';
+import { exploreResolvers }  from './explore.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -16,6 +17,7 @@ export const resolvers = {
     ...settingsResolvers.Query,
     ...playlistResolvers.Query,
     ...activityResolvers.Query,
+    ...exploreResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
