@@ -46,6 +46,36 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
   emitToUser(ownerId, 'notification:push', notification.toObject());
 }
 
+export interface UpsertReactionParams {
+  ownerId: string;
+  projectId: string;
+  projectTitle: string;
+  actorId: string;
+  actorAccountName: string;
+  actorAvatarUrl: string | null;
+  emoji: string;
+}
+
+export async function upsertReaction(params: UpsertReactionParams): Promise<void> {
+  const { ownerId, projectId, projectTitle, actorId, actorAccountName, actorAvatarUrl, emoji } = params;
+  if (ownerId === actorId) return;
+
+  const actor = { userId: new mongoose.Types.ObjectId(actorId), accountName: actorAccountName, avatarUrl: actorAvatarUrl };
+
+  const notification = await Notification.findOneAndUpdate(
+    { userId: new mongoose.Types.ObjectId(ownerId), type: 'reaction', projectId },
+    {
+      $setOnInsert: { sticky: false },
+      $set: { read: false, projectTitle, body: emoji },
+      $addToSet: { actors: actor },
+      $inc: { actorCount: 1 },
+    },
+    { upsert: true, new: true }
+  );
+
+  emitToUser(ownerId, 'notification:push', notification.toObject());
+}
+
 export interface UpsertFollowParams {
   ownerId: string;
   actorId: string;

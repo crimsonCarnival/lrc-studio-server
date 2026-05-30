@@ -1,6 +1,9 @@
 import mongoose from 'mongoose';
 import Reaction, { ALLOWED_EMOJIS } from '../../db/reaction.model.js';
 import { getIO } from '../../socket/socket.manager.js';
+import Project from '../projects/project.model.js';
+import User from '../../db/user.model.js';
+import { upsertReaction } from '../notifications/notifications.service.js';
 
 export interface ReactionSummary {
   emoji: string;
@@ -62,6 +65,26 @@ export async function reactToProject(
       .to(`project:${projectId}`)
       .emit('reaction:update', { targetType: 'project', targetId: projectId, reactions });
   } catch {}
+
+  if (kept) {
+    try {
+      const [project, actor] = await Promise.all([
+        Project.findOne({ projectId }, 'userId title metadata').lean() as any,
+        User.findById(userId, 'accountName avatarUrl').lean() as any,
+      ]);
+      if (project && actor) {
+        await upsertReaction({
+          ownerId: project.userId.toString(),
+          projectId,
+          projectTitle: project.title || project.metadata?.songName || '',
+          actorId: userId,
+          actorAccountName: actor.accountName,
+          actorAvatarUrl: actor.avatarUrl ?? null,
+          emoji,
+        });
+      }
+    } catch { /* notifications are non-critical */ }
+  }
 
   return { reactions, myReaction };
 }

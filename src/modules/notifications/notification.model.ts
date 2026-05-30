@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 const NOTIFICATION_TYPES = [
   'star', 'fork',
   'follow',
+  'reaction',
   'admin_granted',
   'system', 'admin',
   'verify_email', 'set_password',
@@ -43,6 +44,12 @@ notificationSchema.index({ userId: 1, createdAt: -1 });
 notificationSchema.index(
   { userId: 1, type: 1, projectId: 1 },
   { unique: true, partialFilterExpression: { type: { $in: ['star', 'fork'] } } }
+);
+
+// One aggregated reaction notification per {userId, type, projectId}
+notificationSchema.index(
+  { userId: 1, type: 1, projectId: 1 },
+  { unique: true, partialFilterExpression: { type: 'reaction' } }
 );
 
 // One sticky notification per user per type
