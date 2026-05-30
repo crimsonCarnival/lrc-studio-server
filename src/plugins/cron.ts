@@ -52,21 +52,25 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
     }, initialDelay);
   });
 
+  let trendingTimer: ReturnType<typeof setInterval> | null = null;
+
+  fastify.addHook('onReady', async () => {
+    const runTrending = async () => {
+      try {
+        await recomputeTrendingScores();
+      } catch (err) {
+        fastify.log.error({ err }, '[cron] recomputeTrendingScores failed');
+      }
+    };
+    await runTrending();
+    trendingTimer = setInterval(runTrending, HOUR_MS);
+  });
+
   fastify.addHook('onClose', async () => {
     if (initialTimer !== null) clearTimeout(initialTimer);
     if (weeklyTimer !== null) clearInterval(weeklyTimer);
+    if (trendingTimer !== null) clearInterval(trendingTimer);
   });
-
-  const runTrending = async () => {
-    try {
-      await recomputeTrendingScores();
-    } catch (err) {
-      fastify.log.error({ err }, '[cron] recomputeTrendingScores failed');
-    }
-  };
-  void runTrending();
-  const trendingTimer = setInterval(runTrending, HOUR_MS);
-  fastify.addHook('onClose', async () => clearInterval(trendingTimer));
 }
 
 export default fp(cronPlugin, { name: 'cron', dependencies: ['mongoose'] });
