@@ -9,14 +9,20 @@ function callbackHtml(success: boolean, error?: string | null, appOrigin?: strin
   // Use the origin the client passed in state; fall back to primary APP_URL.
   // Avoids '*' wildcard while supporting both dev and prod origins in the same deployment.
   const target = JSON.stringify(appOrigin || getEnv().APP_URL);
+  const redirectBase = appOrigin || getEnv().APP_URL;
+  const redirectUrl = success
+    ? `${redirectBase}/auth/signin?gcb=success`
+    : `${redirectBase}/auth/signin?gcb=error&gcb_msg=${encodeURIComponent(error || 'OAuth failed')}`;
   return `<!DOCTYPE html><html><head><title>Google</title></head><body>
 <script>
   if (window.opener) {
     window.opener.postMessage(${payloadStr}, ${target});
+    window.close();
+  } else {
+    window.location.replace(${JSON.stringify(redirectUrl)});
   }
-  window.close();
 </script>
-<p>${success ? 'Connected! This window will close.' : `Error: ${error || 'Unknown'}`}</p>
+<p>${success ? 'Connected! Redirecting...' : `Error: ${error || 'Unknown'}`}</p>
 </body></html>`;
 }
 
@@ -44,10 +50,13 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   if (!googleService.isGoogleConfigured()) {
     return reply.code(503).send({ error: 'Google OAuth integration not configured' });
   }
-  const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
+  const { appOrigin: rawOrigin, loginHint: rawHint } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
+  // Only forward a hint that looks like an email; an accountName is meaningless
+  // to Google and would just be ignored.
+  const loginHint = rawHint && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawHint) ? rawHint : undefined;
   const state = googleService.generateSignedState({ action: 'login', appOrigin });
-  return reply.redirect(googleService.getAuthUrl(state));
+  return reply.redirect(googleService.getAuthUrl(state, loginHint));
 }
 
 export async function callback(req: FastifyRequest, reply: FastifyReply): Promise<void> {
