@@ -78,7 +78,8 @@ const projectSchema = new mongoose.Schema(
     coverImage: { type: String, default: '', maxlength: 2000, set: textSetter },
     readOnly: { type: Boolean, default: true },
     public: { type: Boolean, default: true },
-
+    forksEnabled: { type: Boolean, default: true },
+    trendingScore: { type: Number, default: 0 },
 
     forkedFrom: {
       projectId: { type: String, default: null },
@@ -97,6 +98,8 @@ projectSchema.index({ userId: 1, updatedAt: -1 });
 // Supports public project discovery and trending sorts
 projectSchema.index({ public: 1, starCount: -1 });
 projectSchema.index({ public: 1, createdAt: -1 });
+projectSchema.index({ public: 1, trendingScore: -1 });
+projectSchema.index({ forksEnabled: 1 });
 
 // Methods
 export interface IProjectMethods {
