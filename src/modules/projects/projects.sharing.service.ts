@@ -85,6 +85,7 @@ export async function cloneProject(
   const sourceProject = await Project.findOne({ projectId: sourceProjectId }).populate('userId', 'accountName');
   if (!sourceProject) return { error: 'Source project not found', status: 404 } as any;
   if (!sourceProject.public && !(sourceProject as any).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404 } as any;
+  if (sourceProject.forksEnabled === false) throw new Error('Forking is disabled for this project');
 
   const MAX_PROJECTS_PER_USER = 200;
 

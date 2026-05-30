@@ -186,6 +186,15 @@ export const projectResolvers = {
       }
       return Project.findOne({ projectId: id });
     },
+
+    setForksEnabled: async (_root: any, { projectId, enabled }: { projectId: string; enabled: boolean }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      const project = await Project.findOne({ projectId, userId: context.userId });
+      if (!project) throw new Error('Project not found or not yours');
+      project.forksEnabled = enabled;
+      await project.save();
+      return project;
+    },
   },
 
   // ── Field Resolvers ────────────────────────────────────────────────────────
