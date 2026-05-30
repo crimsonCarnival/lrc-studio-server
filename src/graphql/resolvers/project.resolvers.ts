@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import Project from '../../modules/projects/project.model.js';
+import Boost from '../../db/boost.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import ProjectStar from '../../modules/projects/projectStar.model.js';
@@ -194,6 +196,35 @@ export const projectResolvers = {
       project.forksEnabled = enabled;
       await project.save();
       return project;
+    },
+
+    boostProject: async (_: unknown, { projectId }: { projectId: string }, ctx: Context) => {
+      if (!ctx.userId) throw new Error('Unauthorized');
+
+      const project = await Project.findOne({ projectId, public: true }).lean() as any;
+      if (!project) throw new Error('Project not found');
+      if (project.userId.toString() === ctx.userId) throw new Error('Cannot boost your own project');
+
+      try {
+        await Boost.create({ userId: new mongoose.Types.ObjectId(ctx.userId), projectId });
+      } catch (err: any) {
+        if (err.code === 11000) return true;
+        throw err;
+      }
+
+      const actor = await User.findById(ctx.userId).select('accountName').lean() as any;
+      if (actor) {
+        writeActivity({
+          actorId: ctx.userId,
+          type: 'project_boosted',
+          projectId,
+          projectTitle: project.title || project.metadata?.songName || '',
+          coverImage: project.coverImage ?? '',
+          targetPath: '',
+        }).catch(() => {});
+      }
+
+      return true;
     },
   },
 

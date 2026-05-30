@@ -55,6 +55,7 @@ export const rootSchema = `
     savePlaylist(playlistId: ID!): Boolean!
     unsavePlaylist(playlistId: ID!): Boolean!
     setForksEnabled(projectId: ID!, enabled: Boolean!): Project!
+    boostProject(projectId: ID!): Boolean!
     reactToProject(projectId: String!, emoji: String!): ProjectReactions!
   }
 
