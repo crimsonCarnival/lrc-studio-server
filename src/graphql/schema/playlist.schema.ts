@@ -14,6 +14,7 @@ export const playlistSchema = `
     isSavedByMe: Boolean!
     createdAt: String!
     updatedAt: String!
+    trendingScore: Float
   }
 
   enum PlaylistSortMode {

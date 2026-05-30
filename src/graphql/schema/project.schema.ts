@@ -24,6 +24,7 @@ export const projectSchema = `
     forkCount: Int
     starCount: Int
     isStarredByMe: Boolean
+    forksEnabled: Boolean
   }
 
   type ForkedFrom {

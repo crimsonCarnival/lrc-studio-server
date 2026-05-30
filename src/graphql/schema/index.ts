@@ -6,8 +6,9 @@ import { settingsSchema } from './settings.schema.js';
 import { rootSchema } from './root.schema.js';
 import { playlistSchema } from './playlist.schema.js';
 import { activitySchema } from './activity.schema.js';
+import { exploreSchema } from './explore.schema.js';
 
 export const schemaString = [
   userSchema, projectSchema, lyricsSchema, uploadSchema,
-  settingsSchema, playlistSchema, activitySchema, rootSchema,
+  settingsSchema, playlistSchema, activitySchema, exploreSchema, rootSchema,
 ].join('\n');

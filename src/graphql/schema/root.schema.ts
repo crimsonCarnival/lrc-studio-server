@@ -22,6 +22,10 @@ export const rootSchema = `
     feed(offset: Int, limit: Int): FeedResult!
     searchProjects(query: String!, sortBy: SearchSort, offset: Int, limit: Int): SearchResult!
     searchUsers(query: String!, limit: Int): [FollowUser!]!
+    trendingProjects(offset: Int, limit: Int): ProjectPage!
+    popularPlaylists(offset: Int, limit: Int): PlaylistPage!
+    suggestedUsers(limit: Int): [FollowUser!]!
+    exploreStats: ExploreStats!
     publicProject(projectId: String!): Project
   }
 
@@ -49,6 +53,7 @@ export const rootSchema = `
     reorderPlaylist(playlistId: ID!, projectIds: [ID!]!): Playlist!
     savePlaylist(playlistId: ID!): Boolean!
     unsavePlaylist(playlistId: ID!): Boolean!
+    setForksEnabled(projectId: ID!, enabled: Boolean!): Project!
   }
 
   input UpdateProfileInput {
