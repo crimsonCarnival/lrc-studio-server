@@ -690,6 +690,7 @@ export async function verifyPasskeyRegistration(
       expectedChallenge,
       expectedOrigin: origins,
       expectedRPID: rpID,
+      requireUserVerification: false,
     });
   } catch (error: any) {
     console.error('[WebAuthn] verifyRegistrationResponse threw:', error.message, { rpID, origins });
@@ -781,6 +782,7 @@ export async function verifyPasskeyLogin(
       expectedChallenge,
       expectedOrigin: origins,
       expectedRPID: rpID,
+      requireUserVerification: false,
       credential: {
         id: passkey.credentialID,
         publicKey: new Uint8Array(passkey.credentialPublicKey),
