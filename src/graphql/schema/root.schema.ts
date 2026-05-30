@@ -27,6 +27,9 @@ export const rootSchema = `
     suggestedUsers(limit: Int): [FollowUser!]!
     exploreStats: ExploreStats!
     publicProject(projectId: String!): Project
+    comments(projectId: String!, offset: Int, limit: Int): CommentPage!
+    commentReplies(commentId: ID!, offset: Int, limit: Int): [Comment!]!
+    projectReactions(projectId: String!): ProjectReactions!
   }
 
   type Mutation {
@@ -54,6 +57,10 @@ export const rootSchema = `
     savePlaylist(playlistId: ID!): Boolean!
     unsavePlaylist(playlistId: ID!): Boolean!
     setForksEnabled(projectId: ID!, enabled: Boolean!): Project!
+    addComment(projectId: String!, text: String!, parentId: ID): Comment!
+    deleteComment(id: ID!): Boolean!
+    reactToComment(commentId: ID!, emoji: String!): Comment!
+    reactToProject(projectId: String!, emoji: String!): ProjectReactions!
   }
 
   input UpdateProfileInput {
