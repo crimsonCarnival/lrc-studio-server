@@ -37,7 +37,7 @@ export const userResolvers = {
 
       const isFollowedByMe = context.userId
         ? !!(await Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }))
-        : false;
+        : false as boolean;
 
       return {
         id: user._id.toString(),

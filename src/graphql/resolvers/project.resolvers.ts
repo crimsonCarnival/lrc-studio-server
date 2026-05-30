@@ -4,6 +4,7 @@ import Boost from '../../db/boost.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import ProjectStar from '../../modules/projects/projectStar.model.js';
+import ProjectFork from '../../modules/projects/projectFork.model.js';
 import {
   createProject as createProjectService,
   listProjects,
@@ -98,6 +99,9 @@ export const projectResolvers = {
 
     cloneProject: async (_root: any, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
+
+      const alreadyForked = await ProjectFork.exists({ sourceProjectId: id, userId: context.userId });
+      if (alreadyForked) throw new Error('already_forked');
 
       // Fetch source metadata before cloning — needed for the activity payload
       const sourceProject = await Project.findOne({ projectId: id })
@@ -233,10 +237,17 @@ export const projectResolvers = {
   // the user/upload/lyrics lookups to avoid N+1 queries.
 
   Project: {
-    // Map Mongoose _id to GraphQL id
     id: (project: any) => project._id?.toString() || project.id || null,
     createdAt: (project: any) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
     updatedAt: (project: any) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
+    isStarredByMe: async (project: any, _args: any, ctx: Context) => {
+      if (!ctx.userId || !project.projectId) return false;
+      return !!(await ProjectStar.exists({ projectId: project.projectId, userId: ctx.userId }));
+    },
+    isForkedByMe: async (project: any, _args: any, ctx: Context) => {
+      if (!ctx.userId || !project.projectId) return false;
+      return !!(await ProjectFork.exists({ sourceProjectId: project.projectId, userId: ctx.userId }));
+    },
     // lyrics is fetched by projectId (more reliable than lyricsId in plain objects)
     lyrics: async (project: any) => {
       if (project.lyrics) return project.lyrics;
