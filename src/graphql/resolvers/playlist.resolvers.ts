@@ -4,6 +4,7 @@ import SavedPlaylist from '../../db/saved-playlist.model.js';
 import Project from '../../modules/projects/project.model.js';
 import User from '../../db/user.model.js';
 import { Context } from './context.js';
+import { writeActivity } from '../../modules/activity/activity.service.js';
 
 async function resolveProjects(playlist: any) {
   if (!playlist.projectIds?.length) return [];
@@ -117,6 +118,21 @@ export const playlistResolvers = {
         projectIds: (input.projectIds ?? []).map((id: string) => new mongoose.Types.ObjectId(id)),
         savedCount: 0,
       });
+
+      if (playlist.isPublic) {
+        const creator = await User.findById(context.userId).select('accountName').lean() as any;
+        if (creator) {
+          writeActivity({
+            actorId: context.userId,
+            type: 'playlist_created',
+            projectId: (playlist as any)._id.toString(),
+            projectTitle: playlist.name,
+            coverImage: (playlist as any).coverImage ?? '',
+            targetPath: `/${creator.accountName}/lists/${(playlist as any)._id}`,
+          }).catch(() => {});
+        }
+      }
+
       return formatPlaylist(playlist.toObject(), context);
     },
 

@@ -10,6 +10,7 @@ import { sendVerification, resendVerification } from '../../modules/email-verifi
 import Follow from '../../db/follow.model.js';
 import { upsertFollow } from '../../modules/notifications/notifications.service.js';
 import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
+import { writeActivity } from '../../modules/activity/activity.service.js';
 
 export const userResolvers = {
   Query: {
@@ -227,6 +228,16 @@ export const userResolvers = {
             actorId: context.userId,
             actorAccountName: (follower as any).accountName,
             actorAvatarUrl: (follower as any).avatarUrl ?? null,
+          }).catch(() => {});
+
+          // fan-out follow activity — fire and forget
+          writeActivity({
+            actorId: context.userId,
+            type: 'user_followed',
+            projectId: '',
+            projectTitle: (target as any).displayName || (target as any).accountName,
+            coverImage: (target as any).avatarUrl ?? '',
+            targetPath: `/${(target as any).accountName}`,
           }).catch(() => {});
         }
       } catch (err: any) {
