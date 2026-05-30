@@ -68,12 +68,15 @@ export const refreshSchema = {
     },
     required: ['x-device-id'],
   },
+  // The refresh token is read from the httpOnly `refreshToken` cookie in the
+  // controller — never from the body. Requiring it in the body rejected every
+  // real (cookie-based) refresh with 400 before the handler ran, which forced a
+  // logout as soon as the access token expired. Body is optional/ignored.
   body: {
     type: 'object',
     properties: {
       refreshToken: { type: 'string', minLength: 1, maxLength: 2048 },
     },
-    required: ['refreshToken'],
   },
 };
 
