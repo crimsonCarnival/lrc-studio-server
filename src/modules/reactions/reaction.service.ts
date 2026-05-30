@@ -167,7 +167,7 @@ export async function getProjectReactions(
   let myReaction: string | null = null;
   if (viewerUserId) {
     const r = await Reaction.findOne({
-      userId: viewerUserId,
+      userId: new mongoose.Types.ObjectId(viewerUserId),
       targetType: 'project',
       targetId: projectId,
     }).lean();
