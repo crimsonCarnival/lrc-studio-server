@@ -655,16 +655,21 @@ export async function getSessions(
       );
     }
 
-    // For the current session, use the platform version hint to detect Win10 vs Win11
     const parsed = isCurrent
       ? parseUA(ua, currentPlatformVersion)
       : parseUA(ua);
 
+    // Prefer live-parsed values; fall back to stored deviceName for sessions missing a UA
+    const storedDeviceName = (s as any).deviceName || '';
+    const deviceName = ua ? parsed.deviceName : (storedDeviceName || parsed.deviceName);
+    const browser = ua ? parsed.browser : (storedDeviceName ? storedDeviceName.split(' on ')[0] ?? parsed.browser : parsed.browser);
+    const os      = ua ? parsed.os      : (storedDeviceName ? storedDeviceName.split(' on ')[1] ?? parsed.os      : parsed.os);
+
     return {
       id: (s._id as any).toString(),
-      deviceName: parsed.deviceName,
-      browser: parsed.browser,
-      os: parsed.os,
+      deviceName,
+      browser,
+      os,
       deviceType: parsed.deviceType,
       userAgent: ua,
       ip: s.ip || '',
