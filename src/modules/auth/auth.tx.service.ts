@@ -103,18 +103,41 @@ export async function loginAtomically(
     const refreshToken = jwt.signRefresh(tokenPayload);
 
     const ua = userAgent || '';
-    await Session.create([{
-      userId: user._id,
-      refreshTokenHash: hashToken(refreshToken),
-      familyId,
-      isValid: true,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      ip: ip || 'unknown',
-      deviceId: deviceId || 'unknown',
-      userAgent: ua,
-      deviceName: buildDeviceName(ua, platformVersion),
-      lastUsedAt: new Date(),
-    }], { session });
+    const resolvedDeviceId = deviceId || 'unknown';
+    const newDeviceName = buildDeviceName(ua, platformVersion);
+
+    // Upsert: reuse existing session for this device instead of accumulating one per login
+    const existing = await Session.findOne({ userId: user._id, deviceId: resolvedDeviceId, isValid: true }).session(session);
+    if (existing) {
+      await Session.updateOne(
+        { _id: existing._id },
+        {
+          $set: {
+            refreshTokenHash: hashToken(refreshToken),
+            familyId,
+            ip: ip || 'unknown',
+            // Only overwrite UA/deviceName if we have new data; keep old values otherwise
+            ...(ua ? { userAgent: ua, deviceName: newDeviceName } : {}),
+            lastUsedAt: new Date(),
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          },
+        },
+        { session }
+      );
+    } else {
+      await Session.create([{
+        userId: user._id,
+        refreshTokenHash: hashToken(refreshToken),
+        familyId,
+        isValid: true,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        ip: ip || 'unknown',
+        deviceId: resolvedDeviceId,
+        userAgent: ua,
+        deviceName: newDeviceName,
+        lastUsedAt: new Date(),
+      }], { session });
+    }
 
     return { accessToken, refreshToken };
   }, { operation: 'loginAtomically', userId: user._id.toString() });
