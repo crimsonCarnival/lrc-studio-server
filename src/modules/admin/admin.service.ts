@@ -9,6 +9,7 @@ import AdminLog from './adminLog.model.js';
 import type { AdminLogEntry } from '../../types/index.js';
 import { createOnce, notifyAdminGranted } from '../notifications/notifications.service.js';
 import { sendBanEmail } from '../email/email.service.js';
+import Settings from '../settings/settings.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 
 export async function listUsers(query: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -162,8 +163,12 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
 
   if (banStatus) {
     createOnce({ userId, type: 'ban', sticky: false, body: reason || null }).catch(() => {});
-    if (user.email) {
-      sendBanEmail(user.email, reason || null, (user as any).displayName || user.accountName).catch(() => {});
+    const userEmail = user.email;
+    if (userEmail) {
+      Settings.findOne({ userId }).select('interface').lean().then((settings: any) => {
+        const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
+        return sendBanEmail(userEmail, reason || null, (user as any).displayName || user.accountName, prefs);
+      }).catch(() => {});
     }
     try { getIO().to(`user:${userId}`).emit('user:banned', { reason }); } catch { /* socket not ready */ }
   }

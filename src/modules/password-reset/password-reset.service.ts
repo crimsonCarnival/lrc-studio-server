@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import User from '../../db/user.model.js';
 import PasswordReset from '../../db/passwordReset.model.js';
 import { sendPasswordResetEmail, sendPasswordChangedEmail } from '../email/email.service.js';
+import Settings from '../settings/settings.model.js';
 import { resolveSticky, createOnce } from '../notifications/notifications.service.js';
 import { resetPasswordAtomically, changePasswordAtomically } from '../auth/auth.tx.service.js';
 import { getEnv } from '../../config/env.js';
@@ -38,11 +39,15 @@ export async function requestPasswordReset(email: string): Promise<void> {
     isUsed: false,
   });
 
-  // Send email (don't fail if email sending fails - user can retry)
   const resetUrl = getEnv().PASSWORD_RESET_URL;
   const resetLink = `${resetUrl}/reset-password?token=${token}`;
   try {
-    await sendPasswordResetEmail(normalizedEmail, resetLink);
+    const emailUser = await User.findOne({ email: normalizedEmail }).select('_id displayName accountName').lean();
+    const settings = emailUser
+      ? await Settings.findOne({ userId: emailUser._id }).select('interface').lean()
+      : null;
+    const prefs = { lang: (settings as any)?.interface?.defaultLanguage, theme: (settings as any)?.interface?.theme };
+    await sendPasswordResetEmail(normalizedEmail, resetLink, (emailUser as any)?.displayName || (emailUser as any)?.accountName, prefs);
   } catch (err) {
     console.error('Failed to send password reset email:', err);
   }
@@ -127,7 +132,11 @@ export async function changePassword(userId: string, currentPassword: string | n
   await changePasswordAtomically(userId, passwordHash);
   resolveSticky(userId, 'set_password').catch(() => {});
   createOnce({ userId, type: 'password_changed', sticky: false }).catch(() => {});
-  if (user.email) {
-    sendPasswordChangedEmail(user.email, (user as any).displayName || user.accountName).catch(() => {});
+  const userEmail = user.email;
+  if (userEmail) {
+    Settings.findOne({ userId }).select('interface').lean().then((settings: any) => {
+      const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
+      return sendPasswordChangedEmail(userEmail, (user as any).displayName || user.accountName, prefs);
+    }).catch(() => {});
   }
 }
