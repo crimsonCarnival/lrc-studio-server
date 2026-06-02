@@ -284,8 +284,8 @@ export async function recomputeSyncStats(userId: string): Promise<{
     // Words synced: words with non-null time
     Lyrics.aggregate([
       { $match: { projectId: { $in: projectIds } } },
-      { $unwind: { path: '$lines', preserveNullAndEmpty: false } },
-      { $unwind: { path: '$lines.words', preserveNullAndEmpty: false } },
+      { $unwind: { path: '$lines', preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: '$lines.words', preserveNullAndEmptyArrays: false } },
       { $match: { 'lines.words.time': { $ne: null } } },
       { $count: 'total' },
     ]),
@@ -293,7 +293,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
     // Karaoke lines: lines where ≥1 word has a time
     Lyrics.aggregate([
       { $match: { projectId: { $in: projectIds } } },
-      { $unwind: { path: '$lines', preserveNullAndEmpty: false } },
+      { $unwind: { path: '$lines', preserveNullAndEmptyArrays: false } },
       {
         $project: {
           hasKaraoke: {
