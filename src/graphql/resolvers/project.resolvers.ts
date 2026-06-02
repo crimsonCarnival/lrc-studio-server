@@ -89,12 +89,15 @@ export const projectResolvers = {
         throw statusErr;
       }
       emitProjectUpdated(id, input);
-      // Ack to the saving client
       try {
         if (context.socketId) {
           getIO().to(context.socketId).emit('autosave:ack', { projectId: id, savedAt: Date.now() });
         }
       } catch { /* socket not ready */ }
+      // If project is being published for the first time, check public_project_count badge
+      if (context.userId && input.public === true) {
+        triggerBadgeCheck(context.userId, 'project_publish').catch(() => {});
+      }
       return (result as any).project;
     },
 
