@@ -346,6 +346,15 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
       pictureUrl: this.google.pictureUrl,
     } : { connected: false },
     showFollowers: this.social?.showFollowers ?? true,
+    badges:         this.badges ?? [],
+    showcasedBadges: this.showcasedBadges ?? [],
+    minutesSynced:  this.minutesSynced ?? 0,
+    wordsSynced:    this.wordsSynced ?? 0,
+    karaokeLines:   this.karaokeLines ?? 0,
+    currentStreak:  this.currentStreak ?? 0,
+    longestStreak:  this.longestStreak ?? 0,
+    level:          this.level ?? 0,
+    xp:             this.xp ?? 0,
   };
 };
 
