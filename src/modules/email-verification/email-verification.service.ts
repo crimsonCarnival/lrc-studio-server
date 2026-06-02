@@ -82,6 +82,9 @@ export async function verifyEmailToken(rawToken: string): Promise<void> {
 
   await user.save();
   resolveSticky(user._id.toString(), 'verify_email').catch(() => {});
+  import('../../modules/badges/badge.service.js')
+    .then(({ triggerBadgeCheck }) => triggerBadgeCheck(user._id.toString(), 'email_verified'))
+    .catch(() => {});
 }
 
 export async function resendVerification(userId: string): Promise<void> {
