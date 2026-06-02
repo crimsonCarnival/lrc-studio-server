@@ -342,7 +342,8 @@ export async function getSessions(req: FastifyRequest, reply: FastifyReply): Pro
     } catch {}
   }
 
-  const result = await authService.getSessions(req.userId!, currentFamilyId);
+  const currentUA = (req.headers['user-agent'] as string) || '';
+  const result = await authService.getSessions(req.userId!, currentFamilyId, currentUA);
   if ((result as any).error) {
     return reply.code((result as any).status || 500).send({ error: (result as any).error });
   }

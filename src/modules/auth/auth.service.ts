@@ -1,5 +1,6 @@
 import type { FastifyLoggerInstance } from 'fastify';
 import crypto from 'crypto';
+import { UAParser } from 'ua-parser-js';
 import User from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
 import { getIO } from '../../socket/socket.manager.js';
@@ -38,25 +39,44 @@ function getWebAuthnConfig() {
   return { rpID, origins, rpName: 'LRC Studio' };
 }
 
-function parseDeviceName(ua: string): string {
-  if (!ua) return 'Unknown Device';
-  const u = ua.toLowerCase();
-  let os = 'Unknown OS';
-  if (u.includes('windows nt')) os = 'Windows';
-  else if (u.includes('mac os x') || u.includes('macos')) os = 'macOS';
-  else if (u.includes('android')) os = 'Android';
-  else if (u.includes('iphone') || u.includes('ipad') || u.includes('ipod')) os = 'iOS';
-  else if (u.includes('linux')) os = 'Linux';
-  else if (u.includes('chromeos') || u.includes('cros')) os = 'Chrome OS';
+export type DeviceType = 'mobile' | 'tablet' | 'desktop';
 
-  let browser = 'Unknown Browser';
-  if (u.includes('edg/') || u.includes('edge/')) browser = 'Edge';
-  else if (u.includes('opr/') || u.includes('opera/')) browser = 'Opera';
-  else if (u.includes('chrome/') && !u.includes('chromium/')) browser = 'Chrome';
-  else if (u.includes('firefox/')) browser = 'Firefox';
-  else if (u.includes('safari/') && !u.includes('chrome/')) browser = 'Safari';
+interface ParsedUA {
+  deviceName: string;
+  browser: string;
+  os: string;
+  deviceType: DeviceType;
+}
 
-  return `${browser} on ${os}`;
+function parseUA(userAgent: string): ParsedUA {
+  if (!userAgent) {
+    return { deviceName: 'Unknown Device', browser: 'Unknown', os: 'Unknown', deviceType: 'desktop' };
+  }
+
+  const parser = new UAParser(userAgent);
+  const result = parser.getResult();
+
+  const browserName = result.browser.name ?? 'Unknown Browser';
+  const browserMajor = result.browser.major;
+  const browser = browserMajor ? `${browserName} ${browserMajor}` : browserName;
+
+  const osName = result.os.name ?? 'Unknown OS';
+  const osVersion = result.os.version;
+  // Shorten common verbose OS version strings (e.g. "10.15.7" → "10.15")
+  const osVersionShort = osVersion
+    ? osVersion.split('.').slice(0, 2).join('.')
+    : undefined;
+  const os = osVersionShort ? `${osName} ${osVersionShort}` : osName;
+
+  const rawType = result.device.type; // 'mobile' | 'tablet' | ... | undefined
+  const deviceType: DeviceType =
+    rawType === 'mobile' ? 'mobile' :
+    rawType === 'tablet' ? 'tablet' :
+    'desktop';
+
+  const deviceName = `${browser} on ${os}`;
+
+  return { deviceName, browser, os, deviceType };
 }
 
 
@@ -568,6 +588,9 @@ export async function clearUnbanMessage(
 export interface SessionPublic {
   id: string;
   deviceName: string;
+  browser: string;
+  os: string;
+  deviceType: DeviceType;
   userAgent: string;
   ip: string;
   createdAt: Date;
@@ -578,7 +601,8 @@ export interface SessionPublic {
 
 export async function getSessions(
   userId: string,
-  currentFamilyId?: string
+  currentFamilyId?: string,
+  currentUA?: string
 ): Promise<ServiceResult<{ sessions: SessionPublic[] }>> {
   const raw = await Session.find({
     userId,
@@ -588,25 +612,43 @@ export async function getSessions(
     .sort({ lastUsedAt: -1 })
     .lean();
 
+  const healPromises: Promise<void>[] = [];
+
   const sessions: SessionPublic[] = raw.map((s) => {
-    const storedName = (s as any).deviceName;
-    const ua = (s as any).userAgent || '';
-    // Re-parse on-the-fly for older sessions that were created before deviceName was tracked
-    const deviceName = storedName && storedName !== 'Unknown Device'
-      ? storedName
-      : parseDeviceName(ua);
+    const isCurrent = currentFamilyId ? s.familyId === currentFamilyId : false;
+    let ua = (s as any).userAgent || '';
+
+    // Heal sessions that have no stored UA: use the current request's UA for the
+    // active session, and persist it so it's correct on the next load.
+    if (!ua && isCurrent && currentUA) {
+      ua = currentUA;
+      healPromises.push(
+        Session.updateOne(
+          { _id: (s as any)._id },
+          { $set: { userAgent: currentUA, deviceName: parseUA(currentUA).deviceName } }
+        ).exec().then(() => {})
+      );
+    }
+
+    const parsed = parseUA(ua);
 
     return {
       id: (s._id as any).toString(),
-      deviceName,
+      deviceName: parsed.deviceName,
+      browser: parsed.browser,
+      os: parsed.os,
+      deviceType: parsed.deviceType,
       userAgent: ua,
       ip: s.ip || '',
       createdAt: (s as any).createdAt,
       lastUsedAt: (s as any).lastUsedAt || (s as any).createdAt,
       expiresAt: s.expiresAt,
-      isCurrent: currentFamilyId ? s.familyId === currentFamilyId : false,
+      isCurrent,
     };
   });
+
+  // Fire-and-forget heal writes — don't block the response
+  if (healPromises.length) Promise.allSettled(healPromises);
 
   return { sessions } as any;
 }

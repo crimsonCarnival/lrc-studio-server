@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { ClientSession } from 'mongoose';
+import { UAParser } from 'ua-parser-js';
 import User, { type IUser } from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
 import PasswordReset from '../../db/passwordReset.model.js';
@@ -15,24 +16,14 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-function parseDeviceName(ua: string): string {
+function buildDeviceName(ua: string): string {
   if (!ua) return 'Unknown Device';
-  const u = ua.toLowerCase();
-  let os = 'Unknown OS';
-  if (u.includes('windows nt')) os = 'Windows';
-  else if (u.includes('mac os x') || u.includes('macos')) os = 'macOS';
-  else if (u.includes('android')) os = 'Android';
-  else if (u.includes('iphone') || u.includes('ipad') || u.includes('ipod')) os = 'iOS';
-  else if (u.includes('linux')) os = 'Linux';
-  else if (u.includes('chromeos') || u.includes('cros')) os = 'Chrome OS';
-
-  let browser = 'Unknown Browser';
-  if (u.includes('edg/') || u.includes('edge/')) browser = 'Edge';
-  else if (u.includes('opr/') || u.includes('opera/')) browser = 'Opera';
-  else if (u.includes('chrome/') && !u.includes('chromium/')) browser = 'Chrome';
-  else if (u.includes('firefox/')) browser = 'Firefox';
-  else if (u.includes('safari/') && !u.includes('chrome/')) browser = 'Safari';
-
+  const r = new UAParser(ua).getResult();
+  const browser = r.browser.major
+    ? `${r.browser.name ?? 'Unknown'} ${r.browser.major}`
+    : (r.browser.name ?? 'Unknown Browser');
+  const osVer = r.os.version?.split('.').slice(0, 2).join('.');
+  const os = osVer ? `${r.os.name ?? 'Unknown'} ${osVer}` : (r.os.name ?? 'Unknown OS');
   return `${browser} on ${os}`;
 }
 
@@ -77,7 +68,7 @@ export async function registerAtomically(
       ip: userData.ip || 'unknown',
       deviceId: userData.deviceId || 'unknown',
       userAgent: ua,
-      deviceName: parseDeviceName(ua),
+      deviceName: buildDeviceName(ua),
       lastUsedAt: new Date(),
     }], { session });
 
@@ -108,7 +99,7 @@ export async function loginAtomically(
       ip: ip || 'unknown',
       deviceId: deviceId || 'unknown',
       userAgent: ua,
-      deviceName: parseDeviceName(ua),
+      deviceName: buildDeviceName(ua),
       lastUsedAt: new Date(),
     }], { session });
 
