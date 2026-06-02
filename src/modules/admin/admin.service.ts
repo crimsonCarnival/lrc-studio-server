@@ -219,6 +219,9 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
 
   if (previousRole !== 'admin' && newRole === 'admin') {
     notifyAdminGranted(user._id.toString()).catch(() => {});
+    import('../../modules/badges/badge.service.js')
+      .then(({ triggerBadgeCheck }) => triggerBadgeCheck(user._id.toString(), 'role_change'))
+      .catch(() => {});
   }
 
   if (adminId) {
