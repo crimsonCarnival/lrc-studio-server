@@ -96,6 +96,7 @@ export const userSchema = `
     showFollowers: Boolean!
     badges: [UserBadge!]!
     showcasedBadges: [ShowcasedBadge!]!
+    showcasePublic: Boolean!
     level: Int!
     xp: Int!
     minutesSynced: Int!

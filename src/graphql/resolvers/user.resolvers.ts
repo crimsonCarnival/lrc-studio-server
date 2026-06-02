@@ -41,8 +41,10 @@ export const userResolvers = {
         ? !!(await Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }))
         : false as boolean;
 
-      // Resolve showcasedBadges with rarity data
-      const showcasedIds: string[] = (user as any).showcasedBadges ?? [];
+      // Resolve showcasedBadges with rarity data — hidden if owner disabled visibility
+      const isOwner = context.userId && context.userId === (user as any)._id.toString();
+      const showcaseVisible = (user as any).showcasePublic !== false || isOwner;
+      const showcasedIds: string[] = showcaseVisible ? ((user as any).showcasedBadges ?? []) : [];
       const showcasedBadges = showcasedIds.length > 0
         ? await (async () => {
             const defs = await BadgeDefinition.find({ id: { $in: showcasedIds } }).lean();
@@ -92,6 +94,7 @@ export const userResolvers = {
         showFollowers: (user as any).social?.showFollowers ?? true,
         badges: (user as any).badges ?? [],
         showcasedBadges,
+        showcasePublic: showcaseVisible,
         level: (user as any).level ?? 0,
         xp: (user as any).xp ?? 0,
         minutesSynced: (user as any).minutesSynced ?? 0,
@@ -409,12 +412,18 @@ export const userResolvers = {
       return true;
     },
 
-    updateShowcase: async (_root: any, { badgeIds }: { badgeIds: string[] }, context: Context) => {
+    updateShowcase: async (_root: any, { badgeIds, showcasePublic }: { badgeIds: string[]; showcasePublic?: boolean }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
-      const result = await updateShowcase(context.userId, badgeIds);
-      const user = await User.findById(context.userId).select('level').lean();
+      const result = await updateShowcase(context.userId, badgeIds, showcasePublic);
+      const user = await User.findById(context.userId).select('level showcasePublic').lean();
       const level = (user as any)?.level ?? 0;
-      return { success: result.success, error: result.error ?? null, showcaseSlots: getShowcaseSlots(level), level };
+      return {
+        success: result.success,
+        error: result.error ?? null,
+        showcaseSlots: getShowcaseSlots(level),
+        level,
+        showcasePublic: (user as any)?.showcasePublic ?? true,
+      };
     },
 
     adminGrantBadge: async (_root: any, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {

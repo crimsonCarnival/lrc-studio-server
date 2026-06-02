@@ -414,7 +414,8 @@ export async function getBadgeRarity(badgeId: string): Promise<{
 
 export async function updateShowcase(
   userId: string,
-  badgeIds: string[]
+  badgeIds: string[],
+  showcasePublic?: boolean
 ): Promise<{ success: boolean; error?: string }> {
   const user = await User.findById(userId).select('badges level showcasedBadges').lean();
   if (!user) return { success: false, error: 'User not found' };
@@ -433,7 +434,9 @@ export async function updateShowcase(
   }
 
   const deduped = [...new Set(badgeIds)];
-  await User.updateOne({ _id: userId }, { showcasedBadges: deduped });
+  const update: Record<string, unknown> = { showcasedBadges: deduped };
+  if (showcasePublic !== undefined) update.showcasePublic = showcasePublic;
+  await User.updateOne({ _id: userId }, update);
   return { success: true };
 }
 

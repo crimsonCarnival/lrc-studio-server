@@ -93,6 +93,7 @@ export interface IUser extends Document {
   // Badges
   badges: IUserBadge[];
   showcasedBadges: string[];
+  showcasePublic: boolean;
   // Progression
   xp: number;
   level: number;
@@ -258,6 +259,7 @@ const userSchema = new mongoose.Schema<IUser>(
     lastActiveDate:  { type: Date,   default: null },
     badges:          { type: [userBadgeSchema], default: [] },
     showcasedBadges: { type: [String], default: [] },
+    showcasePublic:  { type: Boolean, default: true },
     xp:              { type: Number, default: 0, min: 0 },
     level:           { type: Number, default: 0, min: 0 },
   },
@@ -348,6 +350,7 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
     showFollowers: this.social?.showFollowers ?? true,
     badges:         this.badges ?? [],
     showcasedBadges: this.showcasedBadges ?? [],
+    showcasePublic:  this.showcasePublic ?? true,
     minutesSynced:  this.minutesSynced ?? 0,
     wordsSynced:    this.wordsSynced ?? 0,
     karaokeLines:   this.karaokeLines ?? 0,

@@ -60,7 +60,7 @@ export const rootSchema = `
     setForksEnabled(projectId: ID!, enabled: Boolean!): Project!
     boostProject(projectId: ID!): Boolean!
     reactToProject(projectId: String!, emoji: String!): ProjectReactions!
-    updateShowcase(badgeIds: [String!]!): UpdateShowcaseResult!
+    updateShowcase(badgeIds: [String!]!, showcasePublic: Boolean): UpdateShowcaseResult!
     adminGrantBadge(userId: ID!, badgeId: String!): Boolean!
     adminRevokeBadge(userId: ID!, badgeId: String!): Boolean!
     adminCreateBadge(input: BadgeDefInput!): BadgeDef!
@@ -122,6 +122,7 @@ export const rootSchema = `
     error: String
     showcaseSlots: Int!
     level: Int!
+    showcasePublic: Boolean!
   }
 
   type BadgeDef {
