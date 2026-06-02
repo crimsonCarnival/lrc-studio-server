@@ -2,6 +2,7 @@ import Upload from '../../modules/uploads/upload.model.js';
 import Project from '../../modules/projects/project.model.js';
 import { fetchYouTubeTitle } from '../../utils/youtube.js';
 import { Context } from './context.js';
+import { triggerBadgeCheck } from '../../modules/badges/badge.service.js';
 
 export const uploadResolvers = {
   Query: {
@@ -39,11 +40,13 @@ export const uploadResolvers = {
       else if (source === 'cloudinary' && cloudinaryUrl) query.cloudinaryUrl = cloudinaryUrl;
       else if (source === 'spotify' && spotifyTrackId) query.spotifyTrackId = spotifyTrackId;
 
-      return Upload.findOneAndUpdate(
+      const upload = await Upload.findOneAndUpdate(
         query,
         { ...input, title: resolvedTitle, userId: context.userId || null },
         { upsert: true, new: true }
       );
+      if (context.userId) triggerBadgeCheck(context.userId, 'upload_create').catch(() => {});
+      return upload;
     },
 
     deleteMedia: async (_root: any, { id }: { id: string }, context: Context) => {
