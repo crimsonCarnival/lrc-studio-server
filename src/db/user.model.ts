@@ -35,6 +35,14 @@ export interface ISocial {
   followerCount: number;
   followingCount: number;
   showFollowers: boolean;
+  totalStarsReceived: number;
+  totalForksReceived: number;
+}
+
+export interface IUserBadge {
+  id: string;
+  grantedAt: Date;
+  grantedBy: string;
 }
 
 export interface IUser extends Document {
@@ -74,6 +82,20 @@ export interface IUser extends Document {
   currentChallenge?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
+  // Sync stats (recomputed from lyrics)
+  minutesSynced: number;
+  wordsSynced: number;
+  karaokeLines: number;
+  // Streak
+  currentStreak: number;
+  longestStreak: number;
+  lastActiveDate?: Date | null;
+  // Badges
+  badges: IUserBadge[];
+  showcasedBadges: string[];
+  // Progression
+  xp: number;
+  level: number;
 
   verifyPassword(plain: string): Promise<boolean>;
   toPublic(): Record<string, unknown>;
@@ -105,9 +127,20 @@ const appealSchema = new mongoose.Schema<IAppeal>(
 
 const socialSchema = new mongoose.Schema<ISocial>(
   {
-    followerCount: { type: Number, default: 0, min: 0 },
-    followingCount: { type: Number, default: 0, min: 0 },
-    showFollowers: { type: Boolean, default: true },
+    followerCount:      { type: Number, default: 0, min: 0 },
+    followingCount:     { type: Number, default: 0, min: 0 },
+    showFollowers:      { type: Boolean, default: true },
+    totalStarsReceived: { type: Number, default: 0, min: 0 },
+    totalForksReceived: { type: Number, default: 0, min: 0 },
+  },
+  { _id: false }
+);
+
+const userBadgeSchema = new mongoose.Schema<IUserBadge>(
+  {
+    id:        { type: String, required: true },
+    grantedAt: { type: Date,   default: Date.now },
+    grantedBy: { type: String, default: 'system' },
   },
   { _id: false }
 );
@@ -122,7 +155,7 @@ const userSchema = new mongoose.Schema<IUser>(
       trim: true,
       minlength: 3,
       maxlength: 30,
-      match: /^[a-z0-9_-]+$/,
+      match: /^[a-z0-9.:_-]+$/,
     },
     displayName: {
       type: String,
@@ -217,6 +250,16 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       default: null,
     },
+    minutesSynced:   { type: Number, default: 0, min: 0 },
+    wordsSynced:     { type: Number, default: 0, min: 0 },
+    karaokeLines:    { type: Number, default: 0, min: 0 },
+    currentStreak:   { type: Number, default: 0, min: 0 },
+    longestStreak:   { type: Number, default: 0, min: 0 },
+    lastActiveDate:  { type: Date,   default: null },
+    badges:          { type: [userBadgeSchema], default: [] },
+    showcasedBadges: { type: [String], default: [] },
+    xp:              { type: Number, default: 0, min: 0 },
+    level:           { type: Number, default: 0, min: 0 },
   },
   { timestamps: true, collection: 'users' }
 );
