@@ -25,6 +25,16 @@ export const userSchema = `
     uploads: [Upload!]!
     settings: Settings
     showFollowers: Boolean!
+    badges: [UserBadge!]!
+    showcasedBadges: [String!]!
+    minutesSynced: Int!
+    wordsSynced: Int!
+    karaokeLines: Int!
+    currentStreak: Int!
+    longestStreak: Int!
+    level: Int!
+    xp: Int!
+    showcaseSlots: Int!
   }
 
   type UserBan {
@@ -84,6 +94,12 @@ export const userSchema = `
     followingCount: Int!
     isFollowedByMe: Boolean!
     showFollowers: Boolean!
+    badges: [UserBadge!]!
+    showcasedBadges: [ShowcasedBadge!]!
+    level: Int!
+    xp: Int!
+    minutesSynced: Int!
+    currentStreak: Int!
   }
 
   type FollowUser {

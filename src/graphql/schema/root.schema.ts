@@ -28,6 +28,9 @@ export const rootSchema = `
     exploreStats: ExploreStats!
     publicProject(projectId: String!): Project
     projectReactions(projectId: String!): ProjectReactions!
+    leaderboard(limit: Int, offset: Int): LeaderboardResult!
+    badgeDefinitions: [BadgeDef!]!
+    userShowcase(accountName: String!): [ShowcasedBadge!]!
   }
 
   type Mutation {
@@ -57,6 +60,13 @@ export const rootSchema = `
     setForksEnabled(projectId: ID!, enabled: Boolean!): Project!
     boostProject(projectId: ID!): Boolean!
     reactToProject(projectId: String!, emoji: String!): ProjectReactions!
+    updateShowcase(badgeIds: [String!]!): UpdateShowcaseResult!
+    adminGrantBadge(userId: ID!, badgeId: String!): Boolean!
+    adminRevokeBadge(userId: ID!, badgeId: String!): Boolean!
+    adminCreateBadge(input: BadgeDefInput!): BadgeDef!
+    adminUpdateBadge(id: String!, input: BadgeDefInput!): BadgeDef!
+    adminDeleteBadge(id: String!): Boolean!
+    adminRetroactiveScan(badgeId: String!): RetroactiveResult!
   }
 
   input UpdateProfileInput {
@@ -66,5 +76,81 @@ export const rootSchema = `
     bio: String
     avatarUrl: String
     showFollowers: Boolean
+  }
+
+  type LeaderboardUser {
+    id: ID!
+    accountName: String!
+    displayName: String
+    avatarUrl: String
+    badges: [UserBadge!]!
+    minutesSynced: Int!
+    wordsSynced: Int!
+    karaokeLines: Int!
+    level: Int!
+    xp: Int!
+    currentStreak: Int!
+    projectCount: Int!
+    totalStarsReceived: Int!
+  }
+
+  type LeaderboardResult {
+    users: [LeaderboardUser!]!
+    total: Int!
+    hasMore: Boolean!
+  }
+
+  type UserBadge {
+    id: String!
+    grantedAt: String!
+    grantedBy: String!
+  }
+
+  type ShowcasedBadge {
+    id: String!
+    label: String!
+    icon: String!
+    color: String!
+    rarity: String!
+    rarityPct: Float!
+    holderCount: Int!
+    grantedAt: String!
+  }
+
+  type UpdateShowcaseResult {
+    success: Boolean!
+    error: String
+    showcaseSlots: Int!
+    level: Int!
+  }
+
+  type BadgeDef {
+    id: String!
+    label: String!
+    description: String!
+    icon: String!
+    color: String!
+    conditionType: String!
+    conditionValue: Int
+    autoGrant: Boolean!
+    isBuiltin: Boolean!
+    holderCount: Int!
+  }
+
+  input BadgeDefInput {
+    id: String
+    label: String!
+    description: String
+    icon: String!
+    color: String!
+    conditionType: String!
+    conditionValue: Int
+    autoGrant: Boolean
+  }
+
+  type RetroactiveResult {
+    granted: Int!
+    scanned: Int!
+    error: String
   }
 `;
