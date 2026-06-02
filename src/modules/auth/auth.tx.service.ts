@@ -16,14 +16,26 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-function buildDeviceName(ua: string): string {
+function resolveWindowsVersion(secCHUAPlatformVersion?: string): string {
+  if (!secCHUAPlatformVersion) return 'Windows';
+  const raw = secCHUAPlatformVersion.replace(/"/g, '').trim();
+  const major = parseInt(raw.split('.')[0], 10);
+  if (isNaN(major)) return 'Windows';
+  return major >= 13 ? 'Windows 11' : 'Windows 10';
+}
+
+function buildDeviceName(ua: string, platformVersion?: string): string {
   if (!ua) return 'Unknown Device';
   const r = new UAParser(ua).getResult();
   const browser = r.browser.major
     ? `${r.browser.name ?? 'Unknown'} ${r.browser.major}`
     : (r.browser.name ?? 'Unknown Browser');
-  const osVer = r.os.version?.split('.').slice(0, 2).join('.');
-  const os = osVer ? `${r.os.name ?? 'Unknown'} ${osVer}` : (r.os.name ?? 'Unknown OS');
+  const rawOsName = r.os.name ?? 'Unknown OS';
+  const os = rawOsName === 'Windows'
+    ? resolveWindowsVersion(platformVersion)
+    : (r.os.version?.split('.').slice(0, 2).join('.')
+        ? `${rawOsName} ${r.os.version!.split('.').slice(0, 2).join('.')}`
+        : rawOsName);
   return `${browser} on ${os}`;
 }
 
@@ -37,7 +49,7 @@ export interface RegisterResult extends AuthTokenResult {
 }
 
 export async function registerAtomically(
-  userData: { accountName?: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string; userAgent?: string },
+  userData: { accountName?: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string; userAgent?: string; platformVersion?: string },
   jwt: JwtTools
 ): Promise<RegisterResult> {
   return withTransaction(async (session: ClientSession) => {
@@ -68,7 +80,7 @@ export async function registerAtomically(
       ip: userData.ip || 'unknown',
       deviceId: userData.deviceId || 'unknown',
       userAgent: ua,
-      deviceName: buildDeviceName(ua),
+      deviceName: buildDeviceName(ua, userData.platformVersion),
       lastUsedAt: new Date(),
     }], { session });
 
@@ -81,7 +93,8 @@ export async function loginAtomically(
   jwt: JwtTools,
   ip: string,
   deviceId: string,
-  userAgent?: string
+  userAgent?: string,
+  platformVersion?: string
 ): Promise<AuthTokenResult> {
   return withTransaction(async (session: ClientSession) => {
     const familyId = crypto.randomUUID();
@@ -99,7 +112,7 @@ export async function loginAtomically(
       ip: ip || 'unknown',
       deviceId: deviceId || 'unknown',
       userAgent: ua,
-      deviceName: buildDeviceName(ua),
+      deviceName: buildDeviceName(ua, platformVersion),
       lastUsedAt: new Date(),
     }], { session });
 

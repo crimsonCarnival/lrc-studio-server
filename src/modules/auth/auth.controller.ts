@@ -53,6 +53,7 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
     recaptchaToken?: string;
   };
   const userAgent = (req.headers['user-agent'] as string) || '';
+  const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
   const result = await authService.register(
     {
       accountName: body.accountName,
@@ -61,6 +62,7 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
       password: body.password,
       recaptchaToken: body.recaptchaToken,
       userAgent,
+      platformVersion,
     },
     (req.server as any).jwt,
     req.ip,
@@ -84,12 +86,14 @@ export async function login(req: FastifyRequest, reply: FastifyReply): Promise<v
     recaptchaToken?: string;
   };
   const userAgent = (req.headers['user-agent'] as string) || '';
+  const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
   const result = await authService.login(
     {
       identifier: body.identifier,
       password: body.password,
       recaptchaToken: body.recaptchaToken,
       userAgent,
+      platformVersion,
     },
     (req.server as any).jwt,
     req.ip,
@@ -343,7 +347,8 @@ export async function getSessions(req: FastifyRequest, reply: FastifyReply): Pro
   }
 
   const currentUA = (req.headers['user-agent'] as string) || '';
-  const result = await authService.getSessions(req.userId!, currentFamilyId, currentUA);
+  const currentPlatformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
+  const result = await authService.getSessions(req.userId!, currentFamilyId, currentUA, currentPlatformVersion);
   if ((result as any).error) {
     return reply.code((result as any).status || 500).send({ error: (result as any).error });
   }

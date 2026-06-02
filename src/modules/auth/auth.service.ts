@@ -48,7 +48,18 @@ interface ParsedUA {
   deviceType: DeviceType;
 }
 
-function parseUA(userAgent: string): ParsedUA {
+// Windows 11 reports "Windows NT 10.0" in the UA string — identical to Windows 10.
+// The only reliable way to distinguish them is Sec-CH-UA-Platform-Version (UA Client Hints):
+// Chrome/Edge on Win11 send a platform version with major >= 13 (build 22000+).
+function resolveWindowsVersion(secCHUAPlatformVersion?: string): string {
+  if (!secCHUAPlatformVersion) return 'Windows'; // ambiguous without the hint
+  const raw = secCHUAPlatformVersion.replace(/"/g, '').trim();
+  const major = parseInt(raw.split('.')[0], 10);
+  if (isNaN(major)) return 'Windows';
+  return major >= 13 ? 'Windows 11' : 'Windows 10';
+}
+
+function parseUA(userAgent: string, secCHUAPlatformVersion?: string): ParsedUA {
   if (!userAgent) {
     return { deviceName: 'Unknown Device', browser: 'Unknown', os: 'Unknown', deviceType: 'desktop' };
   }
@@ -60,15 +71,22 @@ function parseUA(userAgent: string): ParsedUA {
   const browserMajor = result.browser.major;
   const browser = browserMajor ? `${browserName} ${browserMajor}` : browserName;
 
-  const osName = result.os.name ?? 'Unknown OS';
+  const rawOsName = result.os.name ?? 'Unknown OS';
   const osVersion = result.os.version;
-  // Shorten common verbose OS version strings (e.g. "10.15.7" → "10.15")
-  const osVersionShort = osVersion
+
+  // Windows 10/11 are indistinguishable from the UA string alone — use client hint
+  const osName = rawOsName === 'Windows'
+    ? resolveWindowsVersion(secCHUAPlatformVersion)
+    : rawOsName;
+
+  // Shorten verbose OS version strings (e.g. "10.15.7" → "10.15"), skip for Windows
+  // since we already resolved the correct label above
+  const osVersionShort = (rawOsName !== 'Windows' && osVersion)
     ? osVersion.split('.').slice(0, 2).join('.')
     : undefined;
   const os = osVersionShort ? `${osName} ${osVersionShort}` : osName;
 
-  const rawType = result.device.type; // 'mobile' | 'tablet' | ... | undefined
+  const rawType = result.device.type;
   const deviceType: DeviceType =
     rawType === 'mobile' ? 'mobile' :
     rawType === 'tablet' ? 'tablet' :
@@ -145,7 +163,7 @@ async function checkDevice(deviceId: string | null | undefined, user: any = null
 }
 
 export async function register(
-  data: { accountName?: string; displayName?: string; email?: string; password: string; recaptchaToken?: string; userAgent?: string },
+  data: { accountName?: string; displayName?: string; email?: string; password: string; recaptchaToken?: string; userAgent?: string; platformVersion?: string },
   jwt: JwtTools,
   ip: string,
   deviceId: string
@@ -196,6 +214,7 @@ export async function register(
       ip,
       deviceId,
       userAgent: data.userAgent,
+      platformVersion: data.platformVersion,
     },
     jwt
   );
@@ -227,7 +246,7 @@ export async function register(
 }
 
 export async function login(
-  data: { identifier: string; password: string; recaptchaToken?: string; userAgent?: string },
+  data: { identifier: string; password: string; recaptchaToken?: string; userAgent?: string; platformVersion?: string },
   jwt: JwtTools,
   ip: string,
   deviceId: string
@@ -277,7 +296,8 @@ export async function login(
     jwt,
     ip,
     deviceId,
-    data.userAgent
+    data.userAgent,
+    data.platformVersion
   );
 
   logUserAction({
@@ -608,7 +628,8 @@ export interface SessionPublic {
 export async function getSessions(
   userId: string,
   currentFamilyId?: string,
-  currentUA?: string
+  currentUA?: string,
+  currentPlatformVersion?: string
 ): Promise<ServiceResult<{ sessions: SessionPublic[] }>> {
   const raw = await Session.find({
     userId,
@@ -624,19 +645,20 @@ export async function getSessions(
     const isCurrent = currentFamilyId ? s.familyId === currentFamilyId : false;
     let ua = (s as any).userAgent || '';
 
-    // Heal sessions that have no stored UA: use the current request's UA for the
-    // active session, and persist it so it's correct on the next load.
     if (!ua && isCurrent && currentUA) {
       ua = currentUA;
       healPromises.push(
         Session.updateOne(
           { _id: (s as any)._id },
-          { $set: { userAgent: currentUA, deviceName: parseUA(currentUA).deviceName } }
+          { $set: { userAgent: currentUA, deviceName: parseUA(currentUA, currentPlatformVersion).deviceName } }
         ).exec().then(() => {})
       );
     }
 
-    const parsed = parseUA(ua);
+    // For the current session, use the platform version hint to detect Win10 vs Win11
+    const parsed = isCurrent
+      ? parseUA(ua, currentPlatformVersion)
+      : parseUA(ua);
 
     return {
       id: (s._id as any).toString(),
