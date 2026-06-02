@@ -21,6 +21,7 @@ import { emitProjectUpdated } from '../../modules/projects/projects.controller.j
 import { getIO } from '../../socket/socket.manager.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
+import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 
 export const projectResolvers = {
   Query: {
@@ -59,6 +60,13 @@ export const projectResolvers = {
     createProject: async (_root: any, { input }: { input: any }, context: Context) => {
       const result = await createProjectService(input, context.userId, context.ip || '');
       if ('error' in result) throw new Error((result as any).error);
+      if (context.userId) {
+        Promise.all([
+          updateStreak(context.userId),
+          triggerBadgeCheck(context.userId, 'project_create'),
+          ...(input.public ? [triggerBadgeCheck(context.userId, 'project_publish')] : []),
+        ]).catch(() => {});
+      }
       return Project.findOne({ projectId: (result as any).projectId });
     },
 
@@ -111,7 +119,6 @@ export const projectResolvers = {
       const result = await cloneProject(id, context.userId);
       if ('error' in result) throw new Error((result as any).error);
 
-      // Activity links to the SOURCE project (discovery: "Alice forked [original]")
       writeActivity({
         actorId:      context.userId,
         type:         'project_forked',
@@ -119,6 +126,16 @@ export const projectResolvers = {
         projectTitle: (sourceProject as any)?.title || '',
         coverImage:   (sourceProject as any)?.coverImage || '',
       }).catch(() => {});
+
+      // Badge: fork_received for source project owner
+      const sourceOwnerId = (sourceProject as any)?.userId?.toString();
+      if (sourceOwnerId && sourceOwnerId !== context.userId) {
+        User.updateOne({ _id: sourceOwnerId }, { $inc: { 'social.totalForksReceived': 1 } })
+          .then(() => triggerBadgeCheck(sourceOwnerId, 'fork_received'))
+          .catch(() => {});
+      }
+      // Badge: project_create for the forker
+      Promise.all([updateStreak(context.userId), triggerBadgeCheck(context.userId, 'project_create')]).catch(() => {});
 
       return Project.findOne({ projectId: (result as any).projectId });
     },
@@ -157,6 +174,10 @@ export const projectResolvers = {
                 }).catch(() => {});
               }
             }).catch(() => {});
+            // Increment denormalized star count on owner, then check badges
+            User.updateOne({ _id: ownerId }, { $inc: { 'social.totalStarsReceived': 1 } })
+              .then(() => triggerBadgeCheck(ownerId, 'star_received'))
+              .catch(() => {});
           }
         }
       } catch (err: any) {
