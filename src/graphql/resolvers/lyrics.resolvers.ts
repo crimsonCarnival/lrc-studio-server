@@ -1,6 +1,7 @@
 import Project from '../../modules/projects/project.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import { Context } from './context.js';
+import { recomputeSyncStats, triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 
 export const lyricsResolvers = {
   Mutation: {
@@ -8,11 +9,17 @@ export const lyricsResolvers = {
       if (!context.userId) throw new Error('Unauthorized');
       const project = await Project.findOne({ projectId, userId: context.userId });
       if (!project) throw new Error('Project not found or access denied');
-      return Lyrics.findOneAndUpdate(
+      const result = await Lyrics.findOneAndUpdate(
         { projectId },
         { $set: input },
         { new: true, upsert: true }
       );
+      // Fire-and-forget: recompute stats then check badges
+      Promise.all([
+        recomputeSyncStats(context.userId),
+        updateStreak(context.userId),
+      ]).then(() => triggerBadgeCheck(context.userId!, 'sync_update')).catch(() => {});
+      return result;
     },
   },
 
