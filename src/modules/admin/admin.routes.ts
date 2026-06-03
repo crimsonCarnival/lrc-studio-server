@@ -32,4 +32,6 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
   fastify.get('/banned-devices', adminController.getBannedDevices);
   fastify.post('/banned-devices', { schema: blockDeviceSchema }, adminController.blockDevice);
   fastify.delete('/banned-devices/:id', { schema: { params: idParam } }, adminController.unblockDevice);
+
+  fastify.post('/xp', adminController.adjustXP);
 }

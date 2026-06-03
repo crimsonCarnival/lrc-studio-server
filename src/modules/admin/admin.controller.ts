@@ -100,3 +100,18 @@ export async function unblockDevice(req: FastifyRequest, reply: FastifyReply): P
   const result = await adminService.unblockDevice((req.params as Record<string, string>).id);
   return reply.send(result);
 }
+export async function adjustXP(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { action, amount, target, userId, userIds } = req.body as Record<string, unknown>;
+  if (!['grant', 'revoke'].includes(action as string)) return reply.code(400).send({ error: 'action must be grant or revoke' });
+  if (!amount || typeof amount !== 'number' || amount <= 0) return reply.code(400).send({ error: 'amount must be a positive number' });
+  if (!['all', 'user', 'users'].includes(target as string)) return reply.code(400).send({ error: 'target must be all, user, or users' });
+  const result = await adminService.adjustXP(
+    action as 'grant' | 'revoke',
+    amount as number,
+    target as 'all' | 'user' | 'users',
+    req.userId!,
+    userId as string | undefined,
+    userIds as string[] | undefined
+  );
+  return reply.send(result);
+}

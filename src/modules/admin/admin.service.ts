@@ -353,6 +353,54 @@ export async function listAdminLogs(query: Record<string, unknown> = {}): Promis
   return { logs, page, limit };
 }
 
+export type XPTarget = 'all' | 'user' | 'users';
+
+export async function adjustXP(
+  action: 'grant' | 'revoke',
+  amount: number,
+  target: XPTarget,
+  adminId: string,
+  userId?: string,
+  userIds?: string[]
+): Promise<{ affected: number }> {
+  const { recomputeXP } = await import('../../modules/badges/badge.service.js');
+  const delta = action === 'grant' ? Math.abs(amount) : -Math.abs(amount);
+  let affected = 0;
+
+  if (target === 'all') {
+    const result = await User.updateMany(
+      { isDeleted: { $ne: true } },
+      { $inc: { xpBonus: delta } }
+    );
+    affected = result.modifiedCount;
+
+    // Recompute levels in batches of 100
+    const users = await User.find({ isDeleted: { $ne: true } }).select('_id').lean();
+    const BATCH = 100;
+    for (let i = 0; i < users.length; i += BATCH) {
+      await Promise.all(users.slice(i, i + BATCH).map((u) => recomputeXP((u._id as any).toString())));
+    }
+  } else if (target === 'user' && userId) {
+    await User.updateOne({ _id: userId }, { $inc: { xpBonus: delta } });
+    await recomputeXP(userId);
+    affected = 1;
+  } else if (target === 'users' && userIds?.length) {
+    await User.updateMany({ _id: { $in: userIds } }, { $inc: { xpBonus: delta } });
+    await Promise.all(userIds.map((id) => recomputeXP(id)));
+    affected = userIds.length;
+  }
+
+  const admin = await User.findById(adminId).select('accountName').lean();
+  await logAdminAction({
+    adminId,
+    adminName: (admin as any)?.accountName || 'System',
+    action: `xp_${action}`,
+    details: `${action === 'grant' ? '+' : '-'}${amount} XP → ${target === 'all' ? 'all users' : target === 'user' ? `user ${userId}` : `${userIds?.length} users`}`,
+  });
+
+  return { affected };
+}
+
 export async function logAdminAction({ adminId, adminName, action, targetId, targetName, details, ip }: {
   adminId: string;
   adminName: string;
