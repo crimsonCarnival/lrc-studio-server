@@ -51,6 +51,9 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
+    songGenre: String
+    songLanguage: String
+    trackCount: Int
     albumArt: String
   }
 
@@ -89,6 +92,9 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
+    songGenre: String
+    songLanguage: String
+    trackCount: Int
     albumArt: String
   }
 
