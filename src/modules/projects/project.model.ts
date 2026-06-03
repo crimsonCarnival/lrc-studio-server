@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { nanoid } from 'nanoid';
 import { stripHtml } from '../../utils/sanitize.js';
+import { PRIMARY_GENRES } from '../../types/index.js';
 
 const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
 
@@ -22,12 +23,13 @@ const stateSchema = new mongoose.Schema(
 const metadataSchema = new mongoose.Schema(
   {
     description: { type: String, default: '', maxlength: 2000, set: textSetter },
+    genre: { type: String, enum: [...PRIMARY_GENRES, ''], default: '' },
     tags: {
       type: [String],
       default: [],
       validate: {
-      validator: (v: unknown[]) => v.length <= 20,
-        message: 'Maximum 20 tags allowed',
+        validator: (v: unknown[]) => v.length <= 10,
+        message: 'Maximum 10 tags allowed',
       },
       set: (v: unknown) => (Array.isArray(v) ? v.map((t: unknown) => (typeof t === 'string' ? stripHtml(t).slice(0, 50) : t)) : v),
     },
@@ -36,6 +38,9 @@ const metadataSchema = new mongoose.Schema(
     songAlbum: { type: String, default: '', maxlength: 500, set: textSetter },
     songYear: { type: String, default: '', maxlength: 4, set: textSetter },
     albumArt: { type: String, default: '', maxlength: 2000, set: textSetter },
+    songLanguage: { type: String, default: '', maxlength: 10, set: textSetter },
+    trackNumber: { type: Number, default: null },
+    trackCount: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -95,6 +100,9 @@ const projectSchema = new mongoose.Schema(
 
 // Supports list query: by owner, sorted by recent updates
 projectSchema.index({ userId: 1, updatedAt: -1 });
+// Supports genre and tag filtering
+projectSchema.index({ 'metadata.genre': 1 });
+projectSchema.index({ 'metadata.tags': 1 });
 // Supports public project discovery and trending sorts
 projectSchema.index({ public: 1, starCount: -1 });
 projectSchema.index({ public: 1, createdAt: -1 });
