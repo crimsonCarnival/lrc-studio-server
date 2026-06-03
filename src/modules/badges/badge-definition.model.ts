@@ -20,6 +20,7 @@ export interface IBadgeDefinition {
   conditionValue: number | null;
   autoGrant: boolean;
   isBuiltin: boolean;
+  xpReward: number;
   createdBy: mongoose.Types.ObjectId | null;
   createdAt?: Date;
   updatedAt?: Date;
@@ -52,6 +53,7 @@ const badgeDefSchema = new mongoose.Schema<IBadgeDefinition>(
     conditionValue: { type: Number, default: null },
     autoGrant: { type: Boolean, default: false },
     isBuiltin: { type: Boolean, default: false },
+    xpReward: { type: Number, default: 50, min: 0 },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true, collection: 'badge_definitions' }
