@@ -142,6 +142,7 @@ export const userResolvers = {
           currentStreak: (u as any).currentStreak ?? 0,
           projectCount: pcMap.get((u._id as any).toString()) ?? 0,
           totalStarsReceived: (u as any).social?.totalStarsReceived ?? 0,
+          totalForksReceived: (u as any).social?.totalForksReceived ?? 0,
         })),
         total,
         hasMore,

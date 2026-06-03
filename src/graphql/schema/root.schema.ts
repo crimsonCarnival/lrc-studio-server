@@ -92,6 +92,7 @@ export const rootSchema = `
     currentStreak: Int!
     projectCount: Int!
     totalStarsReceived: Int!
+    totalForksReceived: Int!
   }
 
   type LeaderboardResult {
