@@ -31,6 +31,16 @@ export const rootSchema = `
     leaderboard(limit: Int, offset: Int): LeaderboardResult!
     badgeDefinitions: [BadgeDef!]!
     userShowcase(accountName: String!): [ShowcasedBadge!]!
+    myMusicLibrary: [MusicLibraryEntry!]!
+  }
+
+  type MusicLibraryEntry {
+    artist: String!
+    album: String!
+    genre: String
+    language: String
+    trackCount: Int
+    updatedAt: String
   }
 
   type Mutation {

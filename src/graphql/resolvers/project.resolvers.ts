@@ -22,6 +22,7 @@ import { getIO } from '../../socket/socket.manager.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
+import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
 
 export const projectResolvers = {
   Query: {
@@ -61,10 +62,14 @@ export const projectResolvers = {
       const result = await createProjectService(input, context.userId, context.ip || '');
       if ('error' in result) throw new Error((result as any).error);
       if (context.userId) {
+        const meta = input.metadata;
         Promise.all([
           updateStreak(context.userId),
           triggerBadgeCheck(context.userId, 'project_create'),
           ...(input.public ? [triggerBadgeCheck(context.userId, 'project_publish')] : []),
+          ...(meta?.songArtist || meta?.songAlbum
+            ? [upsertMusicLibraryEntry(context.userId, { artist: meta.songArtist || '', album: meta.songAlbum || '', genre: meta.songGenre, language: meta.songLanguage, trackCount: meta.trackCount })]
+            : []),
         ]).catch(() => {});
       }
       return Project.findOne({ projectId: (result as any).projectId });
@@ -97,6 +102,12 @@ export const projectResolvers = {
       // If project is being published for the first time, check public_project_count badge
       if (context.userId && input.public === true) {
         triggerBadgeCheck(context.userId, 'project_publish').catch(() => {});
+      }
+      if (context.userId && input.metadata) {
+        const meta = input.metadata;
+        if (meta.songArtist || meta.songAlbum) {
+          upsertMusicLibraryEntry(context.userId, { artist: meta.songArtist || '', album: meta.songAlbum || '', genre: meta.songGenre, language: meta.songLanguage, trackCount: meta.trackCount }).catch(() => {});
+        }
       }
       return (result as any).project;
     },

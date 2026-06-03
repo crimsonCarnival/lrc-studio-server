@@ -22,6 +22,22 @@ export const userResolvers = {
       return user?.toPublic();
     },
 
+    myMusicLibrary: async (_root: any, _args: any, context: Context) => {
+      if (!context.userId) return [];
+      const user = await User.findById(context.userId).select('musicLibrary').lean() as any;
+      const entries: any[] = user?.musicLibrary ?? [];
+      return entries
+        .sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt))
+        .map((e) => ({
+          artist: e.artist || '',
+          album: e.album || '',
+          genre: e.genre || null,
+          language: e.language || null,
+          trackCount: e.trackCount ?? null,
+          updatedAt: e.updatedAt ? new Date(e.updatedAt).toISOString() : null,
+        }));
+    },
+
     publicProfile: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
       if (!user || (user as any).isDeleted || (user as any).ban?.active) return null;
