@@ -236,29 +236,62 @@ export async function resolveTrack(url: string): Promise<Record<string, unknown>
   });
 
   if (!response.ok) {
-    if (response.status === 404) {
-      return { error: 'Track not found on Spotify', status: 404 };
-    }
+    if (response.status === 404) return { error: 'Track not found on Spotify', status: 404 };
     return { error: 'Spotify API request failed', status: 502 };
   }
 
   const track = await response.json() as {
-    id: string; name: string; artists?: { name: string }[]; album?: { name: string; images?: { url: string }[] };
-    duration_ms: number; preview_url?: string | null; uri: string;
+    id: string;
+    name: string;
+    artists: { id: string; name: string }[];
+    album: {
+      name: string;
+      images?: { url: string }[];
+      release_date?: string;
+      total_tracks?: number;
+    };
+    duration_ms: number;
+    track_number?: number;
+    preview_url?: string | null;
+    uri: string;
   };
+
+  // Fetch artist genres in parallel using same client-credentials token
+  let genres: string[] = [];
+  const artistIds = (track.artists ?? []).map((a) => a.id).filter(Boolean).slice(0, 5);
+  if (artistIds.length > 0) {
+    try {
+      const artistRes = await fetch(
+        `${SPOTIFY_API_BASE}/artists?ids=${artistIds.join(',')}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (artistRes.ok) {
+        const artistData = await artistRes.json() as { artists: { genres?: string[] }[] };
+        const seen = new Set<string>();
+        for (const a of artistData.artists ?? []) {
+          for (const g of a.genres ?? []) {
+            if (!seen.has(g)) { seen.add(g); genres.push(g); }
+          }
+        }
+      }
+    } catch { /* genres remain empty */ }
+  }
 
   const result = {
     trackId: track.id,
     name: stripHtml(track.name || ''),
-    artist: stripHtml(track.artists?.map((a) => a.name).join(', ') || ''),
+    artist: stripHtml((track.artists ?? []).map((a) => a.name).join(', ')),
     album: stripHtml(track.album?.name || ''),
     duration: track.duration_ms,
     previewUrl: track.preview_url || null,
     albumArt: track.album?.images?.[0]?.url || null,
+    releaseYear: track.album?.release_date ? track.album.release_date.slice(0, 4) : null,
+    totalTracks: track.album?.total_tracks ?? null,
+    trackNumber: track.track_number ?? null,
+    genres,
   };
 
   trackCache.put(trackId, result);
-
   return result;
 }
 
