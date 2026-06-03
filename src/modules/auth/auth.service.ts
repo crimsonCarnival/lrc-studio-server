@@ -289,7 +289,7 @@ export async function login(
   const ipChanged = ip && user.lastIp !== ip;
   if (ipChanged) user.lastIp = ip;
   await checkDevice(deviceId, user);
-  if (ipChanged && !user.isModified()) await user.save();
+  if (ipChanged) await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
 
   const { accessToken, refreshToken } = await loginAtomically(
     user,
@@ -398,8 +398,8 @@ export async function refresh(
   if (deviceCheck.error) return deviceCheck as any;
 
   if (ip && user.lastIp !== ip) {
+    await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
     user.lastIp = ip;
-    if (!user.isModified()) await user.save();
   }
 
   const familyId = decoded.familyId as string | undefined;
@@ -485,8 +485,8 @@ export async function getProfile(
   if (deviceCheck.error) return deviceCheck as any;
 
   if (ip && user.lastIp !== ip) {
+    await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
     user.lastIp = ip;
-    if (!user.isModified()) await user.save();
   }
 
   return { user: user.toPublic() as any } as any;
