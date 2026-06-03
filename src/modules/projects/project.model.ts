@@ -37,7 +37,8 @@ const metadataSchema = new mongoose.Schema(
     songYear: { type: String, default: '', maxlength: 4, set: textSetter },
     songGenre: { type: String, default: '', maxlength: 100, set: textSetter },
     songLanguage: { type: String, default: '', maxlength: 100, set: textSetter },
-    trackCount: { type: Number, default: null, min: 0, max: 999 },
+    trackNumber: { type: Number, default: null, min: 1, max: 999 },
+    trackCount: { type: Number, default: null, min: 1, max: 999 },
     albumArt: { type: String, default: '', maxlength: 2000, set: textSetter },
   },
   { _id: false }
