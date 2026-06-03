@@ -160,7 +160,28 @@ const limitOnlySchema = {
   },
 };
 
+const lookupSchema = {
+  querystring: {
+    type: 'object',
+    properties: {
+      songName: { type: 'string', minLength: 1, maxLength: 200 },
+      artistName: { type: 'string', maxLength: 200 },
+    },
+    required: ['songName'],
+  },
+};
+
 export default async function spotifyRoutes(fastify: FastifyInstance): Promise<void> {
+  // Public: no auth required, uses client credentials
+  fastify.get(
+    '/lookup',
+    {
+      schema: lookupSchema,
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    },
+    spotifyController.lookup
+  );
+
   fastify.post(
     '/resolve',
     {

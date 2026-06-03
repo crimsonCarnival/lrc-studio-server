@@ -295,6 +295,30 @@ export async function resolveTrack(url: string): Promise<Record<string, unknown>
   return result;
 }
 
+export async function lookupTrack(songName: string, artistName?: string): Promise<Record<string, unknown>> {
+  if (!isSpotifyConfigured()) {
+    return { error: 'Spotify integration not configured', status: 503 };
+  }
+
+  const q = artistName?.trim()
+    ? `track:${songName.trim()} artist:${artistName.trim()}`
+    : songName.trim();
+
+  const token = await getClientToken();
+  const params = new URLSearchParams({ q, type: 'track', limit: '1', market: 'US' });
+  const res = await fetch(`${SPOTIFY_API_BASE}/search?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) return { error: 'Spotify search failed', status: 502 };
+
+  const data = await res.json() as { tracks?: { items?: { id: string }[] } };
+  const first = data.tracks?.items?.[0];
+  if (!first) return { error: 'No tracks found', status: 404 };
+
+  return resolveTrack(`spotify:track:${first.id}`);
+}
+
 export async function spotifyFetch(userId: string, path: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const token = await getValidSpotifyToken(userId);
   if (typeof token === 'object' && (token as Record<string, unknown>).error) return token;
