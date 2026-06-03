@@ -38,9 +38,25 @@ export interface ProjectState {
   utcOffset?: string | null;
 }
 
+export type PrimaryGenre =
+  | 'pop' | 'rock' | 'hip_hop' | 'rnb' | 'electronic'
+  | 'jazz' | 'classical' | 'country' | 'folk' | 'metal'
+  | 'blues' | 'soul' | 'reggae' | 'latin' | 'alternative'
+  | 'soundtrack' | 'world' | 'other';
+
+export const PRIMARY_GENRES: PrimaryGenre[] = [
+  'pop','rock','hip_hop','rnb','electronic','jazz','classical',
+  'country','folk','metal','blues','soul','reggae','latin',
+  'alternative','soundtrack','world','other',
+];
+
 export interface ProjectMetadata {
   description?: string;
   tags?: string[];
+  genre?: PrimaryGenre | '';
+  songLanguage?: string;
+  trackNumber?: number | null;
+  trackCount?: number | null;
 }
 
 export interface UploadInfo {
