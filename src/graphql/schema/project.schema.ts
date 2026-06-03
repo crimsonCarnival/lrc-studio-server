@@ -46,12 +46,16 @@ export const projectSchema = `
 
   type ProjectMetadata {
     description: String
+    genre: String
     tags: [String!]
     songName: String
     songArtist: String
     songAlbum: String
     songYear: String
     albumArt: String
+    songLanguage: String
+    trackNumber: Int
+    trackCount: Int
   }
 
   input WordInput {
@@ -84,12 +88,16 @@ export const projectSchema = `
 
   input ProjectMetadataInput {
     description: String
+    genre: String
     tags: [String!]
     songName: String
     songArtist: String
     songAlbum: String
     songYear: String
     albumArt: String
+    songLanguage: String
+    trackNumber: Int
+    trackCount: Int
   }
 
   input ProjectLyricsInput {
