@@ -12,6 +12,16 @@ function callbackHtml(success: boolean, error?: string | null): string {
 </body></html>`;
 }
 
+export async function lookup(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { songName, artistName } = req.query as Record<string, string | undefined>;
+  if (!songName?.trim()) return reply.code(400).send({ error: 'songName is required' });
+  const result = await spotifyService.lookupTrack(songName, artistName);
+  if ((result as Record<string, unknown>).error) {
+    return reply.code((result as Record<string, number>).status || 502).send({ error: (result as Record<string, unknown>).error });
+  }
+  return reply.send(result);
+}
+
 export async function resolve(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await spotifyService.resolveTrack((req.body as Record<string, string>).url);
   if ((result as Record<string, unknown>).error) {
