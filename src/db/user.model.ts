@@ -97,6 +97,7 @@ export interface IUser extends Document {
   // Progression
   xp: number;
   level: number;
+  xpBonus: number;
 
   verifyPassword(plain: string): Promise<boolean>;
   toPublic(): Record<string, unknown>;
@@ -262,6 +263,7 @@ const userSchema = new mongoose.Schema<IUser>(
     showcasePublic:  { type: Boolean, default: true },
     xp:              { type: Number, default: 0, min: 0 },
     level:           { type: Number, default: 0, min: 0 },
+    xpBonus:         { type: Number, default: 0 },
   },
   { timestamps: true, collection: 'users' }
 );
