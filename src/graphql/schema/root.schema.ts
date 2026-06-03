@@ -137,6 +137,7 @@ export const rootSchema = `
     autoGrant: Boolean!
     isBuiltin: Boolean!
     holderCount: Int!
+    xpReward: Int!
   }
 
   input BadgeDefInput {
@@ -148,6 +149,7 @@ export const rootSchema = `
     conditionType: String!
     conditionValue: Int
     autoGrant: Boolean
+    xpReward: Int
   }
 
   type RetroactiveResult {
