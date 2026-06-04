@@ -427,12 +427,19 @@ export const userResolvers = {
       };
     },
 
-    adminGrantBadge: async (_root: any, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {
+    adminGrantBadge: async (_root: any, { userIdentifier, badgeId }: { userIdentifier: string; badgeId: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const admin = await User.findById(context.userId).select('role').lean();
       if ((admin as any)?.role !== 'admin') throw new Error('Forbidden');
+      // Accept accountName or MongoDB _id
+      let resolvedId = userIdentifier.trim();
+      if (!/^[a-f\d]{24}$/i.test(resolvedId)) {
+        const target = await User.findOne({ accountName: resolvedId }).select('_id').lean();
+        if (!target) throw new Error(`User "${resolvedId}" not found`);
+        resolvedId = (target as any)._id.toString();
+      }
       const { grantBadge } = await import('../../modules/badges/badge.service.js');
-      return grantBadge(userId, badgeId, context.userId);
+      return grantBadge(resolvedId, badgeId, context.userId);
     },
 
     adminRevokeBadge: async (_root: any, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {

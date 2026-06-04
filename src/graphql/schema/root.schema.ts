@@ -61,7 +61,7 @@ export const rootSchema = `
     boostProject(projectId: ID!): Boolean!
     reactToProject(projectId: String!, emoji: String!): ProjectReactions!
     updateShowcase(badgeIds: [String!]!, showcasePublic: Boolean): UpdateShowcaseResult!
-    adminGrantBadge(userId: ID!, badgeId: String!): Boolean!
+    adminGrantBadge(userIdentifier: String!, badgeId: String!): Boolean!
     adminRevokeBadge(userId: ID!, badgeId: String!): Boolean!
     adminCreateBadge(input: BadgeDefInput!): BadgeDef!
     adminUpdateBadge(id: String!, input: BadgeDefInput!): BadgeDef!
