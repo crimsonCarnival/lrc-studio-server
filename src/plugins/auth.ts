@@ -53,7 +53,7 @@ function verifyToken(token: string): JwtPayload {
 }
 
 // Only the fields needed for auth checks — avoids loading passwordHash, spotify tokens, etc.
-const AUTH_USER_SELECT = 'ban appeal showUnbanMessage isDeleted deletedAt role accountName';
+const AUTH_USER_SELECT = 'ban appeal showUnbanMessage isDeleted deletedAt role accountName lastIp';
 
 async function lookupUser(userId: string | undefined): Promise<any> {
   if (!userId) return null;
@@ -195,6 +195,13 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     }
 
     request.userId = decoded.sub;
+
+    // Fire-and-forget IP update — no await, never blocks the request
+    if (ip && user.lastIp !== ip) {
+      import('../db/user.model.js').then(({ default: User }) => {
+        User.updateOne({ _id: decoded.sub }, { $set: { lastIp: ip } }).catch(() => {});
+      });
+    }
   });
 
   fastify.decorate('requireActiveUser', async function (request: FastifyRequest, reply: FastifyReply) {
