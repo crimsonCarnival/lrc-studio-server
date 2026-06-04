@@ -4,6 +4,25 @@ import * as authService from './auth.service.js';
 import { requestPasswordReset, validateResetToken, resetPassword, changePassword as changePasswordService, PasswordResetError } from '../password-reset/password-reset.service.js';
 import { resendVerification, verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
 import { verifyRecaptcha } from './auth.service.js';
+import { getEnv } from '../../config/env.js';
+
+/** Parse JWT duration strings ("30m", "1d", "2h") to seconds. */
+function parseExpiry(str: string | undefined, fallbackSeconds: number): number {
+  if (!str) return fallbackSeconds;
+  const match = str.match(/^(\d+)([smhd])$/);
+  if (!match) return fallbackSeconds;
+  const n = parseInt(match[1], 10);
+  const unit = match[2];
+  if (unit === 's') return n;
+  if (unit === 'm') return n * 60;
+  if (unit === 'h') return n * 3600;
+  if (unit === 'd') return n * 86400;
+  return fallbackSeconds;
+}
+
+const env = getEnv();
+const ACCESS_COOKIE_MAX_AGE = parseExpiry(env.JWT_ACCESS_EXPIRY, 30 * 60);
+const REFRESH_COOKIE_MAX_AGE = parseExpiry(env.JWT_REFRESH_EXPIRY, 24 * 60 * 60);
 
 const cookieOptions: CookieSerializeOptions = {
   httpOnly: true,
@@ -14,10 +33,10 @@ const cookieOptions: CookieSerializeOptions = {
 
 function setAuthCookies(reply: FastifyReply, result: any) {
   if (result.accessToken) {
-    reply.setCookie('accessToken', result.accessToken, { ...cookieOptions, maxAge: 15 * 60 });
+    reply.setCookie('accessToken', result.accessToken, { ...cookieOptions, maxAge: ACCESS_COOKIE_MAX_AGE });
   }
   if (result.refreshToken) {
-    reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
+    reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: REFRESH_COOKIE_MAX_AGE });
   }
 }
 
