@@ -9,6 +9,7 @@ import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rateLimit.js';
 import auth from './plugins/auth.js';
 import mercurius from 'mercurius';
+import { NoSchemaIntrospectionCustomRule } from 'graphql';
 import { schema } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
@@ -70,7 +71,7 @@ async function build() {
       return { userId: request.userId, ip: request.ip, tokenExpired: (request as any).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
     },
     graphiql: process.env.NODE_ENV === 'development',
-    introspection: process.env.NODE_ENV === 'development',
+    validationRules: process.env.NODE_ENV !== 'development' ? [NoSchemaIntrospectionCustomRule] : [],
   });
 
   app.setErrorHandler((error, request, reply) => {
