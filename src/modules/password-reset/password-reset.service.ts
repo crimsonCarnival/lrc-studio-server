@@ -131,7 +131,10 @@ export async function changePassword(userId: string, currentPassword: string | n
   // Update atomically
   await changePasswordAtomically(userId, passwordHash);
   resolveSticky(userId, 'set_password').catch(() => {});
-  createOnce({ userId, type: 'password_changed', sticky: false }).catch(() => {});
+  // Only notify on an actual change, not initial password setup
+  if (!isSetPassword) {
+    createOnce({ userId, type: 'password_changed', sticky: false }).catch(() => {});
+  }
   const userEmail = user.email;
   if (userEmail) {
     Settings.findOne({ userId }).select('interface').lean().then((settings: any) => {
