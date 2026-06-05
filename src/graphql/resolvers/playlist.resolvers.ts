@@ -1,30 +1,47 @@
 import mongoose from 'mongoose';
 import Playlist from '../../db/playlist.model.js';
+import type { IPlaylist } from '../../db/playlist.model.js';
 import SavedPlaylist from '../../db/saved-playlist.model.js';
 import Project from '../../modules/projects/project.model.js';
+import type { IProject } from '../../modules/projects/project.model.js';
 import User from '../../db/user.model.js';
+import type { IUser } from '../../db/user.model.js';
 import { Context } from './context.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 
-async function resolveProjects(playlist: any) {
-  if (!playlist.projectIds?.length) return [];
-  const docs = await Project.find({ _id: { $in: playlist.projectIds } }).lean();
-  const mode = playlist.sortMode;
-  if (mode === 'STARS') {
-    return docs.sort((a: any, b: any) => (b.starCount ?? 0) - (a.starCount ?? 0));
-  }
-  if (mode === 'ALPHABETICAL') {
-    return docs.sort((a: any, b: any) => (a.title || '').localeCompare(b.title || ''));
-  }
-  // MANUAL and DATE_ADDED: preserve projectIds insertion order, filter missing
-  const map = new Map(docs.map((d: any) => [d._id.toString(), d]));
-  return playlist.projectIds.map((id: any) => map.get(id.toString())).filter(Boolean);
+type LeanPlaylist = IPlaylist & { _id: mongoose.Types.ObjectId };
+type LeanUser = IUser & { _id: mongoose.Types.ObjectId };
+
+export interface PlaylistInput {
+  name?: string;
+  description?: string | null;
+  coverImage?: string;
+  tags?: string[];
+  isPublic?: boolean;
+  sortMode?: string;
+  projectIds?: string[];
 }
 
-async function formatPlaylist(playlist: any, context: Context) {
+async function resolveProjects(playlist: LeanPlaylist) {
+  if (!playlist.projectIds?.length) return [];
+  const docs = await Project.find({ _id: { $in: playlist.projectIds } }).lean<IProject[]>();
+  const mode = playlist.sortMode;
+  if (mode === 'STARS') {
+    return docs.sort((a, b) => (b.starCount ?? 0) - (a.starCount ?? 0));
+  }
+  if (mode === 'ALPHABETICAL') {
+    return docs.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  }
+  // MANUAL and DATE_ADDED: preserve projectIds insertion order, filter missing
+  type LeanProject = IProject & { _id: mongoose.Types.ObjectId };
+  const map = new Map((docs as LeanProject[]).map(d => [d._id.toString(), d]));
+  return playlist.projectIds.map(id => map.get(id.toString())).filter(Boolean);
+}
+
+async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
   const [projects, owner, isSavedByMe] = await Promise.all([
     resolveProjects(playlist),
-    User.findById(playlist.owner).lean(),
+    User.findById(playlist.owner).lean<LeanUser>(),
     context.userId
       ? SavedPlaylist.exists({ userId: context.userId, playlistId: playlist._id })
       : Promise.resolve(false),
@@ -34,10 +51,10 @@ async function formatPlaylist(playlist: any, context: Context) {
     id: playlist._id.toString(),
     owner: owner
       ? {
-          id: (owner as any)._id.toString(),
-          accountName: (owner as any).accountName,
-          displayName: (owner as any).displayName ?? null,
-          avatarUrl: (owner as any).avatarUrl ?? null,
+          id: owner._id.toString(),
+          accountName: owner.accountName,
+          displayName: owner.displayName ?? null,
+          avatarUrl: owner.avatarUrl ?? null,
         }
       : null,
     name: playlist.name,
@@ -55,7 +72,7 @@ async function formatPlaylist(playlist: any, context: Context) {
   };
 }
 
-function validatePlaylistInput(input: any) {
+function validatePlaylistInput(input: PlaylistInput) {
   if (input.name !== undefined && input.name.trim().length === 0) throw new Error('validation_error');
   if (input.name !== undefined && input.name.length > 100) throw new Error('validation_error');
   if (input.description !== undefined && input.description !== null && input.description.length > 500) throw new Error('validation_error');
@@ -67,8 +84,8 @@ function validatePlaylistInput(input: any) {
 
 export const playlistResolvers = {
   Query: {
-    playlist: async (_root: any, { id }: { id: string }, context: Context) => {
-      const playlist = await Playlist.findById(id).lean();
+    playlist: async (_root: unknown, { id }: { id: string }, context: Context) => {
+      const playlist = await Playlist.findById(id).lean<LeanPlaylist>();
       if (!playlist) throw new Error('not_found');
       if (!playlist.isPublic && context.userId !== playlist.owner.toString()) {
         throw new Error('forbidden');
@@ -76,28 +93,28 @@ export const playlistResolvers = {
       return formatPlaylist(playlist, context);
     },
 
-    playlists: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
-      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
-      if (!user || (user as any).isDeleted || (user as any).ban?.active) return [];
-      const isOwner = context.userId && context.userId === (user as any)._id.toString();
-      const filter: any = { owner: (user as any)._id };
+    playlists: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
+      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<LeanUser>();
+      if (!user || user.isDeleted || user.ban?.active) return [];
+      const isOwner = context.userId && context.userId === user._id.toString();
+      const filter: { owner: mongoose.Types.ObjectId; isPublic?: boolean } = { owner: user._id };
       if (!isOwner) filter.isPublic = true;
-      const playlists = await Playlist.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+      const playlists = await Playlist.find(filter).sort({ createdAt: -1 }).limit(100).lean<LeanPlaylist[]>();
       return Promise.all(playlists.map(p => formatPlaylist(p, context)));
     },
 
-    savedPlaylists: async (_root: any, _args: any, context: Context) => {
+    savedPlaylists: async (_root: unknown, _args: Record<string, unknown>, context: Context) => {
       if (!context.userId) throw new Error('unauthorized');
       const saved = await SavedPlaylist.find({ userId: context.userId }).lean();
       if (!saved.length) return [];
       const playlistIds = saved.map(s => s.playlistId);
-      const playlists = await Playlist.find({ _id: { $in: playlistIds }, isPublic: true }).lean();
+      const playlists = await Playlist.find({ _id: { $in: playlistIds }, isPublic: true }).lean<LeanPlaylist[]>();
       return Promise.all(playlists.map(p => formatPlaylist(p, context)));
     },
   },
 
   Mutation: {
-    createPlaylist: async (_root: any, { input }: { input: any }, context: Context) => {
+    createPlaylist: async (_root: unknown, { input }: { input: PlaylistInput }, context: Context) => {
       if (!context.userId) throw new Error('unauthorized');
       validatePlaylistInput(input);
       if (input.projectIds?.length) {
@@ -119,40 +136,42 @@ export const playlistResolvers = {
         savedCount: 0,
       });
 
+      const playlistObj = playlist.toObject() as LeanPlaylist;
+
       if (playlist.isPublic) {
-        const creator = await User.findById(context.userId).select('accountName').lean() as any;
+        const creator = await User.findById(context.userId).select('accountName').lean<LeanUser>();
         if (creator) {
           writeActivity({
             actorId: context.userId,
             type: 'playlist_created',
-            projectId: (playlist as any)._id.toString(),
+            projectId: playlistObj._id.toString(),
             projectTitle: playlist.name,
-            coverImage: (playlist as any).coverImage ?? '',
-            targetPath: `/${creator.accountName}/lists/${(playlist as any)._id}`,
+            coverImage: playlistObj.coverImage ?? '',
+            targetPath: `/${creator.accountName}/lists/${playlistObj._id}`,
           }).catch(() => {});
         }
       }
 
-      return formatPlaylist(playlist.toObject(), context);
+      return formatPlaylist(playlistObj, context);
     },
 
-    updatePlaylist: async (_root: any, { id, input }: { id: string; input: any }, context: Context) => {
+    updatePlaylist: async (_root: unknown, { id, input }: { id: string; input: PlaylistInput }, context: Context) => {
       if (!context.userId) throw new Error('unauthorized');
       validatePlaylistInput(input);
       const playlist = await Playlist.findById(id);
       if (!playlist) throw new Error('not_found');
       if (playlist.owner.toString() !== context.userId) throw new Error('forbidden');
       if (input.name !== undefined) playlist.name = input.name;
-      if (input.description !== undefined) playlist.description = input.description;
+      if (input.description !== undefined) playlist.description = input.description ?? undefined;
       if (input.coverImage !== undefined) playlist.coverImage = input.coverImage;
       if (input.tags !== undefined) playlist.tags = input.tags;
       if (input.isPublic !== undefined) playlist.isPublic = input.isPublic;
-      if (input.sortMode !== undefined) playlist.sortMode = input.sortMode;
+      if (input.sortMode !== undefined) playlist.sortMode = input.sortMode as IPlaylist['sortMode'];
       await playlist.save();
-      return formatPlaylist(playlist.toObject(), context);
+      return formatPlaylist(playlist.toObject() as LeanPlaylist, context);
     },
 
-    deletePlaylist: async (_root: any, { id }: { id: string }, context: Context) => {
+    deletePlaylist: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('unauthorized');
       const playlist = await Playlist.findById(id);
       if (!playlist) throw new Error('not_found');
@@ -163,7 +182,7 @@ export const playlistResolvers = {
     },
 
     addProjectToPlaylist: async (
-      _root: any,
+      _root: unknown,
       { playlistId, projectId }: { playlistId: string; projectId: string },
       context: Context
     ) => {
@@ -171,19 +190,20 @@ export const playlistResolvers = {
       const playlist = await Playlist.findById(playlistId);
       if (!playlist) throw new Error('not_found');
       if (playlist.owner.toString() !== context.userId) throw new Error('forbidden');
-      const project = await Project.findById(projectId).lean();
-      if (!project || (project as any).userId.toString() !== context.userId) throw new Error('forbidden');
+      type LeanProject = IProject & { _id: mongoose.Types.ObjectId };
+      const project = await Project.findById(projectId).lean<LeanProject>();
+      if (!project || project.userId?.toString() !== context.userId) throw new Error('forbidden');
       const updated = await Playlist.findByIdAndUpdate(
         playlistId,
         { $addToSet: { projectIds: new mongoose.Types.ObjectId(projectId) } },
         { new: true }
-      ).lean();
+      ).lean<LeanPlaylist>();
       if (!updated) throw new Error('not_found');
       return formatPlaylist(updated, context);
     },
 
     removeProjectFromPlaylist: async (
-      _root: any,
+      _root: unknown,
       { playlistId, projectId }: { playlistId: string; projectId: string },
       context: Context
     ) => {
@@ -195,13 +215,13 @@ export const playlistResolvers = {
         playlistId,
         { $pull: { projectIds: new mongoose.Types.ObjectId(projectId) } },
         { new: true }
-      ).lean();
+      ).lean<LeanPlaylist>();
       if (!updated) throw new Error('not_found');
       return formatPlaylist(updated, context);
     },
 
     reorderPlaylist: async (
-      _root: any,
+      _root: unknown,
       { playlistId, projectIds }: { playlistId: string; projectIds: string[] },
       context: Context
     ) => {
@@ -218,12 +238,12 @@ export const playlistResolvers = {
       if (!setsMatch) throw new Error('bad_request');
       playlist.projectIds = projectIds.map(id => new mongoose.Types.ObjectId(id));
       await playlist.save();
-      return formatPlaylist(playlist.toObject(), context);
+      return formatPlaylist(playlist.toObject() as LeanPlaylist, context);
     },
 
-    savePlaylist: async (_root: any, { playlistId }: { playlistId: string }, context: Context) => {
+    savePlaylist: async (_root: unknown, { playlistId }: { playlistId: string }, context: Context) => {
       if (!context.userId) throw new Error('unauthorized');
-      const playlist = await Playlist.findById(playlistId).lean();
+      const playlist = await Playlist.findById(playlistId).lean<LeanPlaylist>();
       if (!playlist || !playlist.isPublic) throw new Error('not_found');
       try {
         await SavedPlaylist.create({
@@ -232,14 +252,14 @@ export const playlistResolvers = {
           savedAt: new Date(),
         });
         await Playlist.updateOne({ _id: playlistId }, { $inc: { savedCount: 1 } });
-      } catch (err: any) {
-        if (err.code !== 11000) throw err;
+      } catch (err: unknown) {
+        if ((err as { code?: number }).code !== 11000) throw err;
         // duplicate key = already saved, silent
       }
       return true;
     },
 
-    unsavePlaylist: async (_root: any, { playlistId }: { playlistId: string }, context: Context) => {
+    unsavePlaylist: async (_root: unknown, { playlistId }: { playlistId: string }, context: Context) => {
       if (!context.userId) throw new Error('unauthorized');
       const result = await SavedPlaylist.deleteOne({
         userId: new mongoose.Types.ObjectId(context.userId),

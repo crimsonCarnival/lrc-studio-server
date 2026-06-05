@@ -1,7 +1,31 @@
-import mongoose from 'mongoose';
+import mongoose, { type Document, type Model } from 'mongoose';
 import { nanoid } from 'nanoid';
 import { stripHtml } from '../../utils/sanitize.js';
-import { PRIMARY_GENRES } from '../../types/index.js';
+import { PRIMARY_GENRES, type ProjectMetadata, type ProjectState } from '../../types/index.js';
+
+export interface IProject extends Document {
+  projectId: string;
+  userId?: mongoose.Types.ObjectId | null;
+  title?: string;
+  uploadId?: mongoose.Types.ObjectId | null;
+  lyricsId?: mongoose.Types.ObjectId | null;
+  state?: ProjectState;
+  metadata?: ProjectMetadata;
+  coverImage?: string;
+  readOnly: boolean;
+  public: boolean;
+  forksEnabled: boolean;
+  trendingScore: number;
+  forkedFrom?: {
+    projectId?: string | null;
+    userId?: mongoose.Types.ObjectId | null;
+    accountName?: string | null;
+  };
+  forkCount: number;
+  starCount: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
 
 const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
 
@@ -109,6 +133,8 @@ projectSchema.index({ public: 1, createdAt: -1 });
 projectSchema.index({ public: 1, trendingScore: -1 });
 projectSchema.index({ forksEnabled: 1 });
 
+export interface IProjectModel extends Model<IProject & IProjectMethods> {}
+
 // Methods
 export interface IProjectMethods {
   isOwnedBy(userId: string | mongoose.Types.ObjectId): boolean;
@@ -128,4 +154,4 @@ projectSchema.methods.toPublic = function (this: mongoose.Document) {
   return obj;
 };
 
-export default mongoose.model('Project', projectSchema);
+export default mongoose.model<IProject & IProjectMethods, IProjectModel>('Project', projectSchema);

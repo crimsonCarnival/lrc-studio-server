@@ -69,8 +69,8 @@ export async function reactToProject(
   if (kept) {
     try {
       const [project, actor] = await Promise.all([
-        Project.findOne({ projectId }, 'userId title metadata').lean() as any,
-        User.findById(userId, 'accountName avatarUrl').lean() as any,
+        Project.findOne({ projectId }, 'userId title metadata').lean<{ userId: { toString(): string }; title?: string; metadata?: { songName?: string } }>(),
+        User.findById(userId, 'accountName avatarUrl').lean<{ accountName: string; avatarUrl?: string | null }>(),
       ]);
       if (project && actor) {
         await upsertReaction({

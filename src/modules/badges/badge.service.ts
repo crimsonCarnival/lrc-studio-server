@@ -1,9 +1,11 @@
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
+import type { IUser, IUserBadge } from '../../db/user.model.js';
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import BadgeDefinition from './badge-definition.model.js';
+import type { IBadgeDefinition } from './badge-definition.model.js';
 import Notification from '../notifications/notification.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 
@@ -78,42 +80,55 @@ const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
 
 // ─── Condition evaluation ─────────────────────────────────────────────────────
 
-export async function checkCondition(user: any, def: any): Promise<boolean> {
+// Minimal user fields needed by checkCondition (compatible with lean() results)
+type UserForCondition = {
+  _id: mongoose.Types.ObjectId;
+  createdAt?: Date;
+  minutesSynced?: number;
+  wordsSynced?: number;
+  karaokeLines?: number;
+  currentStreak?: number;
+  isVerified: boolean;
+  role: 'user' | 'admin';
+  social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number };
+};
+
+export async function checkCondition(user: UserForCondition, def: IBadgeDefinition): Promise<boolean> {
   switch (def.conditionType) {
     case 'registration_rank': {
       const rank = await User.countDocuments({ createdAt: { $lte: user.createdAt } });
-      return rank <= def.conditionValue;
+      return rank <= (def.conditionValue ?? 0);
     }
     case 'minutes_synced':
-      return (user.minutesSynced ?? 0) >= def.conditionValue;
+      return (user.minutesSynced ?? 0) >= (def.conditionValue ?? 0);
     case 'words_synced':
-      return (user.wordsSynced ?? 0) >= def.conditionValue;
+      return (user.wordsSynced ?? 0) >= (def.conditionValue ?? 0);
     case 'karaoke_lines':
-      return (user.karaokeLines ?? 0) >= def.conditionValue;
+      return (user.karaokeLines ?? 0) >= (def.conditionValue ?? 0);
     case 'project_count': {
       const n = await Project.countDocuments({ userId: user._id });
-      return n >= def.conditionValue;
+      return n >= (def.conditionValue ?? 0);
     }
     case 'public_project_count': {
       const n = await Project.countDocuments({ userId: user._id, public: true });
-      return n >= def.conditionValue;
+      return n >= (def.conditionValue ?? 0);
     }
     case 'stars_received':
-      return (user.social?.totalStarsReceived ?? 0) >= def.conditionValue;
+      return (user.social?.totalStarsReceived ?? 0) >= (def.conditionValue ?? 0);
     case 'forks_received':
-      return (user.social?.totalForksReceived ?? 0) >= def.conditionValue;
+      return (user.social?.totalForksReceived ?? 0) >= (def.conditionValue ?? 0);
     case 'follower_count':
-      return (user.social?.followerCount ?? 0) >= def.conditionValue;
+      return (user.social?.followerCount ?? 0) >= (def.conditionValue ?? 0);
     case 'upload_count': {
       const n = await Upload.countDocuments({ userId: user._id });
-      return n >= def.conditionValue;
+      return n >= (def.conditionValue ?? 0);
     }
     case 'account_age_days': {
-      const days = (Date.now() - new Date(user.createdAt).getTime()) / 86400000;
-      return days >= def.conditionValue;
+      const days = (Date.now() - new Date(user.createdAt!).getTime()) / 86400000;
+      return days >= (def.conditionValue ?? 0);
     }
     case 'streak_days':
-      return (user.currentStreak ?? 0) >= def.conditionValue;
+      return (user.currentStreak ?? 0) >= (def.conditionValue ?? 0);
     case 'is_verified':
       return user.isVerified === true;
     case 'role_admin':
@@ -165,20 +180,20 @@ export async function triggerBadgeCheck(userId: string, event: BadgeEvent): Prom
   if (relevantConditions.length === 0) return [];
 
   const [user, defs] = await Promise.all([
-    User.findById(userId).lean(),
-    BadgeDefinition.find({ autoGrant: true, conditionType: { $in: relevantConditions } }).lean(),
+    User.findById(userId).lean<IUser>(),
+    BadgeDefinition.find({ autoGrant: true, conditionType: { $in: relevantConditions } }).lean<IBadgeDefinition[]>(),
   ]);
   if (!user) return [];
 
-  const existingIds = new Set<string>(((user as any).badges ?? []).map((b: any) => b.id));
+  const existingIds = new Set<string>((user.badges ?? []).map((b: IUserBadge) => b.id));
   const granted: string[] = [];
 
   for (const def of defs) {
-    if (existingIds.has((def as any).id)) continue;
-    const qualifies = await checkCondition(user, def);
+    if (existingIds.has(def.id)) continue;
+    const qualifies = await checkCondition(user as unknown as UserForCondition, def);
     if (qualifies) {
-      const ok = await grantBadge(userId, (def as any).id, 'system');
-      if (ok) granted.push((def as any).id);
+      const ok = await grantBadge(userId, def.id, 'system');
+      if (ok) granted.push(def.id);
     }
   }
 
@@ -191,31 +206,31 @@ export async function retroactiveGrant(
   badgeId: string,
   limit = 10000
 ): Promise<{ granted: number; scanned: number; error?: string }> {
-  const def = await BadgeDefinition.findOne({ id: badgeId }).lean();
+  const def = await BadgeDefinition.findOne({ id: badgeId }).lean<IBadgeDefinition>();
   if (!def) return { granted: 0, scanned: 0, error: 'Badge not found' };
-  if ((def as any).conditionType === 'manual') return { granted: 0, scanned: 0, error: 'Manual badges cannot be retroactively granted' };
+  if (def.conditionType === 'manual') return { granted: 0, scanned: 0, error: 'Manual badges cannot be retroactively granted' };
 
   // For registration_rank, use an optimized O(n) approach
-  if ((def as any).conditionType === 'registration_rank') {
-    return retroactiveRegistrationRank(badgeId, (def as any).conditionValue, limit);
+  if (def.conditionType === 'registration_rank') {
+    return retroactiveRegistrationRank(badgeId, def.conditionValue ?? 0, limit);
   }
 
   const users = await User.find({ isDeleted: { $ne: true } })
     .select('_id badges minutesSynced wordsSynced karaokeLines currentStreak isVerified role createdAt social')
     .limit(limit)
-    .lean();
+    .lean<IUser[]>();
 
   let granted = 0;
   for (const user of users) {
-    if (((user as any).badges ?? []).some((b: any) => b.id === badgeId)) continue;
-    const qualifies = await checkCondition(user, def);
+    if ((user.badges ?? []).some((b: IUserBadge) => b.id === badgeId)) continue;
+    const qualifies = await checkCondition(user as unknown as UserForCondition, def);
     if (qualifies) {
       await User.updateOne(
         { _id: user._id, 'badges.id': { $ne: badgeId } },
         { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy: 'system' } } }
       );
-      notifyBadgeAwarded((user._id as any).toString(), badgeId).catch(() => {});
-      recomputeXP((user._id as any).toString()).catch(() => {});
+      notifyBadgeAwarded(user._id.toString(), badgeId).catch(() => {});
+      recomputeXP(user._id.toString()).catch(() => {});
       granted++;
     }
   }
@@ -233,23 +248,23 @@ async function retroactiveRegistrationRank(
     .sort({ createdAt: 1 })
     .skip(rankLimit - 1)
     .select('createdAt')
-    .lean();
+    .lean<IUser>();
 
-  const cutoff = cutoffUser ? (cutoffUser as any).createdAt : new Date();
+  const cutoff = cutoffUser ? cutoffUser.createdAt : new Date();
 
   const qualifying = await User.find({
     createdAt: { $lte: cutoff },
     'badges.id': { $ne: badgeId },
     isDeleted: { $ne: true },
-  }).select('_id').limit(userLimit).lean();
+  }).select('_id').limit(userLimit).lean<IUser[]>();
 
   for (const u of qualifying) {
     await User.updateOne(
       { _id: u._id, 'badges.id': { $ne: badgeId } },
       { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy: 'system' } } }
     );
-    notifyBadgeAwarded((u._id as any).toString(), badgeId).catch(() => {});
-    recomputeXP((u._id as any).toString()).catch(() => {});
+    notifyBadgeAwarded(u._id.toString(), badgeId).catch(() => {});
+    recomputeXP(u._id.toString()).catch(() => {});
   }
 
   return { granted: qualifying.length, scanned: qualifying.length };
@@ -262,8 +277,8 @@ export async function recomputeSyncStats(userId: string): Promise<{
   wordsSynced: number;
   karaokeLines: number;
 }> {
-  const userProjects = await Project.find({ userId }).select('projectId').lean();
-  const projectIds = userProjects.map((p: any) => p.projectId);
+  const userProjects = await Project.find({ userId }).select('projectId').lean<{ projectId: string }[]>();
+  const projectIds: string[] = userProjects.map((p) => p.projectId);
 
   if (projectIds.length === 0) {
     await User.updateOne({ _id: userId }, { minutesSynced: 0, wordsSynced: 0, karaokeLines: 0 });
@@ -331,20 +346,22 @@ export async function recomputeSyncStats(userId: string): Promise<{
 
 // ─── Streak management ────────────────────────────────────────────────────────
 
+type LeanUserStreak = Pick<IUser, 'currentStreak' | 'longestStreak' | 'lastActiveDate'>;
+
 export async function updateStreak(userId: string): Promise<number> {
-  const user = await User.findById(userId).select('currentStreak longestStreak lastActiveDate').lean();
+  const user = await User.findById(userId).select('currentStreak longestStreak lastActiveDate').lean<LeanUserStreak>();
   if (!user) return 0;
 
   const todayStr = new Date().toISOString().slice(0, 10); // "2026-06-02"
-  const lastDate = (user as any).lastActiveDate
-    ? new Date((user as any).lastActiveDate).toISOString().slice(0, 10)
+  const lastDate = user.lastActiveDate
+    ? new Date(user.lastActiveDate).toISOString().slice(0, 10)
     : null;
 
-  if (lastDate === todayStr) return (user as any).currentStreak ?? 1;
+  if (lastDate === todayStr) return user.currentStreak ?? 1;
 
   const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const current = lastDate === yesterdayStr ? ((user as any).currentStreak ?? 0) + 1 : 1;
-  const longest = Math.max(current, (user as any).longestStreak ?? 0);
+  const current = lastDate === yesterdayStr ? (user.currentStreak ?? 0) + 1 : 1;
+  const longest = Math.max(current, user.longestStreak ?? 0);
 
   await User.updateOne({ _id: userId }, {
     currentStreak: current,
@@ -374,20 +391,22 @@ const BUILTIN_XP: Map<string, number> = new Map(
   BUILTIN_BADGES.map((b) => [b.id, b.xpReward])
 );
 
+type LeanUserXP = Pick<IUser, 'badges' | 'minutesSynced' | 'wordsSynced' | 'social' | 'xpBonus'>;
+
 export async function recomputeXP(userId: string): Promise<number> {
   const user = await User.findById(userId)
     .select('badges minutesSynced wordsSynced social xpBonus')
-    .lean();
+    .lean<LeanUserXP>();
   if (!user) return 0;
 
-  const earnedBadgeIds: string[] = ((user as any).badges ?? []).map((b: any) => b.id);
+  const earnedBadgeIds: string[] = (user.badges ?? []).map((b: IUserBadge) => b.id);
 
   // Resolve xpReward per badge: builtins from lookup, custom badges from DB
   let badgeXp = 0;
   const customIds = earnedBadgeIds.filter((id) => !BUILTIN_XP.has(id));
   if (customIds.length > 0) {
-    const customDefs = await BadgeDefinition.find({ id: { $in: customIds } }).select('id xpReward').lean();
-    const customMap = new Map(customDefs.map((d: any) => [d.id, d.xpReward ?? 50]));
+    const customDefs = await BadgeDefinition.find({ id: { $in: customIds } }).select('id xpReward').lean<Pick<IBadgeDefinition, 'id' | 'xpReward'>[]>();
+    const customMap = new Map<string, number>(customDefs.map((d) => [d.id, d.xpReward ?? 50]));
     for (const id of earnedBadgeIds) {
       badgeXp += BUILTIN_XP.get(id) ?? customMap.get(id) ?? 50;
     }
@@ -397,12 +416,12 @@ export async function recomputeXP(userId: string): Promise<number> {
     }
   }
 
-  const mins      = (user as any).minutesSynced ?? 0;
-  const words     = (user as any).wordsSynced ?? 0;
-  const stars     = (user as any).social?.totalStarsReceived ?? 0;
-  const forks     = (user as any).social?.totalForksReceived ?? 0;
-  const followers = (user as any).social?.followerCount ?? 0;
-  const bonus     = (user as any).xpBonus ?? 0;
+  const mins      = user.minutesSynced ?? 0;
+  const words     = user.wordsSynced ?? 0;
+  const stars     = user.social?.totalStarsReceived ?? 0;
+  const forks     = user.social?.totalForksReceived ?? 0;
+  const followers = user.social?.followerCount ?? 0;
+  const bonus     = user.xpBonus ?? 0;
 
   const xp = Math.max(0, Math.floor(
     badgeXp + mins * 2 + words * 0.1 + stars * 5 + forks * 10 + followers * 3 + bonus
@@ -439,22 +458,24 @@ export async function getBadgeRarity(badgeId: string): Promise<{
 
 // ─── Showcase management ──────────────────────────────────────────────────────
 
+type LeanUserShowcase = Pick<IUser, 'badges' | 'level' | 'showcasedBadges'>;
+
 export async function updateShowcase(
   userId: string,
   badgeIds: string[],
   showcasePublic?: boolean
 ): Promise<{ success: boolean; error?: string }> {
-  const user = await User.findById(userId).select('badges level showcasedBadges').lean();
+  const user = await User.findById(userId).select('badges level showcasedBadges').lean<LeanUserShowcase>();
   if (!user) return { success: false, error: 'User not found' };
 
-  const level = (user as any).level ?? 0;
+  const level = user.level ?? 0;
   const maxSlots = getShowcaseSlots(level);
 
   if (badgeIds.length > maxSlots) {
     return { success: false, error: `Max ${maxSlots} showcase slots at level ${level}` };
   }
 
-  const ownedIds = new Set<string>(((user as any).badges ?? []).map((b: any) => b.id));
+  const ownedIds = new Set<string>((user.badges ?? []).map((b: IUserBadge) => b.id));
   const invalid = badgeIds.filter(id => !ownedIds.has(id));
   if (invalid.length > 0) {
     return { success: false, error: `Badges not owned: ${invalid.join(', ')}` };

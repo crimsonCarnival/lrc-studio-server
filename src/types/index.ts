@@ -152,11 +152,13 @@ export interface ProjectListItem {
   updatedAt?: Date;
 }
 
+// T documents the expected success payload shape for callers.
+// Index signature uses unknown so named properties satisfy the constraint.
 export interface ServiceResult<T = unknown> {
   error?: string;
   code?: string;
   status?: number;
-  [key: string]: T | undefined | string | number;
+  [key: string]: unknown;
 }
 
 // ─── Mark / Editor action types ──────────────────────────────────────

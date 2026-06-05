@@ -4,13 +4,29 @@ import { fetchYouTubeTitle } from '../../utils/youtube.js';
 import { Context } from './context.js';
 import { triggerBadgeCheck } from '../../modules/badges/badge.service.js';
 
+export interface SaveMediaInput {
+  source: string;
+  youtubeUrl?: string;
+  cloudinaryUrl?: string;
+  spotifyTrackId?: string;
+  title?: string;
+  [key: string]: unknown;
+}
+
+export interface UploadDoc {
+  _id?: { toString(): string };
+  id?: string;
+  createdAt?: Date | string;
+  updatedAt?: Date | string;
+}
+
 export const uploadResolvers = {
   Query: {
-    upload: async (_root: any, { id }: { id: string }) => {
+    upload: async (_root: unknown, { id }: { id: string }) => {
       return Upload.findById(id);
     },
 
-    uploads: async (_root: any, { limit = 50, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
+    uploads: async (_root: unknown, { limit = 50, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
       if (!context.userId) return [];
       return Upload.find({ userId: context.userId })
         .sort({ updatedAt: -1 })
@@ -21,7 +37,7 @@ export const uploadResolvers = {
 
   Mutation: {
     // Uses upsert to deduplicate by source+URL, matching the REST service behavior
-    saveMedia: async (_root: any, { input }: { input: any }, context: Context) => {
+    saveMedia: async (_root: unknown, { input }: { input: SaveMediaInput }, context: Context) => {
       // Spotify always requires auth. Cloudinary and YouTube are open to guests.
       if (!context.userId && input.source === 'spotify') throw new Error('Unauthorized');
       const { source, youtubeUrl, cloudinaryUrl, spotifyTrackId } = input;
@@ -35,7 +51,7 @@ export const uploadResolvers = {
         if (fetched) resolvedTitle = fetched;
       }
 
-      const query: Record<string, any> = { userId: context.userId || null, source };
+      const query: Record<string, unknown> = { userId: context.userId || null, source };
       if (source === 'youtube' && youtubeUrl) query.youtubeUrl = youtubeUrl;
       else if (source === 'cloudinary' && cloudinaryUrl) query.cloudinaryUrl = cloudinaryUrl;
       else if (source === 'spotify' && spotifyTrackId) query.spotifyTrackId = spotifyTrackId;
@@ -49,7 +65,7 @@ export const uploadResolvers = {
       return upload;
     },
 
-    deleteMedia: async (_root: any, { id }: { id: string }, context: Context) => {
+    deleteMedia: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await Upload.deleteOne({ _id: id, userId: context.userId });
       return result.deletedCount === 1;
@@ -57,10 +73,10 @@ export const uploadResolvers = {
   },
 
   Upload: {
-    id: (upload: any) => upload._id?.toString() || upload.id || null,
-    createdAt: (upload: any) => upload.createdAt ? new Date(upload.createdAt).toISOString() : null,
-    updatedAt: (upload: any) => upload.updatedAt ? new Date(upload.updatedAt).toISOString() : null,
-    projects: async (upload: any) => {
+    id: (upload: UploadDoc) => upload._id?.toString() || upload.id || null,
+    createdAt: (upload: UploadDoc) => upload.createdAt ? new Date(upload.createdAt).toISOString() : null,
+    updatedAt: (upload: UploadDoc) => upload.updatedAt ? new Date(upload.updatedAt).toISOString() : null,
+    projects: async (upload: UploadDoc) => {
       const uploadId = upload._id ?? upload.id;
       if (!uploadId) return [];
       return Project.find({ uploadId }).sort({ updatedAt: -1 });

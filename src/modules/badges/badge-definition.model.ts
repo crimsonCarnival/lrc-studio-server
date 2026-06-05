@@ -3,7 +3,16 @@ import mongoose from 'mongoose';
 export type ConditionType =
   | 'registration_rank'
   | 'minutes_synced'
+  | 'words_synced'
+  | 'karaoke_lines'
   | 'project_count'
+  | 'public_project_count'
+  | 'stars_received'
+  | 'forks_received'
+  | 'follower_count'
+  | 'upload_count'
+  | 'account_age_days'
+  | 'streak_days'
   | 'is_verified'
   | 'role_admin'
   | 'manual';
@@ -47,7 +56,7 @@ const badgeDefSchema = new mongoose.Schema<IBadgeDefinition>(
     },
     conditionType: {
       type: String,
-      enum: ['registration_rank', 'minutes_synced', 'project_count', 'is_verified', 'role_admin', 'manual'],
+      enum: ['registration_rank', 'minutes_synced', 'words_synced', 'karaoke_lines', 'project_count', 'public_project_count', 'stars_received', 'forks_received', 'follower_count', 'upload_count', 'account_age_days', 'streak_days', 'is_verified', 'role_admin', 'manual'],
       default: 'manual',
     },
     conditionValue: { type: Number, default: null },

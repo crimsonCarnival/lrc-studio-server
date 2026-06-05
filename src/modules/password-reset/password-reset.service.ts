@@ -7,6 +7,16 @@ import { resolveSticky, createOnce } from '../notifications/notifications.servic
 import { resetPasswordAtomically, changePasswordAtomically } from '../auth/auth.tx.service.js';
 import { getEnv } from '../../config/env.js';
 
+interface SettingsLean {
+  interface?: { defaultLanguage?: string; theme?: string };
+}
+
+interface UserEmailLean {
+  _id: unknown;
+  displayName?: string | null;
+  accountName?: string;
+}
+
 export class PasswordResetError extends Error {
   constructor(public code: string, public status: number, message: string) {
     super(message);
@@ -46,8 +56,8 @@ export async function requestPasswordReset(email: string): Promise<void> {
     const settings = emailUser
       ? await Settings.findOne({ userId: emailUser._id }).select('interface').lean()
       : null;
-    const prefs = { lang: (settings as any)?.interface?.defaultLanguage, theme: (settings as any)?.interface?.theme };
-    await sendPasswordResetEmail(normalizedEmail, resetLink, (emailUser as any)?.displayName || (emailUser as any)?.accountName, prefs);
+    const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
+    await sendPasswordResetEmail(normalizedEmail, resetLink, emailUser?.displayName || emailUser?.accountName, prefs);
   } catch (err) {
     console.error('Failed to send password reset email:', err);
   }
@@ -137,9 +147,9 @@ export async function changePassword(userId: string, currentPassword: string | n
   }
   const userEmail = user.email;
   if (userEmail) {
-    Settings.findOne({ userId }).select('interface').lean().then((settings: any) => {
+    Settings.findOne({ userId }).select('interface').lean().then((settings: { interface?: { defaultLanguage?: string; theme?: string } } | null) => {
       const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
-      return sendPasswordChangedEmail(userEmail, (user as any).displayName || user.accountName, prefs);
+      return sendPasswordChangedEmail(userEmail, user.displayName || user.accountName, prefs);
     }).catch(() => {});
   }
 }

@@ -17,12 +17,11 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
 
   const lyrics = await Lyrics.findOne({ projectId });
 
-  const pub: any = (project as any).toPublic();
-  const rawUpload = pub.uploadId;
+  const pub = (project as unknown as { toPublic(): Record<string, unknown> }).toPublic();
 
   // Use model toPublic for consistency and mandatory fields
   if (project.uploadId && typeof project.uploadId === 'object') {
-    const uploadDoc = project.uploadId as any;
+    const uploadDoc = project.uploadId as unknown as { _id?: { toString(): string }; id?: string; toPublic?: () => unknown; source?: string; fileName?: string; title?: string; youtubeUrl?: string; cloudinaryUrl?: string; spotifyTrackId?: string; artist?: string; duration?: number };
     pub.upload = typeof uploadDoc.toPublic === 'function' ? uploadDoc.toPublic() : {
       id: uploadDoc._id?.toString() || uploadDoc.id,
       source: uploadDoc.source,
@@ -39,17 +38,19 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
   }
 
   pub.lyrics = lyrics
-    ? (lyrics as any).toPublic()
+    ? (lyrics as unknown as { toPublic(): unknown }).toPublic()
     : { id: null, projectId, editorMode: 'lrc', language: null, lines: [] };
 
   // Ensure lyrics has id and projectId (mandatory in GraphQL schema)
   if (pub.lyrics && lyrics) {
-    pub.lyrics.id = lyrics._id?.toString() || pub.lyrics.id;
-    pub.lyrics.projectId = projectId;
+    const lyricsObj = pub.lyrics as Record<string, unknown>;
+    lyricsObj.id = lyrics._id?.toString() || lyricsObj.id;
+    lyricsObj.projectId = projectId;
+    pub.lyrics = lyricsObj;
   }
 
   if (project.userId && typeof project.userId === 'object') {
-    const userDoc = project.userId as any;
+    const userDoc = project.userId as unknown as { _id?: { toString(): string }; id?: string; toPublic?: () => unknown; accountName?: string; displayName?: string | null; avatarUrl?: string; role?: string; isVerified?: boolean; ban?: { active?: boolean } };
     pub.user = typeof userDoc.toPublic === 'function' ? userDoc.toPublic() : {
       id: userDoc._id?.toString() || userDoc.id,
       accountName: userDoc.accountName,
@@ -67,15 +68,17 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
   }
 
   // Keep IDs for GraphQL loaders
+  const uploadObj = project.uploadId as unknown as { _id?: { toString(): string }; id?: string; toString(): string } | undefined;
   pub.uploadId = project.uploadId && typeof project.uploadId === 'object'
-    ? (project.uploadId as any)._id?.toString() || (project.uploadId as any).id
-    : (project.uploadId as any)?.toString();
+    ? uploadObj?._id?.toString() || uploadObj?.id
+    : uploadObj?.toString();
 
-  pub.lyricsId = (lyrics as any)?._id?.toString() || (project as any).lyricsId?.toString();
+  pub.lyricsId = (lyrics as unknown as { _id?: { toString(): string } } | null)?._id?.toString()
+    || (project as unknown as { lyricsId?: { toString(): string } }).lyricsId?.toString();
 
   delete pub.deletedAt;
 
-  return pub as ProjectPublic;
+  return pub as unknown as ProjectPublic;
 }
 
 export async function cloneProject(
@@ -83,8 +86,8 @@ export async function cloneProject(
   newUserId: string
 ): Promise<ServiceResult<{ projectId: string; url: string }>> {
   const sourceProject = await Project.findOne({ projectId: sourceProjectId }).populate('userId', 'accountName');
-  if (!sourceProject) return { error: 'Source project not found', status: 404 } as any;
-  if (!sourceProject.public && !(sourceProject as any).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404 } as any;
+  if (!sourceProject) return { error: 'Source project not found', status: 404 };
+  if (!sourceProject.public && !(sourceProject as unknown as { isOwnedBy(id: string): boolean }).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404 };
   if (sourceProject.forksEnabled === false) throw new Error('Forking is disabled for this project');
 
   const MAX_PROJECTS_PER_USER = 200;
@@ -141,8 +144,8 @@ export async function cloneProject(
       readOnly: false,
       forkedFrom: {
         projectId: sourceProjectId,
-        userId: (sourceProject.userId as any)?._id || sourceProject.userId || null,
-        accountName: (sourceProject.userId as any)?.accountName || null,
+        userId: (sourceProject.userId as unknown as { _id?: unknown })?._id || sourceProject.userId || null,
+        accountName: (sourceProject.userId as unknown as { accountName?: string })?.accountName || null,
       },
     }], { session });
 
@@ -165,9 +168,11 @@ export async function cloneProject(
       }], { session }),
     ]);
 
-    const ownerId = (sourceProject.userId as any)?._id?.toString() || (sourceProject as any).userId?.toString();
+    const ownerIdField = sourceProject.userId as unknown as { _id?: { toString(): string } } | { toString(): string } | null;
+    const ownerId = (ownerIdField as { _id?: { toString(): string } })?._id?.toString()
+      || (ownerIdField as { toString(): string } | null)?.toString();
     if (ownerId) {
-      User.findById(newUserId).select('accountName avatarUrl').lean().then(actor => {
+      User.findById(newUserId).select('accountName avatarUrl').lean<{ accountName?: string; avatarUrl?: string | null }>().then(actor => {
         if (actor) {
           upsertSocial({
             ownerId,
@@ -175,8 +180,8 @@ export async function cloneProject(
             projectId: sourceProjectId,
             projectTitle: sourceProject.title || '',
             actorId: newUserId,
-            actorAccountName: (actor as any).accountName,
-            actorAvatarUrl: (actor as any).avatarUrl || null,
+            actorAccountName: actor.accountName ?? '',
+            actorAvatarUrl: actor.avatarUrl || null,
           }).catch(() => {});
         }
       }).catch(() => {});
@@ -192,6 +197,6 @@ export async function cloneProject(
     return {
       projectId: newProject.projectId,
       url: `/s/${newProject.projectId}`,
-    } as any;
+    };
   }, { operation: 'cloneProject', sourceProjectId, userId: newUserId });
 }

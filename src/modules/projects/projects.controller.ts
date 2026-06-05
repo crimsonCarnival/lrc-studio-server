@@ -17,7 +17,7 @@ export function emitProjectUpdated(projectId: string, patch: Record<string, unkn
 export async function create(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await projectService.createProject(req.body, req.userId, req.ip);
   if ('error' in result) {
-    return reply.code((result as any).status || 500).send(result);
+    return reply.code((result as { status?: number }).status || 500).send(result);
   }
   return reply.code(201).send(result);
 }
@@ -34,7 +34,7 @@ export async function list(req: FastifyRequest, reply: FastifyReply): Promise<vo
  * GET /projects/:id — get a single project.
  */
 export async function get(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const project = await projectService.getProject((req.params as Record<string, string>).id, (req as any).userId ?? null);
+  const project = await projectService.getProject((req.params as Record<string, string>).id, req.userId ?? null);
   if (!project) {
     return reply.code(404).send({ error: 'Project not found' });
   }
@@ -116,7 +116,7 @@ export async function getShare(req: FastifyRequest, reply: FastifyReply): Promis
     entityId: projectId,
     ip: req.ip,
     deviceId: req.headers['x-device-id'] as string || 'unknown',
-    metadata: { ownerId: (project as any).userId },
+    metadata: { ownerId: (project as unknown as Record<string, unknown>).userId },
   });
 
   return reply.send({ project });
@@ -139,7 +139,7 @@ export async function clone(req: FastifyRequest, reply: FastifyReply): Promise<v
     entityId: sourceProjectId,
     ip: req.ip,
     deviceId: req.headers['x-device-id'] as string || 'unknown',
-    metadata: { newProjectId: (result as any).projectId },
+    metadata: { newProjectId: (result as Record<string, unknown>).projectId },
   });
 
   return reply.code(201).send(result);

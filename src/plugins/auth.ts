@@ -4,10 +4,18 @@ import jwt from 'jsonwebtoken';
 import type { JwtPayload, SignOptions } from 'jsonwebtoken';
 import { getEnv } from '../config/env.js';
 
+interface CachedAuthUser {
+  deletedAt?: Date | null;
+  ban?: { active?: boolean };
+  checkBanStatus(): Promise<void>;
+  role?: string;
+  lastIp?: string;
+  accountName?: string;
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
-    userId?: string;
-    _cachedAuthUser?: any; // cached to avoid duplicate DB lookups within one request
+    _cachedAuthUser?: CachedAuthUser | null; // cached to avoid duplicate DB lookups within one request
   }
 }
 
@@ -55,22 +63,22 @@ function verifyToken(token: string): JwtPayload {
 // Only the fields needed for auth checks — avoids loading passwordHash, spotify tokens, etc.
 const AUTH_USER_SELECT = 'ban appeal showUnbanMessage isDeleted deletedAt role accountName lastIp';
 
-async function lookupUser(userId: string | undefined): Promise<any> {
+async function lookupUser(userId: string | undefined): Promise<CachedAuthUser | null> {
   if (!userId) return null;
   const User = (await import('../db/user.model.js')).default;
-  return User.findById(userId).select(AUTH_USER_SELECT);
+  return User.findById(userId).select(AUTH_USER_SELECT) as unknown as CachedAuthUser | null;
 }
 
-async function checkDeviceBan(deviceId: string): Promise<any> {
+async function checkDeviceBan(deviceId: string): Promise<{ deviceId: string } | null> {
   if (!deviceId) return null;
   const BannedDevice = (await import('../modules/admin/bannedDevice.model.js')).default;
-  return BannedDevice.findOne({ deviceId });
+  return BannedDevice.findOne({ deviceId }) as unknown as Promise<{ deviceId: string } | null>;
 }
 
-async function checkIpBan(ip: string): Promise<any> {
+async function checkIpBan(ip: string): Promise<{ ip: string } | null> {
   if (!ip) return null;
   const BannedIp = (await import('../modules/admin/bannedIp.model.js')).default;
-  return BannedIp.findOne({ ip });
+  return BannedIp.findOne({ ip }) as unknown as Promise<{ ip: string } | null>;
 }
 
 async function getOrFetchUser(request: FastifyRequest, userId: string | undefined) {
@@ -83,7 +91,8 @@ async function getOrFetchUser(request: FastifyRequest, userId: string | undefine
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.decorate('jwt', { signAccess, signRefresh, verifyToken });
 
-  fastify.decorateRequest('userId', undefined as any);
+  // The Fastify decorator initialiser; userId starts as undefined and is set during auth
+  fastify.decorateRequest('userId', undefined);
 
   fastify.decorate('optionalAuth', async function (request: FastifyRequest) {
     const token = request.cookies.accessToken;
@@ -95,17 +104,17 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
       await user.checkBanStatus();
       if (user.ban?.active) return;
       request.userId = decoded.sub;
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Expired token: treat as anonymous but flag it so resolvers can surface
       // a 401 instead of silently failing ownership checks (which produce a 403).
-      if (err?.name === 'TokenExpiredError') {
-        (request as any).tokenExpired = true;
+      if (err instanceof Error && err.name === 'TokenExpiredError') {
+        (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired = true;
       }
       // Any other error (malformed token etc.) — silently treat as anonymous
     }
   });
 
-  async function resolveAndCheckBan(request: FastifyRequest, reply: FastifyReply): Promise<any> {
+  async function resolveAndCheckBan(request: FastifyRequest, reply: FastifyReply): Promise<CachedAuthUser | null> {
     const token = request.cookies.accessToken;
     if (!token) {
       reply.code(401).send({ error: 'Authentication required' });

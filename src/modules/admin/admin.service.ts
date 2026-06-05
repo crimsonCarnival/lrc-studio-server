@@ -165,9 +165,9 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     createOnce({ userId, type: 'ban', sticky: false, body: reason || null }).catch(() => {});
     const userEmail = user.email;
     if (userEmail) {
-      Settings.findOne({ userId }).select('interface').lean().then((settings: any) => {
+      Settings.findOne({ userId }).select('interface').lean().then((settings: { interface?: { defaultLanguage?: string; theme?: string } } | null) => {
         const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
-        return sendBanEmail(userEmail, reason || null, (user as any).displayName || user.accountName, prefs);
+        return sendBanEmail(userEmail, reason || null, user.displayName || user.accountName, prefs);
       }).catch(() => {});
     }
     try { getIO().to(`user:${userId}`).emit('user:banned', { reason }); } catch { /* socket not ready */ }
@@ -378,7 +378,7 @@ export async function adjustXP(
     const users = await User.find({ isDeleted: { $ne: true } }).select('_id').lean();
     const BATCH = 100;
     for (let i = 0; i < users.length; i += BATCH) {
-      await Promise.all(users.slice(i, i + BATCH).map((u) => recomputeXP((u._id as any).toString())));
+      await Promise.all(users.slice(i, i + BATCH).map((u) => recomputeXP((u._id as { toString(): string }).toString())));
     }
   } else if (target === 'user' && userId) {
     await User.updateOne({ _id: userId }, { $inc: { xpBonus: delta } });
@@ -390,10 +390,10 @@ export async function adjustXP(
     affected = userIds.length;
   }
 
-  const admin = await User.findById(adminId).select('accountName').lean();
+  const admin = await User.findById(adminId).select('accountName').lean<{ accountName?: string }>();
   await logAdminAction({
     adminId,
-    adminName: (admin as any)?.accountName || 'System',
+    adminName: admin?.accountName || 'System',
     action: `xp_${action}`,
     details: `${action === 'grant' ? '+' : '-'}${amount} XP → ${target === 'all' ? 'all users' : target === 'user' ? `user ${userId}` : `${userIds?.length} users`}`,
   });

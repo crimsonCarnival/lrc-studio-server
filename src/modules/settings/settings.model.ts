@@ -106,7 +106,7 @@ const interfaceSchema = sub({
   toastPosition: { type: String, enum: ['bottom-right', 'bottom-center', 'bottom-left'], default: 'bottom-right' },
 });
 
-const shortcutString = { type: String, maxlength: 50, match: /^[a-zA-Z0-9+\-_.?!@#$%^&*()=\[\]{}|;:',<>/~`]+$/ };
+const shortcutString = { type: String, maxlength: 50, match: /^[a-zA-Z0-9+\-_.?!@#$%^&*()=[\]{}|;:',<>/~`]+$/ };
 
 const shortcutsSchema = sub({
   mark: { type: [shortcutString] },
@@ -148,7 +148,7 @@ const autoSaveSchema = sub({
 const advancedSchema = sub({
   autoSave: { type: autoSaveSchema },
   confirmDestructive: Boolean,
-  timezone: { type: String, maxlength: 50, match: /^(auto|[A-Za-z_]+\/[A-Za-z_\/]+)$/ },
+  timezone: { type: String, maxlength: 50, match: /^(auto|[A-Za-z_]+\/[A-Za-z_/]+)$/ },
 });
 
 const settingsSchema = new Schema(
@@ -185,4 +185,5 @@ settingsSchema.methods.toPublic = function (this: mongoose.Document) {
   return obj;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default mongoose.model<mongoose.Document, mongoose.Model<mongoose.Document, any, ISettingsMethods>>('Settings', settingsSchema);

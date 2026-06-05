@@ -1,19 +1,25 @@
 import { MercuriusLoaders } from 'mercurius';
+import type { MercuriusContext } from 'mercurius';
 import User from '../db/user.model.js';
 import Upload from '../modules/uploads/upload.model.js';
 import Lyrics from '../modules/lyrics/lyrics.model.js';
 import ProjectStar from '../modules/projects/projectStar.model.js';
+import type { LineEntry } from '../types/index.js';
+
+/** Shape of a GraphQL parent object as passed by Mercurius loaders */
+type LoaderObj = Record<string, unknown>;
 
 export const loaders: MercuriusLoaders = {
   Project: {
     user: {
-      loader: async (queries: Array<{ obj: any }>, _context) => {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const results = new Array(queries.length);
-        const toFetch: Array<{ id: any; index: number }> = [];
+        const toFetch: Array<{ id: unknown; index: number }> = [];
 
         queries.forEach(({ obj }, i) => {
-          if (obj.user && (obj.user.id || obj.user._id)) {
-            results[i] = obj.user;
+          const user = obj.user as LoaderObj | undefined;
+          if (user && (user.id || user._id)) {
+            results[i] = user;
           } else {
             const id = obj.userId || obj.user; // fallback to obj.user if it's just an ID
             if (id) toFetch.push({ id, index: i });
@@ -27,20 +33,21 @@ export const loaders: MercuriusLoaders = {
             .select('accountName displayName avatarUrl role isVerified ban')
             .lean();
           toFetch.forEach(tf => {
-            results[tf.index] = users.find((u: any) => u._id.toString() === tf.id.toString()) || null;
+            results[tf.index] = users.find((u) => (u._id as { toString(): string }).toString() === String(tf.id)) || null;
           });
         }
         return results;
       },
     },
     upload: {
-      loader: async (queries: Array<{ obj: any }>, _context) => {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const results = new Array(queries.length);
-        const toFetch: Array<{ id: any; index: number }> = [];
+        const toFetch: Array<{ id: unknown; index: number }> = [];
 
         queries.forEach(({ obj }, i) => {
-          if (obj.upload && (obj.upload.id || obj.upload._id)) {
-            results[i] = obj.upload;
+          const upload = obj.upload as LoaderObj | undefined;
+          if (upload && (upload.id || upload._id)) {
+            results[i] = upload;
           } else {
             const id = obj.uploadId || obj.upload;
             if (id) toFetch.push({ id, index: i });
@@ -54,20 +61,21 @@ export const loaders: MercuriusLoaders = {
             .select('source fileName title youtubeUrl cloudinaryUrl publicId spotifyTrackId artist duration userId')
             .lean();
           toFetch.forEach(tf => {
-            results[tf.index] = uploads.find((u: any) => u._id.toString() === tf.id.toString()) || null;
+            results[tf.index] = uploads.find((u) => (u._id as { toString(): string }).toString() === String(tf.id)) || null;
           });
         }
         return results;
       },
     },
     lyrics: {
-      loader: async (queries: Array<{ obj: any }>, _context) => {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const results = new Array(queries.length);
-        const toFetch: Array<{ id: any; index: number }> = [];
+        const toFetch: Array<{ id: unknown; index: number }> = [];
 
         queries.forEach(({ obj }, i) => {
-          if (obj.lyrics && (obj.lyrics.id || obj.lyrics._id)) {
-            results[i] = obj.lyrics;
+          const lyrics = obj.lyrics as LoaderObj | undefined;
+          if (lyrics && (lyrics.id || lyrics._id)) {
+            results[i] = lyrics;
           } else {
             const id = obj.lyricsId || obj.lyrics;
             if (id) toFetch.push({ id, index: i });
@@ -79,7 +87,7 @@ export const loaders: MercuriusLoaders = {
           const ids = toFetch.map(tf => tf.id);
           const lyricsList = await Lyrics.find({ _id: { $in: ids } });
           toFetch.forEach(tf => {
-            results[tf.index] = lyricsList.find(l => l._id.toString() === tf.id.toString()) || null;
+            results[tf.index] = lyricsList.find(l => l._id.toString() === String(tf.id)) || null;
           });
         }
         return results;
@@ -88,30 +96,30 @@ export const loaders: MercuriusLoaders = {
 
     // Batches isStarredByMe across all projects in a single query per request
     isStarredByMe: {
-      loader: async (queries: Array<{ obj: any }>, context: any) => {
+      loader: async (queries: Array<{ obj: LoaderObj }>, context: MercuriusContext & { userId?: string | null }) => {
         if (!context.userId) return queries.map(() => false);
         const projectIds = queries.map(({ obj }) => obj.projectId);
         const stars = await ProjectStar
           .find({ userId: context.userId, projectId: { $in: projectIds } })
           .select('projectId')
-          .lean();
-        const starredSet = new Set((stars as any[]).map((s) => s.projectId));
-        return queries.map(({ obj }) => starredSet.has(obj.projectId));
+          .lean<Array<{ projectId: string }>>();
+        const starredSet = new Set(stars.map((s) => s.projectId));
+        return queries.map(({ obj }) => starredSet.has(obj.projectId as string));
       },
     },
 
     // Batches lineCount across all projects in a single query per request
     lineCount: {
-      loader: async (queries: Array<{ obj: any }>, _context: any) => {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const projectIds = queries.map(({ obj }) => obj.projectId);
         const lyricsList = await Lyrics.find(
           { projectId: { $in: projectIds } },
           { projectId: 1, lines: 1 }
-        ).lean();
-        const map = new Map((lyricsList as any[]).map((l: any) => [l.projectId, l]));
+        ).lean<Array<{ projectId: string; lines?: LineEntry[] }>>();
+        const map = new Map(lyricsList.map((l) => [l.projectId, l]));
         return queries.map(({ obj }) => {
           if (obj.lineCount !== undefined) return obj.lineCount;
-          const lyrics = map.get(obj.projectId);
+          const lyrics = map.get(obj.projectId as string);
           return lyrics?.lines?.length ?? 0;
         });
       },
@@ -119,19 +127,19 @@ export const loaders: MercuriusLoaders = {
 
     // Batches syncedLineCount across all projects in a single query per request
     syncedLineCount: {
-      loader: async (queries: Array<{ obj: any }>, _context: any) => {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const projectIds = queries.map(({ obj }) => obj.projectId);
         const lyricsList = await Lyrics.find(
           { projectId: { $in: projectIds } },
           { projectId: 1, lines: 1 }
-        ).lean();
-        const map = new Map((lyricsList as any[]).map((l: any) => [l.projectId, l]));
+        ).lean<Array<{ projectId: string; lines?: LineEntry[] }>>();
+        const map = new Map(lyricsList.map((l) => [l.projectId, l]));
         return queries.map(({ obj }) => {
           if (obj.syncedLineCount !== undefined) return obj.syncedLineCount;
-          const lyrics = map.get(obj.projectId);
+          const lyrics = map.get(obj.projectId as string);
           if (!lyrics?.lines) return 0;
-          return (lyrics.lines as any[]).filter(
-            (l: any) => l.timestamp !== null && l.timestamp !== undefined
+          return lyrics.lines.filter(
+            (l) => l.timestamp !== null && l.timestamp !== undefined
           ).length;
         });
       },
@@ -139,13 +147,14 @@ export const loaders: MercuriusLoaders = {
   },
   Upload: {
     user: {
-      loader: async (queries: Array<{ obj: any }>, _context) => {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const results = new Array(queries.length);
-        const toFetch: Array<{ id: any; index: number }> = [];
+        const toFetch: Array<{ id: unknown; index: number }> = [];
 
         queries.forEach(({ obj }, i) => {
-          if (obj.user && (obj.user.id || obj.user._id)) {
-            results[i] = obj.user;
+          const user = obj.user as LoaderObj | undefined;
+          if (user && (user.id || user._id)) {
+            results[i] = user;
           } else {
             const id = obj.userId || obj.user;
             if (id) toFetch.push({ id, index: i });
@@ -157,7 +166,7 @@ export const loaders: MercuriusLoaders = {
           const ids = toFetch.map(tf => tf.id);
           const users = await User.find({ _id: { $in: ids } });
           toFetch.forEach(tf => {
-            results[tf.index] = users.find(u => u._id.toString() === tf.id.toString()) || null;
+            results[tf.index] = users.find(u => u._id.toString() === String(tf.id)) || null;
           });
         }
         return results;

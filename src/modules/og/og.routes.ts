@@ -54,7 +54,12 @@ export default async function ogRoutes(fastify: FastifyInstance): Promise<void> 
       const project = await Project.findOne({ projectId, public: true })
         .select('title metadata coverImage userId')
         .populate('userId', 'accountName displayName')
-        .lean() as any;
+        .lean<{
+          title?: string;
+          coverImage?: string;
+          metadata?: { songName?: string; songArtist?: string; albumArt?: string };
+          userId?: { displayName?: string; accountName?: string } | null;
+        }>();
 
       if (!project) {
         return reply.code(404).send('Not found');

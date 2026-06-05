@@ -2,7 +2,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import { stripHtml } from '../../utils/sanitize.js';
 import Upload from './upload.model.js';
 import Project from '../projects/project.model.js';
-import { fetchYouTubeTitle, fetchYouTubeMetadata } from '../../utils/youtube.js';
+import { fetchYouTubeMetadata } from '../../utils/youtube.js';
 import { youtubeThumbnail } from '../../utils/cover-image.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
 

@@ -14,7 +14,7 @@ export async function searchUsers(query: string, limit = 10) {
     .limit(Math.min(limit, 20))
     .lean();
 
-  return users.map((u: any) => ({
+  return users.map((u: { _id: { toString(): string }; accountName?: string; displayName?: string | null; avatarUrl?: string | null }) => ({
     id: u._id.toString(),
     accountName: u.accountName,
     displayName: u.displayName ?? null,

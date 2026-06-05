@@ -182,7 +182,7 @@ export function compileLRC(
     })
     .join('\n');
 
-  let result = header + body;
+  const result = header + body;
   return lineEndings === 'crlf' ? result.replace(/\n/g, '\r\n') : result;
 }
 

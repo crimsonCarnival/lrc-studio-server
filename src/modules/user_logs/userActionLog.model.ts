@@ -5,7 +5,7 @@ export interface IUserActionLog extends Document {
   action: string;
   entityType?: string;
   entityId?: mongoose.Types.ObjectId | string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   ip: string;
   deviceId: string;
   createdAt: Date;

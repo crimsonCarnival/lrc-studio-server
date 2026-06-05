@@ -100,11 +100,12 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
     const userAgent = (req.headers['user-agent'] as string) || '';
     const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
 
-    // @ts-ignore - this refers to FastifyInstance
+    // @ts-expect-error - this refers to FastifyInstance in a Fastify route handler context
     const tokens = await authService.loginByUserId(userId, this.jwt, req.ip, deviceId, userAgent, platformVersion);
 
-    if (!tokens || (tokens as any).error) {
-      return reply.code(500).type('text/html').send(callbackHtml(false, (tokens as any).error || 'Failed to create session', appOrigin));
+    const tokensResult = tokens as Record<string, unknown> | null;
+    if (!tokensResult || tokensResult.error) {
+      return reply.code(500).type('text/html').send(callbackHtml(false, (tokensResult?.error as string) || 'Failed to create session', appOrigin));
     }
 
     const cookieOpts = {
@@ -115,8 +116,8 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
       maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
     };
 
-    reply.setCookie('accessToken', (tokens as Record<string, string>).accessToken, cookieOpts);
-    reply.setCookie('refreshToken', (tokens as Record<string, string>).refreshToken, cookieOpts);
+    reply.setCookie('accessToken', tokensResult.accessToken as string, cookieOpts);
+    reply.setCookie('refreshToken', tokensResult.refreshToken as string, cookieOpts);
 
     return reply.type('text/html').send(callbackHtml(true, null, appOrigin));
   }

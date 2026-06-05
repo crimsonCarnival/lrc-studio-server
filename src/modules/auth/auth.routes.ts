@@ -9,7 +9,7 @@ import {
 } from './auth.schema.js';
 
 export default async function authRoutes(fastify: FastifyInstance): Promise<void> {
-  fastify.setErrorHandler((error: any, request, reply) => {
+  fastify.setErrorHandler((error: Error & { validation?: unknown; statusCode?: number }, request, reply) => {
     if (error.validation) {
       return reply.code(400).send({ error: 'validation_error' });
     }

@@ -52,6 +52,6 @@ export async function searchProjects(
 
   return {
     projects,
-    total: (countResult[0] as any)?.total ?? 0,
+    total: (countResult[0] as { total?: number } | undefined)?.total ?? 0,
   };
 }

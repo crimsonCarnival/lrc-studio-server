@@ -67,8 +67,8 @@ async function build() {
     loaders,
     context: async (request: FastifyRequest) => {
       // Run optionalAuth so request.userId is populated for authenticated GraphQL requests.
-      await (app as any).optionalAuth(request);
-      return { userId: request.userId, ip: request.ip, tokenExpired: (request as any).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
+      await app.optionalAuth(request, {} as FastifyReply);
+      return { userId: request.userId, ip: request.ip, tokenExpired: (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
     },
     graphiql: process.env.NODE_ENV === 'development',
     validationRules: process.env.NODE_ENV !== 'development' ? [NoSchemaIntrospectionCustomRule] : [],

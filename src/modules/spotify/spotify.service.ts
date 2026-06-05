@@ -252,7 +252,7 @@ export async function resolveTrack(url: string): Promise<Record<string, unknown>
   };
 
   // Fetch artist genres with same client-credentials token
-  let genres: string[] = [];
+  const genres: string[] = [];
   const artistIds = (track.artists ?? []).map((a) => a.id).filter(Boolean).slice(0, 5);
   if (artistIds.length > 0) {
     try {

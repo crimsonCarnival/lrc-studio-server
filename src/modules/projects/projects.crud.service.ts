@@ -1,4 +1,4 @@
-import type { ServiceResult, ProjectPublic, ProjectListItem } from '../../types/index.js';
+import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo } from '../../types/index.js';
 import mongoose from 'mongoose';
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
@@ -8,11 +8,73 @@ import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
 import { writeActivity } from '../activity/activity.service.js';
 
+// Shape of a lean project from listProjects query (populated uploadId is an object)
+interface LeanProjectListItem {
+  _id: mongoose.Types.ObjectId;
+  projectId: string;
+  title?: string;
+  metadata?: Record<string, unknown>;
+  uploadId?: Record<string, unknown> | null;
+  readOnly: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
+  forkedFrom?: { projectId?: string | null } | null;
+  forkCount?: number;
+  starCount?: number;
+}
+
+// Shape of aggregate lyrics metadata result
+interface LyricsMetaItem {
+  projectId: string;
+  editorMode?: string;
+  lineCount?: number;
+  syncedLineCount?: number;
+}
+
+// Incoming request body for createProject
+interface CreateProjectData {
+  title?: string;
+  uploadId?: string;
+  lyrics?: { editorMode?: string; lines?: unknown[] };
+  state?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  readOnly?: boolean;
+  public?: boolean;
+  recaptchaToken?: string;
+  ytUrl?: string;
+  cloudinaryUrl?: string;
+  cloudinaryPublicId?: string;
+  fileName?: string;
+  duration?: number;
+}
+
+// Incoming request body for updateProject / patchProject
+interface UpdateProjectData {
+  title?: string;
+  uploadId?: string;
+  lyrics?: {
+    editorMode?: string;
+    language?: string;
+    lines?: unknown[];
+    lineIndex?: number;
+    wordIndex?: number;
+    line?: Record<string, unknown>;
+    word?: Record<string, unknown>;
+  };
+  state?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  readOnly?: boolean;
+  public?: boolean;
+  coverImage?: string;
+  version?: number;
+}
+
 export async function createProject(
-  data: any,
+  rawData: unknown,
   userId: string | null | undefined,
   ip: string
 ): Promise<{ projectId: string; url: string } | ServiceResult> {
+  const data = rawData as CreateProjectData;
   const {
     title, uploadId, lyrics, state, metadata, readOnly, public: isPublic,
     recaptchaToken, ytUrl, cloudinaryUrl, cloudinaryPublicId, fileName, duration,
@@ -109,12 +171,12 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
     .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title')
     .sort({ updatedAt: -1 })
     .limit(100)
-    .lean();
+    .lean<LeanProjectListItem[]>();
 
-  const projectIds: string[] = projects.map((s: any) => s.projectId);
+  const projectIds: string[] = projects.map((s) => s.projectId);
   if (projectIds.length === 0) return [];
 
-  const lyricsMetadata = await Lyrics.aggregate([
+  const lyricsMetadata = await Lyrics.aggregate<LyricsMetaItem>([
     { $match: { projectId: { $in: projectIds } } },
     {
       $project: {
@@ -135,18 +197,18 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
     },
   ]);
 
-  const lyricsMap = new Map<string, any>();
+  const lyricsMap = new Map<string, LyricsMetaItem>();
   for (const l of lyricsMetadata) {
     lyricsMap.set(l.projectId, l);
   }
 
-  return projects.map((s: any) => {
+  return projects.map((s) => {
     const lyrics = lyricsMap.get(s.projectId);
     const upload = s.uploadId;
-    let uploadObj: any = null;
+    let uploadObj: UploadInfo | null = null;
     if (upload && typeof upload === 'object') {
-      uploadObj = { ...upload, id: upload._id.toString() };
-      delete uploadObj._id;
+      const { _id, ...rest } = upload as Record<string, unknown> & { _id: unknown };
+      uploadObj = { ...rest, id: String(_id) } as UploadInfo;
     }
     return {
       id: s._id.toString(),
@@ -174,13 +236,15 @@ export async function getProject(projectId: string, requestingUserId?: string | 
     Lyrics.findOne({ projectId }),
   ]);
   if (!project) return null;
-  if (!project.public && !(project as any).isOwnedBy(requestingUserId)) return null;
 
-  const pub: any = (project as any).toPublic();
+  if (!project.public && !project.isOwnedBy(requestingUserId ?? '')) return null;
+
+  const pub: Record<string, unknown> = project.toPublic();
   const rawUpload = pub.uploadId;
   if (rawUpload && typeof rawUpload === 'object') {
-    pub.upload = { ...rawUpload, id: rawUpload._id?.toString?.() || rawUpload.id };
-    delete pub.upload._id;
+    const uploadObj = rawUpload as Record<string, unknown>;
+    pub.upload = { ...uploadObj, id: (uploadObj._id as { toString?(): string } | undefined)?.toString?.() || uploadObj.id };
+    delete (pub.upload as Record<string, unknown>)._id;
   } else {
     pub.upload = null;
   }
@@ -190,23 +254,24 @@ export async function getProject(projectId: string, requestingUserId?: string | 
     ? { editorMode: lyrics.editorMode, language: lyrics.language || null, lines: lyrics.lines }
     : { editorMode: 'lrc', language: null, lines: [] };
 
-  if (pub.forkedFrom && !pub.forkedFrom.projectId) {
+  if (pub.forkedFrom && !(pub.forkedFrom as Record<string, unknown>).projectId) {
     pub.forkedFrom = null;
   }
 
-  return pub as ProjectPublic;
+  return pub as unknown as ProjectPublic;
 }
 
 export async function updateProject(
   projectId: string,
-  data: any,
+  rawData: unknown,
   userId: string | null | undefined
 ): Promise<ServiceResult<{ project: ProjectPublic }>> {
+  const data = rawData as UpdateProjectData;
   const project = await Project.findOne({ projectId });
-  if (!project) return { error: 'Project not found', status: 404 } as any;
+  if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
-  if (project.userId && !(project as any).isOwnedBy(userId)) {
-    return { error: 'Not authorized to edit this project', status: 403 } as any;
+  if (project.userId && !project.isOwnedBy(userId ?? '')) {
+    return { error: 'Not authorized to edit this project', status: 403 } as ServiceResult;
   }
 
   const { title, uploadId, lyrics, state, metadata, readOnly } = data;
@@ -245,11 +310,12 @@ export async function updateProject(
     lyricsPromise,
   ]);
 
-  const pub: any = (updatedProject as any).toPublic();
+  const pub: Record<string, unknown> = updatedProject!.toPublic();
   const rawUpload = pub.uploadId;
   if (rawUpload && typeof rawUpload === 'object') {
-    pub.upload = { ...rawUpload, id: rawUpload._id?.toString?.() || rawUpload.id };
-    delete pub.upload._id;
+    const uploadObj = rawUpload as Record<string, unknown>;
+    pub.upload = { ...uploadObj, id: (uploadObj._id as { toString?(): string } | undefined)?.toString?.() || uploadObj.id };
+    delete (pub.upload as Record<string, unknown>)._id;
   } else {
     pub.upload = null;
   }
@@ -269,32 +335,34 @@ export async function updateProject(
     metadata: { projectId, fieldsUpdated: Object.keys(projectUpdate) },
   });
 
-  return { project: pub } as any;
+  return { project: pub as unknown as ProjectPublic };
 }
 
 export async function patchProject(
   projectId: string,
-  data: any,
+  rawData: unknown,
   userId: string | null | undefined
 ): Promise<ServiceResult<{ project: ProjectPublic }>> {
+  const data = rawData as UpdateProjectData;
   const project = await Project.findOne({ projectId })
     .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist');
-  if (!project) return { error: 'Project not found', status: 404 } as any;
+  if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
-  if (project.userId && !(project as any).isOwnedBy(userId)) {
-    return { error: 'Not authorized to edit this project', status: 403 } as any;
+  if (project.userId && !project.isOwnedBy(userId ?? '')) {
+    return { error: 'Not authorized to edit this project', status: 403 } as ServiceResult;
   }
 
-  if (data.version !== undefined && data.version !== (project as any).version) {
-    return { error: 'Version conflict — reload and retry', status: 409 } as any;
+  const projectWithVersion = project as unknown as { version?: number };
+  if (data.version !== undefined && data.version !== projectWithVersion.version) {
+    return { error: 'Version conflict — reload and retry', status: 409 } as ServiceResult;
   }
 
   // Detect publish transition (false → true) before the transaction overwrites the doc
-  const wasPublic = !!(project as any).public;
+  const wasPublic = !!project.public;
   const isPublishing = data.public === true && !wasPublic;
 
   const projectUpdate: Record<string, unknown> = {};
-  const allowed = ['title', 'uploadId', 'state', 'metadata', 'readOnly', 'public', 'coverImage'];
+  const allowed = ['title', 'uploadId', 'state', 'metadata', 'readOnly', 'public', 'coverImage'] as const;
   for (const key of allowed) {
     if (data[key] !== undefined) projectUpdate[key] = data[key];
   }
@@ -308,14 +376,15 @@ export async function patchProject(
   const result = await withTransaction(async (session) => {
     let updatedProject = project;
     if (hasProjectUpdate) {
-      updatedProject = await Project.findOneAndUpdate(
+      const found = await Project.findOneAndUpdate(
         { projectId },
         { $set: projectUpdate, $inc: { version: 1 } },
         { new: true, session }
-      ).populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist') as any;
+      ).populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist');
+      if (found) updatedProject = found;
     }
 
-    let updatedLyrics = null;
+    let updatedLyrics;
     if (data.lyrics !== undefined) {
       updatedLyrics = await patchLyricsWithSession(projectId, data.lyrics, session);
     } else {
@@ -327,11 +396,12 @@ export async function patchProject(
 
   const { updatedProject, updatedLyrics } = result;
 
-  const pub: any = (updatedProject as any).toPublic();
+  const pub: Record<string, unknown> = updatedProject.toPublic();
   const rawUpload = pub.uploadId;
   if (rawUpload && typeof rawUpload === 'object') {
-    pub.upload = { ...rawUpload, id: rawUpload._id?.toString?.() || rawUpload.id };
-    delete pub.upload._id;
+    const uploadObj = rawUpload as Record<string, unknown>;
+    pub.upload = { ...uploadObj, id: (uploadObj._id as { toString?(): string } | undefined)?.toString?.() || uploadObj.id };
+    delete (pub.upload as Record<string, unknown>)._id;
   } else {
     pub.upload = null;
   }
@@ -356,15 +426,21 @@ export async function patchProject(
       actorId:      userId,
       type:         'project_published',
       projectId,
-      projectTitle: (updatedProject as any)?.title || '',
-      coverImage:   (updatedProject as any)?.coverImage || '',
+      projectTitle: updatedProject?.title || '',
+      coverImage:   updatedProject?.coverImage || '',
     }).catch(() => {});
   }
 
-  return { project: pub } as any;
+  return { project: pub as unknown as ProjectPublic };
 }
 
-async function patchLyricsWithSession(projectId: string, lyricsData: any, session: any): Promise<any> {
+type LyricsDoc = mongoose.Document & { editorMode: string; language?: string | null; lines: unknown[] };
+
+async function patchLyricsWithSession(
+  projectId: string,
+  lyricsData: NonNullable<UpdateProjectData['lyrics']>,
+  session: mongoose.ClientSession
+): Promise<LyricsDoc | null> {
   if (lyricsData.lineIndex !== undefined && lyricsData.line !== undefined) {
     const update: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(lyricsData.line)) {
@@ -374,7 +450,7 @@ async function patchLyricsWithSession(projectId: string, lyricsData: any, sessio
       { projectId },
       { $set: update, $inc: { version: 1 } },
       { upsert: true, new: true, session }
-    );
+    ) as Promise<LyricsDoc | null>;
   }
 
   if (
@@ -390,7 +466,7 @@ async function patchLyricsWithSession(projectId: string, lyricsData: any, sessio
       { projectId },
       { $set: update, $inc: { version: 1 } },
       { upsert: true, new: true, session }
-    );
+    ) as Promise<LyricsDoc | null>;
   }
 
   const lyricsUpdate: Record<string, unknown> = {};
@@ -403,10 +479,10 @@ async function patchLyricsWithSession(projectId: string, lyricsData: any, sessio
       { projectId },
       { $set: lyricsUpdate, $inc: { version: 1 } },
       { upsert: true, new: true, session }
-    );
+    ) as Promise<LyricsDoc | null>;
   }
 
-  return Lyrics.findOne({ projectId }, null, { session });
+  return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
 }
 
 export async function deleteProject(
@@ -414,10 +490,10 @@ export async function deleteProject(
   userId: string
 ): Promise<ServiceResult> {
   const project = await Project.findOne({ projectId });
-  if (!project) return { error: 'Project not found', status: 404 } as any;
+  if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
-  if (!(project as any).isOwnedBy(userId)) {
-    return { error: 'Not authorized to delete this project', status: 403 } as any;
+  if (!project.isOwnedBy(userId)) {
+    return { error: 'Not authorized to delete this project', status: 403 } as ServiceResult;
   }
 
   await withTransaction(async (session) => {
@@ -435,5 +511,5 @@ export async function deleteProject(
     metadata: { projectId },
   });
 
-  return {} as any;
+  return {};
 }
