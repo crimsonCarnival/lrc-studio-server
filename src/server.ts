@@ -51,7 +51,7 @@ async function build() {
   });
 
   await app.register(fastifyCookie, {
-    secret: process.env.COOKIE_SECRET || process.env.JWT_SECRET, // Use COOKIE_SECRET, fallback to JWT_SECRET
+    secret: process.env.COOKIE_SECRET,
   });
   await app.register(helmet);
   await app.register(cors);
