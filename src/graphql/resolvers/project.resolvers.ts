@@ -36,6 +36,27 @@ export const projectResolvers = {
       return listProjects(context.userId);
     },
 
+    myMusicLibrary: async (_root: any, _args: any, context: Context) => {
+      if (!context.userId) return [];
+      const rows = await Project.find(
+        { userId: context.userId, isDeleted: { $ne: true } },
+        { 'metadata.songArtist': 1, 'metadata.songAlbum': 1, 'metadata.genre': 1, 'metadata.songLanguage': 1, 'metadata.trackCount': 1 }
+      ).lean();
+      const seen = new Set<string>();
+      const results: { artist: string; album: string; genre: string; language: string; trackCount: number | null }[] = [];
+      for (const row of rows) {
+        const m = (row as any).metadata ?? {};
+        const artist = m.songArtist || '';
+        const album = m.songAlbum || '';
+        if (!artist && !album) continue;
+        const key = `${artist}||${album}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push({ artist, album, genre: m.genre || '', language: m.songLanguage || '', trackCount: m.trackCount ?? null });
+      }
+      return results;
+    },
+
     getShare: async (_root: any, { id }: { id: string }) => {
       return getShareProject(id);
     },

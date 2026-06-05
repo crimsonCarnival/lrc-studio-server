@@ -31,6 +31,7 @@ export const rootSchema = `
     leaderboard(limit: Int, offset: Int): LeaderboardResult!
     badgeDefinitions: [BadgeDef!]!
     userShowcase(accountName: String!): [ShowcasedBadge!]!
+    myMusicLibrary: [MusicLibraryEntry!]!
   }
 
   type Mutation {
@@ -156,5 +157,13 @@ export const rootSchema = `
     granted: Int!
     scanned: Int!
     error: String
+  }
+
+  type MusicLibraryEntry {
+    artist: String
+    album: String
+    genre: String
+    language: String
+    trackCount: Int
   }
 `;
