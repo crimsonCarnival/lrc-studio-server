@@ -45,7 +45,7 @@ const envToLogger: Record<string, Record<string, unknown>> = {
 
 async function build() {
   const app = Fastify({
-    logger: envToLogger[process.env.NODE_ENV as string] ?? envToLogger.development,
+    logger: envToLogger[process.env.NODE_ENV as string] ?? envToLogger.production,
     trustProxy: true,
   });
 
@@ -70,6 +70,7 @@ async function build() {
       return { userId: request.userId, ip: request.ip, tokenExpired: (request as any).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
     },
     graphiql: process.env.NODE_ENV === 'development',
+    introspection: process.env.NODE_ENV === 'development',
   });
 
   app.setErrorHandler((error, request, reply) => {

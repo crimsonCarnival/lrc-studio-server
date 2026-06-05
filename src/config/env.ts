@@ -25,7 +25,7 @@ export interface Env {
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
-  if (!value && process.env.NODE_ENV === 'production' && requiredInProduction) {
+  if (!value && process.env.NODE_ENV !== 'development' && requiredInProduction) {
     throw new Error(`FATAL: ${name} must be set in production.`);
   }
   return value;
@@ -43,7 +43,7 @@ export function loadEnv(): Env {
   return {
     PORT: parseInt(process.env.PORT ?? '3000', 10),
     HOST: process.env.HOST ?? '0.0.0.0',
-    NODE_ENV: (process.env.NODE_ENV as Env['NODE_ENV']) ?? 'development',
+    NODE_ENV: (process.env.NODE_ENV as Env['NODE_ENV']) ?? 'production',
     MONGODB_URI: process.env.MONGODB_URI ?? '',
     JWT_SECRET: requireEnv('JWT_SECRET', process.env.JWT_SECRET, true) ?? 'change-me',
     JWT_ACCESS_EXPIRY: process.env.JWT_ACCESS_EXPIRY ?? '15m',
