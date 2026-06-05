@@ -318,7 +318,9 @@ export async function loginByUserId(
   userId: string,
   jwt: JwtTools,
   ip: string,
-  deviceId: string
+  deviceId: string,
+  userAgent?: string,
+  platformVersion?: string
 ): Promise<ServiceResult<AuthResponse>> {
   const user = await User.findById(userId);
   if (!user || user.isDeleted) return err('user_not_found', 404) as any;
@@ -330,7 +332,9 @@ export async function loginByUserId(
     user,
     jwt,
     ip,
-    deviceId
+    deviceId,
+    userAgent,
+    platformVersion
   );
 
   return {

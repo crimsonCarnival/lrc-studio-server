@@ -50,12 +50,11 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   if (!googleService.isGoogleConfigured()) {
     return reply.code(503).send({ error: 'Google OAuth integration not configured' });
   }
-  const { appOrigin: rawOrigin, loginHint: rawHint } = req.query as Record<string, string | undefined>;
+  const { appOrigin: rawOrigin, loginHint: rawHint, deviceId: rawDeviceId } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
-  // Only forward a hint that looks like an email; an accountName is meaningless
-  // to Google and would just be ignored.
   const loginHint = rawHint && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawHint) ? rawHint : undefined;
-  const state = googleService.generateSignedState({ action: 'login', appOrigin });
+  const deviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim().length > 0 ? rawDeviceId.trim().slice(0, 256) : undefined;
+  const state = googleService.generateSignedState({ action: 'login', appOrigin, deviceId });
   return reply.redirect(googleService.getAuthUrl(state, loginHint));
 }
 
@@ -97,10 +96,12 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
 
     // Get tokens and set cookies
     const userId = (result as Record<string, unknown>).userId as string;
-    const deviceId = (req.headers['x-device-id'] as string) || 'unknown';
+    const deviceId = (statePayload.deviceId as string | undefined) || 'unknown';
+    const userAgent = (req.headers['user-agent'] as string) || '';
+    const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
 
     // @ts-ignore - this refers to FastifyInstance
-    const tokens = await authService.loginByUserId(userId, this.jwt, req.ip, deviceId);
+    const tokens = await authService.loginByUserId(userId, this.jwt, req.ip, deviceId, userAgent, platformVersion);
 
     if (!tokens || (tokens as any).error) {
       return reply.code(500).type('text/html').send(callbackHtml(false, (tokens as any).error || 'Failed to create session', appOrigin));
