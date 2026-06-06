@@ -60,6 +60,9 @@ function verifyToken(token: string): JwtPayload {
   }) as JwtPayload;
 }
 
+/** Module-level jwt tools — use these when this.jwt is unavailable (e.g. in standalone exported handlers). */
+export const jwtTools = { signAccess, signRefresh, verifyToken };
+
 // Only the fields needed for auth checks — avoids loading passwordHash, spotify tokens, etc.
 const AUTH_USER_SELECT = 'ban appeal showUnbanMessage isDeleted deletedAt role accountName lastIp';
 

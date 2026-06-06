@@ -190,7 +190,9 @@ export async function register(
   const existing = await User.findOne({ $or: query });
   if (existing) {
     if (existing.ban?.active) return err('register_account_restricted', 403);
-    return err('accountName_taken', 409);
+    // Distinguish which field caused the conflict so the client shows the right error
+    const emailMatches = email && existing.email === email.toLowerCase();
+    return emailMatches ? err('email_taken', 409) : err('accountName_taken', 409);
   }
 
   if (ip) {
@@ -726,7 +728,6 @@ export async function revokeAllSessions(
 export async function getPasskeyRegistrationOptions(userId: string): Promise<ServiceResult<Record<string, unknown>>> {
   const user = await User.findById(userId);
   if (!user) return err('user_not_found', 404);
-  if (!user.isVerified) return err('email_not_verified', 403);
 
   const userPasskeys = await Passkey.find({ userId: user._id });
   const { rpID, rpName } = getWebAuthnConfig();

@@ -5,6 +5,7 @@ import * as spotifyPlayback from './spotify.playback.js';
 import * as uploadService from '../uploads/uploads.service.js';
 import * as authService from '../auth/auth.service.js';
 import { getEnv } from '../../config/env.js';
+import { jwtTools } from '../../plugins/auth.js';
 
 function callbackHtml(success: boolean, error?: string | null, appOrigin?: string | null): string {
   const payload = { type: 'spotify-callback', success, error: error || null };
@@ -115,8 +116,7 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
     const userAgent = (req.headers['user-agent'] as string) || '';
     const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
 
-    // @ts-expect-error - fastify instance context
-    const tokens = await authService.loginByUserId(userId, this.jwt, req.ip, deviceId, userAgent, platformVersion);
+    const tokens = await authService.loginByUserId(userId, jwtTools, req.ip, deviceId, userAgent, platformVersion);
     const tokensResult = tokens as Record<string, unknown> | null;
     
     if (!tokensResult || tokensResult.error) {
