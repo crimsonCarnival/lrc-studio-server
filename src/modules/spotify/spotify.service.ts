@@ -423,28 +423,85 @@ export async function resolveTrack(url: string): Promise<Record<string, unknown>
   return result;
 }
 
+export async function fetchLastFmTrack(songName: string, artistName?: string): Promise<Record<string, unknown>> {
+  const apiKey = process.env.LASTFM_API_KEY;
+  if (!apiKey) return { error: 'Last.fm API key not configured', status: 503 };
+
+  try {
+    const params = new URLSearchParams({
+      method: 'track.getInfo',
+      api_key: apiKey,
+      track: songName.trim(),
+      autocorrect: '1',
+      format: 'json',
+    });
+    if (artistName?.trim()) {
+      params.append('artist', artistName.trim());
+    }
+
+    const res = await fetch(`https://ws.audioscrobbler.com/2.0/?${params}`);
+    if (!res.ok) return { error: 'Last.fm search failed', status: 502 };
+
+    interface LastFmTag { name: string }
+    interface LastFmTrackResponse {
+      error?: number;
+      track?: {
+        mbid?: string;
+        name?: string;
+        duration?: string;
+        artist?: { name?: string };
+        album?: { title?: string };
+        toptags?: { tag?: LastFmTag[] };
+      };
+    }
+    const data = await res.json() as LastFmTrackResponse;
+    if (!data || !data.track || data.error) return { error: 'No tracks found on Last.fm', status: 404 };
+
+    const track = data.track;
+    const genres = track.toptags?.tag?.map((t: LastFmTag) => t.name) || [];
+
+    return {
+      trackId: track.mbid || '',
+      name: track.name || songName,
+      artist: track.artist?.name || artistName || '',
+      album: track.album?.title || '',
+      albumArt: '',
+      durationMs: track.duration ? parseInt(track.duration, 10) : 0,
+      genres,
+      totalTracks: 0,
+    };
+  } catch (err) {
+    console.error('[LastFM] Fetch error:', err);
+    return { error: 'Failed to fetch from Last.fm', status: 500 };
+  }
+}
+
 export async function lookupTrack(songName: string, artistName?: string): Promise<Record<string, unknown>> {
-  if (!isSpotifyConfigured()) {
-    return { error: 'Spotify integration not configured', status: 503 };
+  if (isSpotifyConfigured()) {
+    try {
+      const q = artistName?.trim()
+        ? `track:${songName.trim()} artist:${artistName.trim()}`
+        : songName.trim();
+
+      const token = await getClientToken();
+      const params = new URLSearchParams({ q, type: 'track', limit: '1', market: 'US' });
+      const res = await fetch(`${SPOTIFY_API_BASE}/search?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        const data = await res.json() as { tracks?: { items?: { id: string }[] } };
+        const first = data.tracks?.items?.[0];
+        if (first) {
+          return resolveTrack(`spotify:track:${first.id}`);
+        }
+      }
+    } catch (err) {
+      console.error('[Spotify] lookupTrack failed, falling back to Last.fm', err);
+    }
   }
 
-  const q = artistName?.trim()
-    ? `track:${songName.trim()} artist:${artistName.trim()}`
-    : songName.trim();
-
-  const token = await getClientToken();
-  const params = new URLSearchParams({ q, type: 'track', limit: '1', market: 'US' });
-  const res = await fetch(`${SPOTIFY_API_BASE}/search?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!res.ok) return { error: 'Spotify search failed', status: 502 };
-
-  const data = await res.json() as { tracks?: { items?: { id: string }[] } };
-  const first = data.tracks?.items?.[0];
-  if (!first) return { error: 'No tracks found', status: 404 };
-
-  return resolveTrack(`spotify:track:${first.id}`);
+  return fetchLastFmTrack(songName, artistName);
 }
 
 export async function spotifyFetch(userId: string, path: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
