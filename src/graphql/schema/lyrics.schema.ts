@@ -10,12 +10,22 @@ export const lyricsSchema = `
     updatedAt: String
   }
 
-  type Line {
+  type Translation {
+    language: String!
     text: String!
+  }
+
+  type Line {
+    type: String
+    label: String
+    text: String
     timestamp: Float
     endTime: Float
     secondary: String
+    singer: String
+    singer2: String
     translation: String
+    translations: [Translation!]
     words: [Word!]
     secondaryWords: [SecondaryWord!]
   }
