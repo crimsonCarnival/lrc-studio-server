@@ -372,6 +372,7 @@ export async function checkIdentifier(
     avatarUrl: user.avatarUrl || null,
     hasPassword: user.passwordHash !== 'OAUTH_NO_PASSWORD',
     hasGoogle: !!user.google?.googleId,
+    hasSpotify: !!user.spotify?.spotifyId,
     hasPasskey: passkeyCount > 0,
   };
 }
