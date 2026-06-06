@@ -283,6 +283,7 @@ export async function updateProject(
   if (metadata !== undefined) projectUpdate.metadata = metadata;
   if (readOnly !== undefined) projectUpdate.readOnly = readOnly;
   if (data.public !== undefined) projectUpdate.public = data.public;
+  if (data.coverImage !== undefined) projectUpdate.coverImage = data.coverImage;
 
   if (!project.userId && userId) {
     projectUpdate.userId = userId;
