@@ -3,13 +3,38 @@ import * as spotifyService from './spotify.service.js';
 import * as spotifySearch from './spotify.search.js';
 import * as spotifyPlayback from './spotify.playback.js';
 import * as uploadService from '../uploads/uploads.service.js';
+import * as authService from '../auth/auth.service.js';
+import { getEnv } from '../../config/env.js';
 
-function callbackHtml(success: boolean, error?: string | null): string {
-  const payload = JSON.stringify({ type: 'spotify-callback', success, error: error || null });
+function callbackHtml(success: boolean, error?: string | null, appOrigin?: string | null): string {
+  const payload = { type: 'spotify-callback', success, error: error || null };
+  const payloadStr = JSON.stringify(payload).replace(/</g, '\\u003c');
+  const target = JSON.stringify(appOrigin || getEnv().APP_URL);
+  const redirectBase = appOrigin || getEnv().APP_URL;
+  const redirectUrl = success
+    ? `${redirectBase}/auth/signin?scb=success`
+    : `${redirectBase}/auth/signin?scb=error&scb_msg=${encodeURIComponent(error || 'OAuth failed')}`;
   return `<!DOCTYPE html><html><head><title>Spotify</title></head><body>
-<script>if(window.opener){window.opener.postMessage(${JSON.stringify(payload).replace(/</g, '\\u003c')},'*')}window.close();</script>
-<p>${success ? 'Connected! This window will close.' : `Error: ${error || 'Unknown'}`}</p>
+<script>
+  if (window.opener) {
+    window.opener.postMessage(${payloadStr}, ${target});
+    window.close();
+  } else {
+    window.location.replace(${JSON.stringify(redirectUrl)});
+  }
+</script>
+<p>${success ? 'Connected! Redirecting...' : `Error: ${error || 'Unknown'}`}</p>
 </body></html>`;
+}
+
+function resolveAppOrigin(requested: string | undefined): string | undefined {
+  if (!requested) return undefined;
+  const env = getEnv();
+  const allowed = new Set([
+    ...env.APP_URLS.map(u => new URL(u).origin),
+    new URL(env.CORS_ORIGIN.split(',')[0].trim()).origin,
+  ]);
+  try { return allowed.has(new URL(requested).origin) ? new URL(requested).origin : undefined; } catch { return undefined; }
 }
 
 export async function lookup(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -34,7 +59,20 @@ export async function authorize(req: FastifyRequest, reply: FastifyReply): Promi
   if (!spotifyService.isSpotifyConfigured()) {
     return reply.code(503).send({ error: 'Spotify integration not configured' });
   }
-  const state = spotifyService.generateSignedState(req.userId!);
+  const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
+  const appOrigin = resolveAppOrigin(rawOrigin);
+  const state = spotifyService.generateSignedState({ sub: req.userId!, action: 'connect', appOrigin });
+  return reply.redirect(spotifyService.getAuthUrl(state));
+}
+
+export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!spotifyService.isSpotifyConfigured()) {
+    return reply.code(503).send({ error: 'Spotify integration not configured' });
+  }
+  const { appOrigin: rawOrigin, deviceId: rawDeviceId } = req.query as Record<string, string | undefined>;
+  const appOrigin = resolveAppOrigin(rawOrigin);
+  const deviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim().length > 0 ? rawDeviceId.trim().slice(0, 256) : undefined;
+  const state = spotifyService.generateSignedState({ action: 'login', appOrigin, deviceId });
   return reply.redirect(spotifyService.getAuthUrl(state));
 }
 
@@ -49,17 +87,57 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
     return reply.code(400).type('text/html').send(callbackHtml(false, 'Missing code or state'));
   }
 
-  const userId = spotifyService.verifySignedState(state);
-  if (!userId) {
+  const statePayload = spotifyService.verifySignedState(state);
+  if (!statePayload) {
     return reply.code(400).type('text/html').send(callbackHtml(false, 'Invalid or expired state'));
   }
 
-  const result = await spotifyService.handleCallback(code, userId);
-  if ((result as Record<string, unknown>).error) {
-    return reply.code((result as Record<string, number>).status).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error));
+  const action = statePayload.action as string;
+  const appOrigin = statePayload.appOrigin as string | undefined;
+
+  if (action === 'connect' || !action) {
+    const userId = (statePayload.sub as string) || (statePayload as unknown as string);
+    const result = await spotifyService.handleCallback(code, userId);
+    if ((result as Record<string, unknown>).error) {
+      return reply.code((result as Record<string, number>).status || 400).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error, appOrigin));
+    }
+    return reply.type('text/html').send(callbackHtml(true, null, appOrigin));
   }
 
-  return reply.type('text/html').send(callbackHtml(true));
+  if (action === 'login') {
+    const result = await spotifyService.handleLoginCallback(code);
+    if ((result as Record<string, unknown>).error) {
+      return reply.code((result as Record<string, number>).status || 400).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error, appOrigin));
+    }
+
+    const userId = (result as Record<string, unknown>).userId as string;
+    const deviceId = (statePayload.deviceId as string | undefined) || 'unknown';
+    const userAgent = (req.headers['user-agent'] as string) || '';
+    const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
+
+    // @ts-expect-error - fastify instance context
+    const tokens = await authService.loginByUserId(userId, this.jwt, req.ip, deviceId, userAgent, platformVersion);
+    const tokensResult = tokens as Record<string, unknown> | null;
+    
+    if (!tokensResult || tokensResult.error) {
+      return reply.code(500).type('text/html').send(callbackHtml(false, (tokensResult?.error as string) || 'Failed to create session', appOrigin));
+    }
+
+    const cookieOpts = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' as const : 'lax' as const,
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60,
+    };
+
+    reply.setCookie('accessToken', tokensResult.accessToken as string, cookieOpts);
+    reply.setCookie('refreshToken', tokensResult.refreshToken as string, cookieOpts);
+
+    return reply.type('text/html').send(callbackHtml(true, null, appOrigin));
+  }
+
+  return reply.code(400).type('text/html').send(callbackHtml(false, 'Invalid action', appOrigin));
 }
 
 export async function getToken(req: FastifyRequest, reply: FastifyReply): Promise<void> {

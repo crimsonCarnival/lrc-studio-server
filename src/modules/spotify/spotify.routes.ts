@@ -198,6 +198,11 @@ export default async function spotifyRoutes(fastify: FastifyInstance): Promise<v
   );
 
   fastify.get(
+    '/auth/login/url',
+    spotifyController.authorizeLogin
+  );
+
+  fastify.get(
     '/auth/callback',
     { schema: callbackQuerySchema },
     spotifyController.callback

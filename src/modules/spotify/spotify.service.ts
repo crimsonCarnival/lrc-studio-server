@@ -3,7 +3,17 @@ import jwt from 'jsonwebtoken';
 import { stripHtml } from '../../utils/sanitize.js';
 import User from '../../db/user.model.js';
 import { LRUCache } from '@crimson-carnival/ds-js';
-import type { JwtPayload } from '../../types/index.js';
+import { sendVerification } from '../email-verification/email-verification.service.js';
+import { createOnce } from '../notifications/notifications.service.js';
+import { triggerBadgeCheck, seedBuiltinBadges } from '../badges/badge.service.js';
+
+interface SpotifyStatePayload {
+  sub?: string;
+  action?: string;
+  appOrigin?: string;
+  deviceId?: string;
+  nonce?: string;
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
 
@@ -69,18 +79,19 @@ async function getClientToken(): Promise<string> {
   return cachedToken;
 }
 
-export function generateSignedState(userId: string): string {
+export function generateSignedState(payload: string | SpotifyStatePayload): string {
+  const data = typeof payload === 'string' ? { sub: payload } : payload;
   return jwt.sign(
-    { sub: userId, nonce: crypto.randomBytes(8).toString('hex') },
+    { ...data, nonce: crypto.randomBytes(8).toString('hex') },
     JWT_SECRET,
     { expiresIn: '5m' },
   );
 }
 
-export function verifySignedState(state: string): string | null {
+export function verifySignedState(state: string): SpotifyStatePayload | null {
   try {
-    const decoded = jwt.verify(state, JWT_SECRET) as JwtPayload;
-    return decoded.sub;
+    const decoded = jwt.verify(state, JWT_SECRET) as SpotifyStatePayload;
+    return decoded;
   } catch {
     return null;
   }
@@ -149,6 +160,129 @@ export async function handleCallback(code: string, userId: string): Promise<Reco
     connected: true,
     spotifyId: profile.id,
     isPremium: true,
+  };
+}
+
+export async function handleLoginCallback(code: string): Promise<Record<string, unknown>> {
+  const tokenRes = await fetch(SPOTIFY_TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: basicAuth(),
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: getRedirectUri() || '',
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const body = await tokenRes.json().catch(() => ({})) as Record<string, string>;
+    return { error: body.error_description || 'Token exchange failed', status: 400 };
+  }
+
+  const tokens = await tokenRes.json() as { access_token: string; refresh_token: string; expires_in: number };
+
+  const profileRes = await fetch(`${SPOTIFY_API_BASE}/me`, {
+    headers: { Authorization: `Bearer ${tokens.access_token}` },
+  });
+
+  if (!profileRes.ok) {
+    return { error: 'Failed to fetch Spotify profile', status: 502 };
+  }
+
+  const profile = await profileRes.json() as { id: string; display_name?: string; email?: string; images?: { url: string }[] };
+
+  const profilePictureUrl = profile.images && profile.images.length > 0
+    ? profile.images[0].url
+    : null;
+
+  const spotifyId = profile.id;
+  const email = profile.email || `${spotifyId}@spotify.placeholder.com`;
+  const name = profile.display_name || 'Spotify User';
+
+  let user = await User.findOne({ 'spotify.spotifyId': spotifyId });
+
+  if (!user) {
+    // If no user by spotifyId, try email
+    const existingEmailUser = await User.findOne({ email });
+    if (existingEmailUser) {
+      user = existingEmailUser;
+      if (!user.spotify) user.spotify = {} as NonNullable<typeof user.spotify>;
+      user.spotify!.spotifyId = spotifyId;
+      user.spotify!.accessToken = tokens.access_token;
+      user.spotify!.refreshToken = tokens.refresh_token;
+      user.spotify!.expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+      user.spotify!.isPremium = true;
+      user.spotify!.profilePictureUrl = profilePictureUrl;
+      
+      if (!user.avatarUrl && profilePictureUrl) user.avatarUrl = profilePictureUrl;
+      const wasVerified = user.isVerified;
+      user.isVerified = true; // Spotify emails are verified
+      await user.save();
+      
+      if (!wasVerified) {
+        triggerBadgeCheck(user._id.toString(), 'email_verified').catch(() => {});
+      }
+    } else {
+      // Auto-generate accountName
+      const nameBase = (name || 'user')
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9_-]/g, '_')
+        .replace(/_{2,}/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 22);
+      const base = nameBase || 'user';
+
+      let accountName = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
+      let attempt = 0;
+      while (await User.findOne({ accountName }) && attempt < 10) {
+        accountName = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
+        attempt++;
+      }
+
+      user = new User({
+        accountName,
+        displayName: name || accountName,
+        email,
+        avatarUrl: profilePictureUrl || undefined,
+        passwordHash: 'OAUTH_NO_PASSWORD',
+        isVerified: true, // Spotify verifies email
+        spotify: {
+          spotifyId,
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+          isPremium: true,
+          profilePictureUrl,
+        },
+      });
+      await user.save();
+      
+      // Seed badges for new user
+      if (user.email && !user.email.endsWith('@spotify.placeholder.com')) {
+        sendVerification(user._id.toString(), user.email, 'initial').catch((e) => console.error('[spotify] sendVerification failed:', e));
+      }
+      createOnce({ userId: user._id.toString(), type: 'set_password', sticky: true }).catch(() => {});
+      seedBuiltinBadges()
+        .then(() => triggerBadgeCheck(user!._id.toString(), 'registration'))
+        .catch(() => {});
+    }
+  } else {
+    user.spotify!.accessToken = tokens.access_token;
+    user.spotify!.refreshToken = tokens.refresh_token;
+    user.spotify!.expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+    user.spotify!.profilePictureUrl = profilePictureUrl;
+    await user.save();
+  }
+
+  return {
+    userId: user._id.toString(),
+    spotifyId,
+    email,
+    name,
   };
 }
 
