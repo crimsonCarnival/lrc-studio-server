@@ -54,7 +54,7 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   const appOrigin = resolveAppOrigin(rawOrigin);
   const loginHint = rawHint && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawHint) ? rawHint : undefined;
   const deviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim().length > 0 ? rawDeviceId.trim().slice(0, 256) : undefined;
-  const state = googleService.generateSignedState({ action: 'login', appOrigin, deviceId });
+  const state = googleService.generateSignedState({ action: 'login', appOrigin, deviceId, loginHint });
   return reply.redirect(googleService.getAuthUrl(state, loginHint));
 }
 
@@ -92,6 +92,14 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
     const result = await googleService.handleLoginCallback(code);
     if ((result as Record<string, unknown>).error) {
       return reply.code((result as Record<string, number>).status).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error, appOrigin));
+    }
+
+    // If the flow was initiated with a loginHint, verify the authenticated account
+    // matches so that selecting a different account in the picker is rejected.
+    const loginHint = statePayload.loginHint as string | undefined;
+    const authenticatedEmail = (result as Record<string, string>).email;
+    if (loginHint && authenticatedEmail !== loginHint) {
+      return reply.code(400).type('text/html').send(callbackHtml(false, 'wrong_account', appOrigin));
     }
 
     // Get tokens and set cookies

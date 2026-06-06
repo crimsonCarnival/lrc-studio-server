@@ -19,7 +19,7 @@ export function isGoogleConfigured(): boolean {
   return !!(getClientId() && getClientSecret());
 }
 
-export function generateSignedState(payload: { sub?: string; nonce?: string; action?: string; appOrigin?: string; deviceId?: string }): string {
+export function generateSignedState(payload: { sub?: string; nonce?: string; action?: string; appOrigin?: string; deviceId?: string; loginHint?: string }): string {
   return jwt.sign(
     { ...payload, nonce: payload.nonce || crypto.randomBytes(8).toString('hex') },
     JWT_SECRET,
