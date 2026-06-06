@@ -17,6 +17,7 @@ export interface LineEntry {
   endTime?: number | null;
   secondary?: string | null;
   translation?: string | null;
+  translations?: Array<{ text: string; language?: string | null }>;
   id?: string;
   words?: WordEntry[];
   secondaryWords?: SecondaryWordEntry[];
