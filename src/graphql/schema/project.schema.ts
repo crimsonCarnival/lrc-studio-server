@@ -65,13 +65,23 @@ export const projectSchema = `
     reading: String
   }
 
+  input TranslationInput {
+    language: String!
+    text: String!
+  }
+
   input LineInput {
     id: String
-    text: String!
+    type: String
+    label: String
+    text: String
     timestamp: Float
     endTime: Float
     secondary: String
+    singer: String
+    singer2: String
     translation: String
+    translations: [TranslationInput!]
     words: [WordInput!]
     secondaryWords: [WordInput!]
   }
