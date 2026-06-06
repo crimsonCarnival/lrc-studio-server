@@ -385,9 +385,22 @@ export async function adjustXP(
     await recomputeXP(userId);
     affected = 1;
   } else if (target === 'users' && userIds?.length) {
-    await User.updateMany({ _id: { $in: userIds } }, { $inc: { xpBonus: delta } });
-    await Promise.all(userIds.map((id) => recomputeXP(id)));
-    affected = userIds.length;
+    // Resolve each entry: if it looks like a valid ObjectId use it directly,
+    // otherwise treat it as an accountName and look up the corresponding _id.
+    const resolvedIds: string[] = [];
+    for (const entry of userIds) {
+      if (mongoose.Types.ObjectId.isValid(entry) && entry.length === 24) {
+        resolvedIds.push(entry);
+      } else {
+        const found = await User.findOne({ accountName: entry }).select('_id').lean<{ _id: mongoose.Types.ObjectId }>();
+        if (found) resolvedIds.push(found._id.toString());
+      }
+    }
+    if (resolvedIds.length) {
+      await User.updateMany({ _id: { $in: resolvedIds } }, { $inc: { xpBonus: delta } });
+      await Promise.all(resolvedIds.map((id) => recomputeXP(id)));
+    }
+    affected = resolvedIds.length;
   }
 
   const admin = await User.findById(adminId).select('accountName').lean<{ accountName?: string }>();
