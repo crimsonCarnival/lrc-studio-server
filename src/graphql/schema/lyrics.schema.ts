@@ -24,6 +24,7 @@ export const lyricsSchema = `
     secondary: String
     singer: String
     singer2: String
+    singers: [String!]
     translation: String
     translations: [Translation!]
     words: [Word!]

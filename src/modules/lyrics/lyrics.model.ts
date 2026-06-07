@@ -20,6 +20,9 @@ const lineSchema = new mongoose.Schema(
     timestamp: { type: Number, default: null },
     endTime: { type: Number, default: null },
     secondary: { type: String, default: null, maxlength: 2000, set: textSetter },
+    singer: { type: String, default: null, maxlength: 100, set: textSetter },
+    singer2: { type: String, default: null, maxlength: 100, set: textSetter },
+    singers: { type: [String], default: undefined },
     translation: { type: String, default: null, maxlength: 2000, set: textSetter },
     words: { type: [wordSchema], default: undefined },
     secondaryWords: {

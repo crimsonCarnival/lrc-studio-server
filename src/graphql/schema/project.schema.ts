@@ -80,6 +80,7 @@ export const projectSchema = `
     secondary: String
     singer: String
     singer2: String
+    singers: [String!]
     translation: String
     translations: [TranslationInput!]
     words: [WordInput!]
