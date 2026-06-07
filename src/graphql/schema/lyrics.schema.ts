@@ -18,6 +18,7 @@ export const lyricsSchema = `
   type Line {
     type: String
     label: String
+    depth: Int
     text: String
     timestamp: Float
     endTime: Float
