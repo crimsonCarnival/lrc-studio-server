@@ -11,8 +11,6 @@ export const lineItemSchema = {
     timestamp: { type: ['number', 'null'] },
     endTime: { type: ['number', 'null'] },
     secondary: { type: ['string', 'null'], maxLength: 2000 },
-    singer: { type: ['string', 'null'], maxLength: 100 },
-    singer2: { type: ['string', 'null'], maxLength: 100 },
     singers: {
       type: ['array', 'null'],
       items: { type: 'string', maxLength: 100 },

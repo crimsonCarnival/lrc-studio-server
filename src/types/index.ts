@@ -16,8 +16,6 @@ export interface LineEntry {
   timestamp: number | null;
   endTime?: number | null;
   secondary?: string | null;
-  singer?: string | null;
-  singer2?: string | null;
   singers?: string[];
   translation?: string | null;
   translations?: Array<{ text: string; language?: string | null }>;

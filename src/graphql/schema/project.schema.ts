@@ -74,12 +74,11 @@ export const projectSchema = `
     id: String
     type: String
     label: String
+    depth: Int
     text: String
     timestamp: Float
     endTime: Float
     secondary: String
-    singer: String
-    singer2: String
     singers: [String!]
     translation: String
     translations: [TranslationInput!]

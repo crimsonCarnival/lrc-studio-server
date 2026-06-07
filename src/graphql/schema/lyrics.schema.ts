@@ -22,8 +22,6 @@ export const lyricsSchema = `
     timestamp: Float
     endTime: Float
     secondary: String
-    singer: String
-    singer2: String
     singers: [String!]
     translation: String
     translations: [Translation!]
