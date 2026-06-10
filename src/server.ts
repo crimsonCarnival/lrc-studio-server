@@ -10,6 +10,7 @@ import rateLimit from './plugins/rateLimit.js';
 import auth from './plugins/auth.js';
 import mercurius from 'mercurius';
 import { NoSchemaIntrospectionCustomRule } from 'graphql';
+import { createDepthLimitRule } from './graphql/depth-limit.js';
 import { schema } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
@@ -71,7 +72,22 @@ async function build() {
       return { userId: request.userId, ip: request.ip, tokenExpired: (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
     },
     graphiql: process.env.NODE_ENV === 'development',
-    validationRules: process.env.NODE_ENV !== 'development' ? [NoSchemaIntrospectionCustomRule] : [],
+    // Depth limiting applies in every environment; introspection stays disabled
+    // outside development. 12 comfortably covers legitimate nested queries while
+    // blocking abusive deep traversals (Project.user → User.projects → …).
+    validationRules: process.env.NODE_ENV !== 'development'
+      ? [NoSchemaIntrospectionCustomRule, createDepthLimitRule(12)]
+      : [createDepthLimitRule(12)],
+    errorFormatter: (result, ctx) => {
+      const formatted = mercurius.defaultErrorFormatter(result, ctx);
+      if (formatted.response.errors) {
+        formatted.response.errors = formatted.response.errors.map(err => ({
+          ...err,
+          message: err.message.replace(/\s*Did you mean.*?\?/gi, ''),
+        }));
+      }
+      return formatted;
+    },
   });
 
   app.setErrorHandler((error, request, reply) => {

@@ -29,6 +29,7 @@ import type {
 } from '@simplewebauthn/server';
 import { getEnv } from '../../config/env.js';
 import { isValidAccountName, isReservedAccountName } from './auth.validation.js';
+import { stripHtml } from '../../utils/sanitize.js';
 
 function getWebAuthnConfig() {
   const env = getEnv();
@@ -124,6 +125,14 @@ const BAN_ERRORS: Record<string, ServiceResult> = {
 export async function verifyRecaptcha(token: string | undefined, ip: string): Promise<boolean> {
   const secret = process.env.RECAPTCHA_SECRET_KEY;
   if (!secret) {
+    // Fail OPEN only outside production (local dev without a captcha key). In
+    // production a missing secret is a misconfiguration, not a reason to wave
+    // every request through — fail closed so anti-abuse gates can't be silently
+    // disabled. Set RECAPTCHA_SECRET_KEY to restore captcha-gated flows.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[verifyRecaptcha] RECAPTCHA_SECRET_KEY is not set in production — rejecting request.');
+      return false;
+    }
     return true;
   }
   if (!token) return false;
@@ -538,7 +547,9 @@ export async function updateProfile(
   }
 
   if (displayName !== undefined) {
-    user.displayName = displayName ? displayName.trim().slice(0, 50) : null;
+    // Match the GraphQL updateProfile path: strip HTML server-side so this field
+    // is sanitized regardless of which entry point wrote it (defense in depth).
+    user.displayName = displayName ? stripHtml(displayName.trim()).slice(0, 50) : null;
   }
 
   if (email && email.toLowerCase().trim() !== user.email && email.toLowerCase().trim() !== user.pendingEmail) {
@@ -551,7 +562,7 @@ export async function updateProfile(
   }
 
   if (bio !== undefined) {
-    user.bio = bio.trim().slice(0, 160);
+    user.bio = stripHtml(bio.trim()).slice(0, 160);
   }
 
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -559,13 +570,26 @@ export async function updateProfile(
   const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
   if (avatarUrl !== undefined && avatarUrl !== null) {
+    // Validate against the parsed hostname/path, not substring matches. The old
+    // `includes('googleusercontent.com')` / `includes('cloudinary.com')` checks
+    // accepted hostile URLs like `https://evil.com/?x=googleusercontent.com`. (F13)
+    const INVALID_IMAGE = { error: 'Invalid image URL format. Only JPG, PNG, GIF, and WEBP are allowed.', status: 400 };
+    let host: string;
+    let pathname: string;
+    try {
+      const parsed = new URL(avatarUrl);
+      if (parsed.protocol !== 'https:') return INVALID_IMAGE;
+      host = parsed.hostname.toLowerCase();
+      pathname = parsed.pathname.toLowerCase();
+    } catch {
+      return INVALID_IMAGE;
+    }
     const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-    const urlLower = avatarUrl.toLowerCase();
-    const isImage = ALLOWED_IMAGE_EXTENSIONS.some((ext: string) => urlLower.endsWith(`.${ext}`) || urlLower.includes(`.${ext}?`)) ||
-      (avatarUrl.includes('cloudinary.com') && avatarUrl.includes('/image/upload/')) ||
-      urlLower.includes('googleusercontent.com');
-    if (!isImage) {
-      return { error: 'Invalid image URL format. Only JPG, PNG, GIF, and WEBP are allowed.', status: 400 };
+    const hasImageExt = ALLOWED_IMAGE_EXTENSIONS.some((ext: string) => pathname.endsWith(`.${ext}`));
+    const isCloudinary = (host === 'res.cloudinary.com' || host.endsWith('.cloudinary.com')) && pathname.includes('/image/upload/');
+    const isGoogle = host === 'googleusercontent.com' || host.endsWith('.googleusercontent.com');
+    if (!hasImageExt && !isCloudinary && !isGoogle) {
+      return INVALID_IMAGE;
     }
   }
 
@@ -936,6 +960,89 @@ export async function deletePasskeyForUser(userId: string, passkeyId: string): P
   if (result.deletedCount === 0) {
     return err('passkey_not_found', 404);
   }
+  return { success: true };
+}
+
+// ─── Admin Sudo Step-Up Factors ──────────────────────────────────────────────
+
+/** Which re-auth factors an admin can use for sudo step-up. (F24) */
+export async function getSudoFactors(userId: string): Promise<{ hasPassword: boolean; hasPasskey: boolean }> {
+  const [user, passkeyCount] = await Promise.all([
+    User.findById(userId).select('passwordHash').lean<{ passwordHash?: string }>(),
+    Passkey.countDocuments({ userId }),
+  ]);
+  return {
+    hasPassword: !!user && user.passwordHash !== 'OAUTH_NO_PASSWORD',
+    hasPasskey: passkeyCount > 0,
+  };
+}
+
+/** WebAuthn authentication options for an admin sudo step-up (by userId). */
+export async function getSudoPasskeyOptions(userId: string): Promise<ServiceResult<Record<string, unknown>>> {
+  const user = await User.findById(userId);
+  if (!user) return err('user_not_found', 404);
+
+  const userPasskeys = await Passkey.find({ userId: user._id });
+  if (!userPasskeys.length) return err('no_passkeys_registered', 400);
+
+  const { rpID } = getWebAuthnConfig();
+  const options = await generateAuthenticationOptions({
+    rpID,
+    allowCredentials: userPasskeys.map(passkey => ({
+      id: passkey.credentialID,
+      transports: passkey.transports as AuthenticatorTransportFuture[],
+    })),
+    userVerification: 'preferred',
+  });
+
+  user.currentChallenge = options.challenge;
+  await user.save();
+
+  return { options: options as unknown as Record<string, unknown> };
+}
+
+/** Verify a sudo passkey assertion. On success the caller issues the sudo grant. */
+export async function verifySudoPasskey(
+  userId: string,
+  response: AuthenticationResponseJSON
+): Promise<ServiceResult<{ success: boolean }>> {
+  const user = await User.findById(userId);
+  if (!user || !user.currentChallenge) return err('invalid_state', 400);
+
+  const passkey = await Passkey.findOne({ credentialID: response.id, userId: user._id });
+  if (!passkey) return err('credential_not_found', 401);
+
+  const expectedChallenge = user.currentChallenge;
+  user.currentChallenge = null;
+  await user.save();
+
+  const { rpID, origins } = getWebAuthnConfig();
+
+  let verification;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: origins,
+      expectedRPID: rpID,
+      requireUserVerification: false,
+      credential: {
+        id: passkey.credentialID,
+        publicKey: new Uint8Array(passkey.credentialPublicKey),
+        counter: passkey.counter,
+        transports: passkey.transports as AuthenticatorTransportFuture[],
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'verification_failed';
+    return err(message || 'verification_failed', 401);
+  }
+
+  if (!verification.verified) return err('verification_failed', 401);
+
+  passkey.counter = verification.authenticationInfo.newCounter;
+  await passkey.save();
+
   return { success: true };
 }
 

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as authController from './auth.controller.js';
 import {
   registerSchema,
@@ -20,8 +20,13 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
     return reply.code(error.statusCode || 500).send({ error: 'server_error' });
   });
 
-  const authRateLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
-  const strictRateLimit = { config: { rateLimit: { max: 3, timeWindow: '1 hour' } } };
+  // Auth-sensitive routes key the limiter on IP ALONE. The global limiter keys on
+  // `${ip}-${deviceId}`, but `x-device-id` is a client-supplied header — rotating
+  // it yields a fresh bucket per request and defeats brute-force/credential-stuffing
+  // protection. For these routes the device dimension must not be trusted.
+  const ipOnlyKey = (req: FastifyRequest) => req.ip;
+  const authRateLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } };
+  const strictRateLimit = { config: { rateLimit: { max: 3, timeWindow: '1 hour', keyGenerator: ipOnlyKey } } };
 
   fastify.post('/register', { schema: registerSchema, ...strictRateLimit }, authController.register);
   fastify.post('/login', { schema: loginSchema, ...authRateLimit }, authController.login);
@@ -37,8 +42,8 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.post('/reset-password', { ...authRateLimit }, authController.resetPasswordEndpoint);
   fastify.post('/change-password', { preHandler: [fastify.requireAuth] }, authController.changePassword);
   fastify.post('/set-password', { preHandler: [fastify.requireAuth] }, authController.setPassword);
-  fastify.post('/send-verification', { preHandler: [fastify.requireAuth], config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, authController.sendVerificationEmailHandler);
-  fastify.post('/verify-email', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, authController.verifyEmailHandler);
+  fastify.post('/send-verification', { preHandler: [fastify.requireAuth], config: { rateLimit: { max: 5, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } }, authController.sendVerificationEmailHandler);
+  fastify.post('/verify-email', { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } }, authController.verifyEmailHandler);
   fastify.get('/sessions', { preHandler: [fastify.requireAuth] }, authController.getSessions);
   fastify.delete('/sessions/:id', { preHandler: [fastify.requireAuth] }, authController.revokeSession);
   fastify.post('/logout-all', { preHandler: [fastify.requireAuth] }, authController.logoutAll);

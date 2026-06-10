@@ -123,15 +123,20 @@ export async function getPlaylistTracks(userId: string, playlistId: string, limi
   const data = await spotifyFetch(userId, `/playlists/${encodeURIComponent(playlistId)}/items?${params}`);
   if ((data as Record<string, unknown>).error) return data;
 
-  type PlaylistTrackItem = { item?: unknown; track?: unknown; added_at?: unknown; type?: string };
+  type PlaylistTrackItem = { track?: unknown; added_at?: unknown };
   const typed = data as { items?: PlaylistTrackItem[]; total?: number; offset?: number; limit?: number };
   return {
     tracks: (typed.items || [])
-      .filter((item: PlaylistTrackItem) => item.type === 'track' || (item.track as Record<string, unknown>)?.type === 'track')
+      .filter((item: PlaylistTrackItem) => {
+        if (!item.track) return false; // deleted / null track
+        const t = item.track as Record<string, unknown>;
+        return t.type !== 'episode'; // exclude podcast episodes
+      })
       .map((item: PlaylistTrackItem) => ({
-        ...normalizeTrack((item.item || item.track) as Record<string, unknown>),
+        ...normalizeTrack(item.track as Record<string, unknown>),
         addedAt: item.added_at,
-      })),
+      }))
+      .filter((t) => (t as Record<string, unknown>).trackId != null), // drop local/unresolvable tracks with no ID
     total: typed.total || 0,
     offset: typed.offset || 0,
     limit: typed.limit || limit,

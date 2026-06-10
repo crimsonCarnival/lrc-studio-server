@@ -1,4 +1,5 @@
 import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo } from '../../types/index.js';
+import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import mongoose from 'mongoose';
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
@@ -130,12 +131,12 @@ export async function createProject(
 
     const [project] = await Project.create([{
       userId: userId || null,
-      title: title || '',
+      title: stripHtml(title || '').slice(0, 200),
       uploadId: resolvedUploadId,
       state: state || {},
       metadata: metadata || {},
       readOnly: readOnly ?? true,
-      public: isPublic ?? true,
+      public: isPublic ?? false,
     }], { session });
 
     const [lyricsDoc] = await Lyrics.create([{
@@ -270,24 +271,21 @@ export async function updateProject(
   const project = await Project.findOne({ projectId });
   if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
-  if (project.userId && !project.isOwnedBy(userId ?? '')) {
+  // Ownership required unconditionally — see patchProject / F7.
+  if (!project.isOwnedBy(userId ?? '')) {
     return { error: 'Not authorized to edit this project', status: 403 } as ServiceResult;
   }
 
   const { title, uploadId, lyrics, state, metadata, readOnly } = data;
 
   const projectUpdate: Record<string, unknown> = {};
-  if (title !== undefined) projectUpdate.title = title;
+  if (title !== undefined) projectUpdate.title = stripHtml(title).slice(0, 200);
   if (uploadId !== undefined) projectUpdate.uploadId = uploadId;
   if (state !== undefined) projectUpdate.state = state;
   if (metadata !== undefined) projectUpdate.metadata = metadata;
   if (readOnly !== undefined) projectUpdate.readOnly = readOnly;
   if (data.public !== undefined) projectUpdate.public = data.public;
-  if (data.coverImage !== undefined) projectUpdate.coverImage = data.coverImage;
-
-  if (!project.userId && userId) {
-    projectUpdate.userId = userId;
-  }
+  if (data.coverImage !== undefined) projectUpdate.coverImage = sanitizeUrl(data.coverImage);
 
   const lyricsPromise = (() => {
     if (lyrics === undefined) return Lyrics.findOne({ projectId });
@@ -349,7 +347,12 @@ export async function patchProject(
     .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist');
   if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
-  if (project.userId && !project.isOwnedBy(userId ?? '')) {
+  // Require ownership unconditionally. Guest drafts live client-side (IndexedDB)
+  // and are replayed as a fresh owned project via POST /projects on signup, so no
+  // legitimate flow edits a server-side ownerless project. The previous
+  // `project.userId && …` short-circuit let anyone edit (and silently claim) an
+  // ownerless project — see F7.
+  if (!project.isOwnedBy(userId ?? '')) {
     return { error: 'Not authorized to edit this project', status: 403 } as ServiceResult;
   }
 
@@ -368,11 +371,7 @@ export async function patchProject(
     if (data[key] !== undefined) projectUpdate[key] = data[key];
   }
 
-  if (!project.userId && userId) {
-    projectUpdate.userId = userId;
-  }
-
-  const hasProjectUpdate = allowed.some(k => data[k] !== undefined) || (!project.userId && userId != null);
+  const hasProjectUpdate = allowed.some(k => data[k] !== undefined);
 
   const result = await withTransaction(async (session) => {
     let updatedProject = project;
@@ -437,16 +436,35 @@ export async function patchProject(
 
 type LyricsDoc = mongoose.Document & { editorMode: string; language?: string | null; lines: unknown[] };
 
+// Upper bound on positional indices. Writing to `lines.N` forces Mongo to
+// materialize the array up to N, so an unbounded N is a cheap memory/doc-bloat DoS.
+const MAX_LINE_INDEX = 10000;
+const MAX_WORD_INDEX = 2000;
+// Only these subfields may be patched positionally — keys come from the GraphQL
+// LineInput/WordInput, but iterating raw object keys would let a caller write
+// arbitrary nested paths under `lines.N`. Allow-list them explicitly.
+const LINE_FIELDS = new Set(['type', 'label', 'depth', 'id', 'text', 'timestamp', 'endTime', 'secondary', 'singers', 'translation', 'translations', 'words', 'secondaryWords']);
+const WORD_FIELDS = new Set(['id', 'word', 'time', 'reading']);
+
+function isValidIndex(n: unknown, max: number): n is number {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max;
+}
+
 async function patchLyricsWithSession(
   projectId: string,
   lyricsData: NonNullable<UpdateProjectData['lyrics']>,
   session: mongoose.ClientSession
 ): Promise<LyricsDoc | null> {
   if (lyricsData.lineIndex !== undefined && lyricsData.line !== undefined) {
+    if (!isValidIndex(lyricsData.lineIndex, MAX_LINE_INDEX)) {
+      throw Object.assign(new Error('Invalid lineIndex'), { status: 400 });
+    }
     const update: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(lyricsData.line)) {
+      if (!LINE_FIELDS.has(key)) continue;
       update[`lines.${lyricsData.lineIndex}.${key}`] = value;
     }
+    if (Object.keys(update).length === 0) return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
     return Lyrics.findOneAndUpdate(
       { projectId },
       { $set: update, $inc: { version: 1 } },
@@ -459,10 +477,15 @@ async function patchLyricsWithSession(
     lyricsData.wordIndex !== undefined &&
     lyricsData.word !== undefined
   ) {
+    if (!isValidIndex(lyricsData.lineIndex, MAX_LINE_INDEX) || !isValidIndex(lyricsData.wordIndex, MAX_WORD_INDEX)) {
+      throw Object.assign(new Error('Invalid lineIndex/wordIndex'), { status: 400 });
+    }
     const update: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(lyricsData.word)) {
+      if (!WORD_FIELDS.has(key)) continue;
       update[`lines.${lyricsData.lineIndex}.words.${lyricsData.wordIndex}.${key}`] = value;
     }
+    if (Object.keys(update).length === 0) return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
     return Lyrics.findOneAndUpdate(
       { projectId },
       { $set: update, $inc: { version: 1 } },

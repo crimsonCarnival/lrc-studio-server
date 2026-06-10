@@ -106,7 +106,10 @@ const projectSchema = new mongoose.Schema(
     metadata: { type: metadataSchema, default: () => ({}) },
     coverImage: { type: String, default: '', maxlength: 2000, set: textSetter },
     readOnly: { type: Boolean, default: true },
-    public: { type: Boolean, default: true },
+    // Private by default: a project is only discoverable/shareable once the owner
+    // explicitly publishes it. Guarding the public surface (search, public profile,
+    // OG, the Project.user edge) starts here — see F8.
+    public: { type: Boolean, default: false },
     forksEnabled: { type: Boolean, default: true },
     trendingScore: { type: Number, default: 0 },
 

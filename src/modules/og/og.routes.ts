@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import crypto from 'crypto';
 import Project from '../projects/project.model.js';
 
 function escapeHtml(str: string): string {
@@ -14,8 +15,9 @@ function buildOgHtml(params: {
   description: string;
   image: string;
   projectUrl: string;
+  nonce: string;
 }): string {
-  const { title, description, image, projectUrl } = params;
+  const { title, description, image, projectUrl, nonce } = params;
   const t = escapeHtml(title);
   const d = escapeHtml(description);
   const i = escapeHtml(image);
@@ -36,7 +38,7 @@ function buildOgHtml(params: {
 <meta name="twitter:image" content="${i}">
 <meta http-equiv="refresh" content="0; url=${u}">
 </head><body>
-<script>window.location.replace("${u.replace(/"/g, '\\"')}");</script>
+<script nonce="${nonce}">window.location.replace("${u.replace(/"/g, '\\"')}");</script>
 <p><a href="${u}">View on LRC Studio</a></p>
 </body></html>`;
 }
@@ -72,12 +74,20 @@ export default async function ogRoutes(fastify: FastifyInstance): Promise<void> 
       const description = `Synced lyrics by ${creator}`;
       const image = project.coverImage || project.metadata?.albumArt || '';
       const projectUrl = `${CLIENT_ORIGIN}/project/${projectId}`;
+      const nonce = crypto.randomBytes(16).toString('base64');
 
       return reply
         .code(200)
         .header('Content-Type', 'text/html; charset=utf-8')
         .header('Cache-Control', 'public, max-age=300')
-        .send(buildOgHtml({ title, description, image, projectUrl }));
+        // Lock down this server-rendered HTML: no resources load, the only script
+        // permitted is the nonce'd redirect. Defends the route even if an input
+        // sanitiser is ever bypassed (the global helmet CSP is disabled).
+        .header(
+          'Content-Security-Policy',
+          `default-src 'none'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'`,
+        )
+        .send(buildOgHtml({ title, description, image, projectUrl, nonce }));
     }
   );
 }

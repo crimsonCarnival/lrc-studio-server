@@ -16,6 +16,7 @@ import { writeActivity } from '../../modules/activity/activity.service.js';
 import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots } from '../../modules/badges/badge.service.js';
 import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
 import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
+import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 
 /** Input shape for updateProfile mutation */
 export interface UpdateProfileInput {
@@ -38,6 +39,21 @@ export interface BadgeInput {
   conditionValue?: number | null;
   autoGrant?: boolean;
   xpReward?: number;
+}
+
+/**
+ * True if the viewer is the user themselves or an admin. Used to guard `User`
+ * field resolvers that expose private data (uploads, settings, full project list,
+ * account-name history) — those fields are reachable through Project.user /
+ * Upload.user edges that resolve for unauthenticated viewers, so the parent
+ * object being present does NOT imply the viewer is authorized to read it.
+ */
+async function isSelfOrAdmin(user: IUser, context: Context): Promise<boolean> {
+  if (!context.userId) return false;
+  const selfId = (user._id ?? user.id)?.toString();
+  if (selfId && context.userId === selfId) return true;
+  const requester = await User.findById(context.userId).select('role').lean<IUser>();
+  return requester?.role === 'admin';
 }
 
 export const userResolvers = {
@@ -325,7 +341,7 @@ export const userResolvers = {
         const normalised = accountName.toLowerCase().trim();
         if (!/^[a-z0-9_-]{3,30}$/.test(normalised)) throw new Error('accountName_invalid');
         const existing = await User.findOne({ accountName: normalised });
-        if (existing) throw new Error('Account name already taken');
+        if (existing) throw Object.assign(new Error('accountName_taken'), { extensions: { code: 'accountName_taken', status: 409 } });
         const previousAccountName = user.accountName;
         user.accountName = normalised;
         user.lastAccountNameChangedAt = new Date();
@@ -333,7 +349,7 @@ export const userResolvers = {
       }
 
       if (displayName !== undefined) {
-        user.displayName = displayName ? displayName.trim().slice(0, 50) : null;
+        user.displayName = displayName ? stripHtml(displayName.trim()).slice(0, 50) : null;
       }
 
       if (email && email.toLowerCase().trim() !== user.email && email.toLowerCase().trim() !== user.pendingEmail) {
@@ -345,11 +361,11 @@ export const userResolvers = {
       }
 
       if (bio !== undefined) {
-        user.bio = bio.trim().slice(0, 160);
+        user.bio = stripHtml(bio.trim()).slice(0, 160);
       }
 
       if (avatarUrl !== undefined) {
-        user.avatarUrl = avatarUrl;
+        user.avatarUrl = avatarUrl !== null ? sanitizeUrl(avatarUrl) : null;
       }
 
       if (input.showFollowers !== undefined) {
@@ -528,17 +544,36 @@ export const userResolvers = {
     level:           (user: IUser) => user.level ?? 0,
     xp:              (user: IUser) => user.xp ?? 0,
     showcaseSlots:   (user: IUser) => getShowcaseSlots(user.level ?? 0),
-    projects: async (user: IUser) => Project.find({ userId: user._id ?? user.id }),
-    uploads: async (user: IUser) => Upload.find({ userId: user._id ?? user.id }),
-    settings: async (user: IUser) => Settings.findOne({ userId: user._id ?? user.id }),
 
-    previousAccountNames: (user: IUser) =>
-      AccountNameHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 }).then(
-        docs => docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }))
-      ),
+    // The `User` type is reachable through edges (Project.user, Upload.user) that
+    // resolve for ANY viewer, including unauthenticated ones. Field resolvers that
+    // expose private data must therefore re-check the viewer — never assume the
+    // parent object was authorized. See isSelfOrAdmin below.
+    projects: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      const ownerId = (user._id ?? user.id);
+      // Owner/admin see everything; everyone else only the owner's public projects.
+      if (await isSelfOrAdmin(user, context)) return Project.find({ userId: ownerId });
+      return Project.find({ userId: ownerId, public: true });
+    },
+    uploads: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return [];
+      return Upload.find({ userId: user._id ?? user.id });
+    },
+    settings: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return null;
+      return Settings.findOne({ userId: user._id ?? user.id });
+    },
 
-    accountNameChangeCount: (user: IUser) =>
-      AccountNameHistory.countDocuments({ userId: user._id ?? user.id }),
+    previousAccountNames: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return [];
+      const docs = await AccountNameHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 });
+      return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
+    },
+
+    accountNameChangeCount: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return 0;
+      return AccountNameHistory.countDocuments({ userId: user._id ?? user.id });
+    },
 
     emailHistory: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
       const selfId = (user._id ?? user.id)?.toString();

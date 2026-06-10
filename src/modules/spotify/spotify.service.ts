@@ -15,7 +15,17 @@ interface SpotifyStatePayload {
   nonce?: string;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+/**
+ * Signing key for the OAuth `state` JWT — kept separate from the session JWT
+ * secret so state and session tokens can't be confused. Mirrors google.service. (F4)
+ */
+function getStateSecret(): string {
+  if (process.env.OAUTH_STATE_SECRET) return process.env.OAUTH_STATE_SECRET;
+  return crypto
+    .createHmac('sha256', process.env.JWT_SECRET || 'change-me')
+    .update('oauth-state-v1')
+    .digest('hex');
+}
 
 const SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const SPOTIFY_AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
@@ -83,14 +93,14 @@ export function generateSignedState(payload: string | SpotifyStatePayload): stri
   const data = typeof payload === 'string' ? { sub: payload } : payload;
   return jwt.sign(
     { ...data, nonce: crypto.randomBytes(8).toString('hex') },
-    JWT_SECRET,
+    getStateSecret(),
     { expiresIn: '5m' },
   );
 }
 
 export function verifySignedState(state: string): SpotifyStatePayload | null {
   try {
-    const decoded = jwt.verify(state, JWT_SECRET) as SpotifyStatePayload;
+    const decoded = jwt.verify(state, getStateSecret()) as SpotifyStatePayload;
     return decoded;
   } catch {
     return null;
