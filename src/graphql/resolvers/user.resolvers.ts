@@ -68,12 +68,15 @@ export const userResolvers = {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!user || user.isDeleted || user.ban?.active) return null;
 
+      const isOwner = context.userId && context.userId === user._id.toString();
+      const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true };
+
       const [projects, projectCount] = await Promise.all([
-        Project.find({ userId: user._id, public: true })
+        Project.find(projectFilter)
           .sort({ starCount: -1 })
           .limit(50)
           .lean<IProject[]>(),
-        Project.countDocuments({ userId: user._id, public: true }),
+        Project.countDocuments(projectFilter),
       ]);
 
       const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
@@ -84,7 +87,6 @@ export const userResolvers = {
         : false as boolean;
 
       // Resolve showcasedBadges with rarity data — hidden if owner disabled visibility
-      const isOwner = context.userId && context.userId === user._id.toString();
       const showcaseVisible = user.showcasePublic !== false || isOwner;
       const showcasedIds: string[] = showcaseVisible ? (user.showcasedBadges ?? []) : [];
       const showcasedBadges = showcasedIds.length > 0
