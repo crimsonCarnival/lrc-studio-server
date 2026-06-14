@@ -11,9 +11,9 @@ import { UserPublic } from '../types/index.js';
  */
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
-  memoryCost: 64 * 1024, // 64 MB
+  memoryCost: 19 * 1024, // 19 MB — OWASP minimum; 64 MB caused OOM in constrained envs
   timeCost: 3,           // 3 iterations
-  parallelism: 4,        // 4 threads
+  parallelism: 1,        // 1 thread — avoids CPU contention on multi-tenant servers
 };
 
 const BCRYPT_SALT_ROUNDS = 12; // kept only for migration verification

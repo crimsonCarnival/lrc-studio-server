@@ -63,6 +63,7 @@ export async function authorize(req: FastifyRequest, reply: FastifyReply): Promi
   const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
   const state = spotifyService.generateSignedState({ sub: req.userId!, action: 'connect', appOrigin });
+  reply.header('Cache-Control', 'no-store');
   return reply.redirect(spotifyService.getAuthUrl(state));
 }
 
@@ -74,10 +75,24 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   const appOrigin = resolveAppOrigin(rawOrigin);
   const deviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim().length > 0 ? rawDeviceId.trim().slice(0, 256) : undefined;
   const state = spotifyService.generateSignedState({ action: 'login', appOrigin, deviceId });
+  reply.header('Cache-Control', 'no-store');
   return reply.redirect(spotifyService.getAuthUrl(state));
 }
 
 export async function callback(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  // In local dev, Spotify only allows 127.0.0.1 as a redirect URI, but the rest
+  // of the stack (cookies, postMessage origin) expects localhost. Redirect the
+  // popup from 127.0.0.1 → localhost so cookies and postMessage both work.
+  if (process.env.NODE_ENV !== 'production' && req.hostname === '127.0.0.1') {
+    const port = (req.headers.host ?? '').split(':')[1] ?? process.env.PORT ?? '3000';
+    const { code, state, error } = req.query as Record<string, string | undefined>;
+    const params = new URLSearchParams();
+    if (code) params.set('code', code);
+    if (state) params.set('state', state);
+    if (error) params.set('error', error);
+    return reply.redirect(`http://localhost:${port}/spotify/auth/callback?${params}`);
+  }
+
   const { code, state, error } = req.query as Record<string, string | undefined>;
 
   if (error) {

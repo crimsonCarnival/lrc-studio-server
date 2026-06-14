@@ -191,7 +191,7 @@ export function compileLRC(
 
 // compileSRT has moved to srt.ts — import it from there.
 
-export function parseLrcSrtFile(content: string, filename: string): LineEntry[] {
+export function parseLrcSrtFile(content: string, filename: string, options: { preserveEmptyLines?: boolean } = {}): LineEntry[] {
   const isSrt = filename.toLowerCase().endsWith('.srt');
   const parsedLines: LineEntry[] = [];
 
@@ -233,6 +233,8 @@ export function parseLrcSrtFile(content: string, filename: string): LineEntry[] 
         parsedLines.push(entry);
       } else if (remaining !== '' && !/^\[[^\]]*:[^\]]*\]/.test(remaining)) {
         parsedLines.push({ text: remaining.trim(), timestamp: null, id: crypto.randomUUID() });
+      } else if (remaining === '' && options.preserveEmptyLines) {
+        parsedLines.push({ text: '', timestamp: null, id: crypto.randomUUID() });
       }
     });
   }

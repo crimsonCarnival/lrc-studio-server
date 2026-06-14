@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import type { JwtPayload, SignOptions } from 'jsonwebtoken';
 import { getEnv } from '../config/env.js';
@@ -30,6 +31,17 @@ const ACCESS_EXPIRY = env.JWT_ACCESS_EXPIRY;
 const REFRESH_EXPIRY = env.JWT_REFRESH_EXPIRY;
 const JWT_ISSUER = env.JWT_ISSUER;
 const JWT_AUDIENCE = env.JWT_AUDIENCE;
+
+// Admin sudo grants are signed with a key domain-separated from the session
+// secret, so a sudo token can never double as an access/refresh token. (F24)
+const ADMIN_SUDO_TTL_SECONDS = 5 * 60;
+function getSudoSecret(): string {
+  if (process.env.ADMIN_SUDO_SECRET) return process.env.ADMIN_SUDO_SECRET;
+  return crypto.createHmac('sha256', JWT_SECRET).update('admin-sudo-v1').digest('hex');
+}
+function signAdminSudo(userId: string): string {
+  return jwt.sign({ scope: 'admin-sudo' }, getSudoSecret(), { subject: userId, expiresIn: ADMIN_SUDO_TTL_SECONDS });
+}
 
 function signAccess(payload: Record<string, unknown>): string {
   const opts: SignOptions = {
@@ -226,6 +238,27 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     if (!result) return;
     if (result.role !== 'admin') {
       return reply.code(403).send({ error: 'Admin access required' });
+    }
+  });
+
+  fastify.decorate('signAdminSudo', signAdminSudo);
+
+  // Gate for destructive admin actions. Must run AFTER requireAdmin (which sets
+  // request.userId). Requires a valid, unexpired sudo grant bound to this user.
+  fastify.decorate('requireSudo', async function (request: FastifyRequest, reply: FastifyReply) {
+    const token = request.cookies.adminSudo;
+    if (!token) {
+      reply.code(403).send({ error: 'sudo_required' });
+      return;
+    }
+    try {
+      const decoded = jwt.verify(token, getSudoSecret()) as JwtPayload;
+      if (decoded.scope !== 'admin-sudo' || !decoded.sub || decoded.sub !== request.userId) {
+        reply.code(403).send({ error: 'sudo_required' });
+        return;
+      }
+    } catch {
+      reply.code(403).send({ error: 'sudo_required' });
     }
   });
 
