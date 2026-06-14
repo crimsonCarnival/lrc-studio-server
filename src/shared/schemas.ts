@@ -7,6 +7,10 @@
 export const lineItemSchema = {
   type: 'object',
   properties: {
+    type: { type: ['string', 'null'], maxLength: 50 },
+    label: { type: ['string', 'null'], maxLength: 500 },
+    depth: { type: ['number', 'null'] },
+    id: { type: ['string', 'null'], maxLength: 50 },
     text: { type: 'string', maxLength: 2000 },
     timestamp: { type: ['number', 'null'] },
     endTime: { type: ['number', 'null'] },
@@ -17,7 +21,16 @@ export const lineItemSchema = {
       maxItems: 4
     },
     translation: { type: ['string', 'null'], maxLength: 2000 },
-    id: { type: 'string', maxLength: 50 },
+    translations: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        properties: {
+          language: { type: 'string', maxLength: 50 },
+          text: { type: 'string', maxLength: 2000 },
+        },
+      },
+    },
     words: {
       type: ['array', 'null'],
       items: {

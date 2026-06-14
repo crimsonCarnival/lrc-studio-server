@@ -1,4 +1,5 @@
-import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo } from '../../types/index.js';
+import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
+import { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import mongoose from 'mongoose';
 import Project from './project.model.js';
@@ -15,6 +16,7 @@ interface LeanProjectListItem {
   projectId: string;
   title?: string;
   metadata?: Record<string, unknown>;
+  coverImage?: string;
   uploadId?: Record<string, unknown> | null;
   readOnly: boolean;
   createdAt?: Date;
@@ -36,7 +38,7 @@ interface LyricsMetaItem {
 interface CreateProjectData {
   title?: string;
   uploadId?: string;
-  lyrics?: { editorMode?: string; lines?: unknown[] };
+  lyrics?: { editorMode?: string; sections?: unknown[]; lines?: unknown[] };
   state?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   readOnly?: boolean;
@@ -56,10 +58,14 @@ interface UpdateProjectData {
   lyrics?: {
     editorMode?: string;
     language?: string;
-    lines?: unknown[];
-    lineIndex?: number;
-    wordIndex?: number;
+    // Full sections replace
+    sections?: unknown[];
+    // Positional single-line patch (sections-based)
+    sectionIdx?: number;
+    lineIdx?: number;
     line?: Record<string, unknown>;
+    // Positional word patch (sections-based)
+    wordIndex?: number;
     word?: Record<string, unknown>;
   };
   state?: Record<string, unknown>;
@@ -136,13 +142,17 @@ export async function createProject(
       state: state || {},
       metadata: metadata || {},
       readOnly: readOnly ?? true,
-      public: isPublic ?? false,
+      public: isPublic ?? true,
     }], { session });
+
+    const incomingSections: SectionEntry[] = lyrics?.sections
+      ? (lyrics.sections as SectionEntry[])
+      : migrateLinesToSections((lyrics?.lines as LineEntry[]) || []);
 
     const [lyricsDoc] = await Lyrics.create([{
       projectId: project.projectId,
       editorMode: lyrics?.editorMode || 'lrc',
-      lines: lyrics?.lines || [],
+      sections: incomingSections,
     }], { session });
 
     project.lyricsId = lyricsDoc._id;
@@ -168,8 +178,8 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('projectId title metadata uploadId readOnly createdAt updatedAt forkedFrom forkCount starCount')
-    .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title')
+    .select('projectId title metadata coverImage uploadId readOnly createdAt updatedAt forkedFrom forkCount starCount')
+    .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist')
     .sort({ updatedAt: -1 })
     .limit(100)
     .lean<LeanProjectListItem[]>();
@@ -184,16 +194,51 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
         _id: 0,
         projectId: 1,
         editorMode: 1,
-        lineCount: { $size: { $ifNull: ['$lines', []] } },
+        lineCount: {
+          $cond: {
+            if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+            then: {
+              $reduce: {
+                input: '$sections',
+                initialValue: 0,
+                in: { $add: ['$$value', { $size: { $ifNull: ['$$this.lines', []] } }] },
+              },
+            },
+            // Fallback for pre-migration documents that still have flat $lines
+            else: { $size: { $ifNull: ['$lines', []] } },
+          },
+        },
         syncedLineCount: {
-          $size: {
-            $filter: {
-              input: { $ifNull: ['$lines', []] },
-              as: 'line',
-              cond: { $ne: ['$$line.timestamp', null] }
-            }
-          }
-        }
+          $cond: {
+            if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+            then: {
+              $reduce: {
+                input: '$sections',
+                initialValue: 0,
+                in: {
+                  $add: ['$$value', {
+                    $size: {
+                      $filter: {
+                        input: { $ifNull: ['$$this.lines', []] },
+                        as: 'line',
+                        cond: { $ne: ['$$line.timestamp', null] },
+                      },
+                    },
+                  }],
+                },
+              },
+            },
+            else: {
+              $size: {
+                $filter: {
+                  input: { $ifNull: ['$lines', []] },
+                  as: 'line',
+                  cond: { $ne: ['$$line.timestamp', null] },
+                },
+              },
+            },
+          },
+        },
       },
     },
   ]);
@@ -216,6 +261,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       projectId: s.projectId,
       title: s.title,
       metadata: s.metadata || {},
+      coverImage: s.coverImage || '',
       upload: uploadObj,
       editorMode: lyrics?.editorMode || 'lrc',
       lineCount: lyrics?.lineCount ?? 0,
@@ -233,7 +279,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
 export async function getProject(projectId: string, requestingUserId?: string | null): Promise<ProjectPublic | null> {
   const [project, lyrics] = await Promise.all([
     Project.findOne({ projectId })
-      .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title'),
+      .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist'),
     Lyrics.findOne({ projectId }),
   ]);
   if (!project) return null;
@@ -251,9 +297,10 @@ export async function getProject(projectId: string, requestingUserId?: string | 
   }
   delete pub.uploadId;
 
+  const resolvedSections = await resolveSections(lyrics);
   pub.lyrics = lyrics
-    ? { editorMode: lyrics.editorMode, language: lyrics.language || null, lines: lyrics.lines }
-    : { editorMode: 'lrc', language: null, lines: [] };
+    ? { editorMode: lyrics.editorMode, language: lyrics.language || null, sections: resolvedSections }
+    : { editorMode: 'lrc', language: null, sections: [] };
 
   if (pub.forkedFrom && !(pub.forkedFrom as Record<string, unknown>).projectId) {
     pub.forkedFrom = null;
@@ -292,10 +339,10 @@ export async function updateProject(
     const lyricsUpdate: Record<string, unknown> = {};
     if (lyrics.editorMode !== undefined) lyricsUpdate.editorMode = lyrics.editorMode;
     if (lyrics.language !== undefined) lyricsUpdate.language = lyrics.language;
-    if (lyrics.lines !== undefined) lyricsUpdate.lines = lyrics.lines;
+    if (lyrics.sections !== undefined) lyricsUpdate.sections = lyrics.sections;
     return Lyrics.findOneAndUpdate(
       { projectId },
-      { $set: lyricsUpdate, $inc: { version: 1 } },
+      { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },
       { upsert: true, new: true }
     );
   })();
@@ -320,9 +367,10 @@ export async function updateProject(
   }
   delete pub.uploadId;
 
+  const updateSections = await resolveSections(updatedLyrics);
   pub.lyrics = updatedLyrics
-    ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, lines: updatedLyrics.lines }
-    : { editorMode: 'lrc', language: null, lines: [] };
+    ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, sections: updateSections }
+    : { editorMode: 'lrc', language: null, sections: [] };
 
   logUserAction({
     userId: userId || null,
@@ -407,9 +455,10 @@ export async function patchProject(
   }
   delete pub.uploadId;
 
+  const patchSections = await resolveSections(updatedLyrics);
   pub.lyrics = updatedLyrics
-    ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, lines: updatedLyrics.lines }
-    : { editorMode: 'lrc', language: null, lines: [] };
+    ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, sections: patchSections }
+    : { editorMode: 'lrc', language: null, sections: [] };
 
   logUserAction({
     userId: userId || null,
@@ -434,17 +483,16 @@ export async function patchProject(
   return { project: pub as unknown as ProjectPublic };
 }
 
-type LyricsDoc = mongoose.Document & { editorMode: string; language?: string | null; lines: unknown[] };
+type LyricsDoc = mongoose.Document & { editorMode: string; language?: string | null; sections: unknown[]; lines?: unknown[] };
 
-// Upper bound on positional indices. Writing to `lines.N` forces Mongo to
-// materialize the array up to N, so an unbounded N is a cheap memory/doc-bloat DoS.
+// Upper bounds prevent Mongo from materializing sparse array gaps via positional writes.
+const MAX_SECTION_INDEX = 2000;
 const MAX_LINE_INDEX = 10000;
 const MAX_WORD_INDEX = 2000;
-// Only these subfields may be patched positionally — keys come from the GraphQL
-// LineInput/WordInput, but iterating raw object keys would let a caller write
-// arbitrary nested paths under `lines.N`. Allow-list them explicitly.
-const LINE_FIELDS = new Set(['type', 'label', 'depth', 'id', 'text', 'timestamp', 'endTime', 'secondary', 'singers', 'translation', 'translations', 'words', 'secondaryWords']);
-const WORD_FIELDS = new Set(['id', 'word', 'time', 'reading']);
+
+// Allow-lists prevent writing arbitrary nested paths.
+const LINE_FIELDS = new Set(['id', 'text', 'timestamp', 'endTime', 'secondary', 'singers', 'translation', 'translations', 'words', 'secondaryWords']);
+const WORD_FIELDS = new Set(['id', 'word', 'time', 'reading', 'singerIndex']);
 
 function isValidIndex(n: unknown, max: number): n is number {
   return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max;
@@ -455,14 +503,15 @@ async function patchLyricsWithSession(
   lyricsData: NonNullable<UpdateProjectData['lyrics']>,
   session: mongoose.ClientSession
 ): Promise<LyricsDoc | null> {
-  if (lyricsData.lineIndex !== undefined && lyricsData.line !== undefined) {
-    if (!isValidIndex(lyricsData.lineIndex, MAX_LINE_INDEX)) {
-      throw Object.assign(new Error('Invalid lineIndex'), { status: 400 });
+  // Positional single-line patch: sections.S.lines.L.field
+  if (lyricsData.sectionIdx !== undefined && lyricsData.lineIdx !== undefined && lyricsData.line !== undefined && lyricsData.wordIndex === undefined) {
+    if (!isValidIndex(lyricsData.sectionIdx, MAX_SECTION_INDEX) || !isValidIndex(lyricsData.lineIdx, MAX_LINE_INDEX)) {
+      throw Object.assign(new Error('Invalid sectionIdx/lineIdx'), { status: 400 });
     }
     const update: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(lyricsData.line)) {
       if (!LINE_FIELDS.has(key)) continue;
-      update[`lines.${lyricsData.lineIndex}.${key}`] = value;
+      update[`sections.${lyricsData.sectionIdx}.lines.${lyricsData.lineIdx}.${key}`] = value;
     }
     if (Object.keys(update).length === 0) return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
     return Lyrics.findOneAndUpdate(
@@ -472,18 +521,19 @@ async function patchLyricsWithSession(
     ) as Promise<LyricsDoc | null>;
   }
 
-  if (
-    lyricsData.lineIndex !== undefined &&
-    lyricsData.wordIndex !== undefined &&
-    lyricsData.word !== undefined
-  ) {
-    if (!isValidIndex(lyricsData.lineIndex, MAX_LINE_INDEX) || !isValidIndex(lyricsData.wordIndex, MAX_WORD_INDEX)) {
-      throw Object.assign(new Error('Invalid lineIndex/wordIndex'), { status: 400 });
+  // Positional word patch: sections.S.lines.L.words.W.field
+  if (lyricsData.sectionIdx !== undefined && lyricsData.lineIdx !== undefined && lyricsData.wordIndex !== undefined && lyricsData.word !== undefined) {
+    if (
+      !isValidIndex(lyricsData.sectionIdx, MAX_SECTION_INDEX) ||
+      !isValidIndex(lyricsData.lineIdx, MAX_LINE_INDEX) ||
+      !isValidIndex(lyricsData.wordIndex, MAX_WORD_INDEX)
+    ) {
+      throw Object.assign(new Error('Invalid sectionIdx/lineIdx/wordIndex'), { status: 400 });
     }
     const update: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(lyricsData.word)) {
       if (!WORD_FIELDS.has(key)) continue;
-      update[`lines.${lyricsData.lineIndex}.words.${lyricsData.wordIndex}.${key}`] = value;
+      update[`sections.${lyricsData.sectionIdx}.lines.${lyricsData.lineIdx}.words.${lyricsData.wordIndex}.${key}`] = value;
     }
     if (Object.keys(update).length === 0) return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
     return Lyrics.findOneAndUpdate(
@@ -496,17 +546,34 @@ async function patchLyricsWithSession(
   const lyricsUpdate: Record<string, unknown> = {};
   if (lyricsData.editorMode !== undefined) lyricsUpdate.editorMode = lyricsData.editorMode;
   if (lyricsData.language !== undefined) lyricsUpdate.language = lyricsData.language;
-  if (lyricsData.lines !== undefined) lyricsUpdate.lines = lyricsData.lines;
+  if (lyricsData.sections !== undefined) lyricsUpdate.sections = lyricsData.sections;
 
   if (Object.keys(lyricsUpdate).length > 0) {
     return Lyrics.findOneAndUpdate(
       { projectId },
-      { $set: lyricsUpdate, $inc: { version: 1 } },
+      { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },
       { upsert: true, new: true, session }
     ) as Promise<LyricsDoc | null>;
   }
 
   return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
+}
+
+// Lazy migration: if doc has legacy flat lines[] but no sections[], convert and save.
+// Returns the sections array ready to include in the API response.
+async function resolveSections(doc: LyricsDoc | null): Promise<SectionEntry[]> {
+  if (!doc) return [];
+  const sections = doc.sections as SectionEntry[] | undefined;
+  if (sections && sections.length > 0) return sections;
+  const legacyLines = (doc as unknown as { lines?: LineEntry[] }).lines;
+  if (!legacyLines?.length) return [];
+  const migrated = migrateLinesToSections(legacyLines);
+  // Fire-and-forget migration write — don't block the response
+  Lyrics.updateOne(
+    { projectId: (doc as unknown as { projectId: string }).projectId },
+    { $set: { sections: migrated }, $unset: { lines: 1 } }
+  ).catch(() => {});
+  return migrated;
 }
 
 export async function deleteProject(

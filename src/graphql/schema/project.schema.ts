@@ -63,6 +63,7 @@ export const projectSchema = `
     word: String!
     time: Float
     reading: String
+    singerIndex: Int
   }
 
   input TranslationInput {
@@ -113,9 +114,13 @@ export const projectSchema = `
   input ProjectLyricsInput {
     editorMode: String
     language: String
-    lines: [LineInput!]
-    lineIndex: Int
+    # Full sections replace
+    sections: [SectionInput!]
+    # Positional single-line patch
+    sectionIdx: Int
+    lineIdx: Int
     line: LineInput
+    # Positional word patch
     wordIndex: Int
     word: WordInput
   }

@@ -12,6 +12,10 @@ export interface SecondaryWordEntry {
 }
 
 export interface LineEntry {
+  type?: string | null;
+  label?: string | null;
+  depth?: number | null;
+  id?: string | null;
   text: string;
   timestamp: number | null;
   endTime?: number | null;
@@ -19,15 +23,23 @@ export interface LineEntry {
   singers?: string[];
   translation?: string | null;
   translations?: Array<{ text: string; language?: string | null }>;
-  id?: string;
   words?: WordEntry[];
   secondaryWords?: SecondaryWordEntry[];
+}
+
+export interface SectionEntry {
+  label?: string | null;
+  depth?: number | null;
+  id?: string | null;
+  singers?: string[];
+  timestamp?: number | null;
+  lines: LineEntry[];
 }
 
 export interface LyricsData {
   editorMode: 'lrc' | 'srt' | 'words';
   language?: string | null;
-  lines: LineEntry[];
+  sections: SectionEntry[];
 }
 
 export interface ProjectState {
@@ -145,6 +157,7 @@ export interface ProjectListItem {
   projectId: string;
   title?: string;
   metadata?: ProjectMetadata;
+  coverImage?: string;
   upload?: UploadInfo | null;
   editorMode: string;
   lineCount: number;

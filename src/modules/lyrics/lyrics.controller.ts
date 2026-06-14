@@ -22,7 +22,7 @@ import {
 type Body = Record<string, any>;
 
 export async function parse(req: FastifyRequest, reply: FastifyReply) {
-  const { content, filename } = req.body as Body;
+  const { content, filename, options } = req.body as Body;
 
   if (!content || typeof content !== 'string') {
     return reply.code(400).send({ error: 'Lyrics content is required' });
@@ -37,7 +37,7 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ error: 'Unsupported lyrics format' });
   }
 
-  const lines = parseLrcSrtFile(content, filename as string);
+  const lines = parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {});
   return reply.send({
     lines,
     detectedFormat: filename?.toLowerCase().endsWith('.srt') ? 'srt' : 'lrc',
