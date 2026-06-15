@@ -153,7 +153,6 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
       source: u.source,
       uploadUrl: u.uploadUrl,
       publicId: u.publicId,
-      spotifyTrackId: u.spotifyTrackId,
       fileName: u.fileName,
       title: u.title,
       duration: u.duration,
@@ -166,7 +165,7 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
 }
 
 export async function createMedia(userId: string | null | undefined, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { source, uploadUrl: cloudinaryUrl, publicId, spotifyTrackId, fileName, title, duration, coverImage } = data as Record<string, string | undefined>;
+  const { source, uploadUrl: cloudinaryUrl, publicId, fileName, title, duration, coverImage } = data as Record<string, string | undefined>;
   // For youtube source, the URL is stored in uploadUrl (cloudinaryUrl variable)
   const youtubeUrl = source === 'youtube' ? cloudinaryUrl : undefined;
   const query: Record<string, unknown> = { source };
@@ -200,8 +199,6 @@ export async function createMedia(userId: string | null | undefined, data: Recor
       }
     }
     query.uploadUrl = cloudinaryUrl;
-  } else if (source === 'spotify' && spotifyTrackId) {
-    query.spotifyTrackId = spotifyTrackId;
   }
 
   let finalTitle = (title as string) || (fileName as string) || '';
@@ -226,7 +223,6 @@ export async function createMedia(userId: string | null | undefined, data: Recor
       source,
       uploadUrl: cloudinaryUrl || null,
       publicId: publicId || null,
-      spotifyTrackId: spotifyTrackId || null,
       fileName: fileName || '',
       title: finalTitle,
       duration: finalDuration,

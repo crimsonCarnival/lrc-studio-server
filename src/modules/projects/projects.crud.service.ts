@@ -179,7 +179,7 @@ export async function createProject(
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
     .select('projectId title metadata coverImage uploadId readOnly createdAt updatedAt forkedFrom forkCount starCount')
-    .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist')
+    .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist')
     .sort({ updatedAt: -1 })
     .limit(100)
     .lean<LeanProjectListItem[]>();
@@ -279,7 +279,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
 export async function getProject(projectId: string, requestingUserId?: string | null): Promise<ProjectPublic | null> {
   const [project, lyrics] = await Promise.all([
     Project.findOne({ projectId })
-      .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist'),
+      .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist'),
     Lyrics.findOne({ projectId }),
   ]);
   if (!project) return null;
@@ -352,7 +352,7 @@ export async function updateProject(
       { projectId },
       { $set: projectUpdate, $inc: { version: 1 } },
       { new: true }
-    ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist'),
+    ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist'),
     lyricsPromise,
   ]);
 
@@ -392,7 +392,7 @@ export async function patchProject(
 ): Promise<ServiceResult<{ project: ProjectPublic }>> {
   const data = rawData as UpdateProjectData;
   const project = await Project.findOne({ projectId })
-    .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist');
+    .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist');
   if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
   // Require ownership unconditionally. Guest drafts live client-side (IndexedDB)
@@ -428,7 +428,7 @@ export async function patchProject(
         { projectId },
         { $set: projectUpdate, $inc: { version: 1 } },
         { new: true, session }
-      ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist');
+      ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist');
       if (found) updatedProject = found;
     }
 

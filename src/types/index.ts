@@ -78,7 +78,6 @@ export interface UploadInfo {
   uploadUrl?: string;
   duration?: number;
   title?: string;
-  spotifyTrackId?: string;
 }
 
 // ─── API Response types ──────────────────────────────────────────────

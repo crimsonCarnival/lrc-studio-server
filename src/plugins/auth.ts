@@ -75,7 +75,7 @@ function verifyToken(token: string): JwtPayload {
 /** Module-level jwt tools — use these when this.jwt is unavailable (e.g. in standalone exported handlers). */
 export const jwtTools = { signAccess, signRefresh, verifyToken };
 
-// Only the fields needed for auth checks — avoids loading passwordHash, spotify tokens, etc.
+// Only the fields needed for auth checks — avoids loading passwordHash, etc.
 const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role accountName lastIp';
 
 async function lookupUser(userId: string | undefined): Promise<CachedAuthUser | null> {

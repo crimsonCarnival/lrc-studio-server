@@ -21,14 +21,13 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
 
   // Use model toPublic for consistency and mandatory fields
   if (project.uploadId && typeof project.uploadId === 'object') {
-    const uploadDoc = project.uploadId as unknown as { _id?: { toString(): string }; id?: string; toPublic?: () => unknown; source?: string; fileName?: string; title?: string; uploadUrl?: string; spotifyTrackId?: string; duration?: number };
+    const uploadDoc = project.uploadId as unknown as { _id?: { toString(): string }; id?: string; toPublic?: () => unknown; source?: string; fileName?: string; title?: string; uploadUrl?: string; duration?: number };
     pub.upload = typeof uploadDoc.toPublic === 'function' ? uploadDoc.toPublic() : {
       id: uploadDoc._id?.toString() || uploadDoc.id,
       source: uploadDoc.source,
       fileName: uploadDoc.fileName || '',
       title: uploadDoc.title || '',
       uploadUrl: uploadDoc.uploadUrl,
-      spotifyTrackId: uploadDoc.spotifyTrackId,
       duration: uploadDoc.duration,
     };
   } else {
@@ -109,7 +108,6 @@ export async function cloneProject(
       const srcUp = sourceUpload as unknown as Record<string, unknown>;
       const query: Record<string, unknown> = { userId: newUserId, source: srcUp.source };
       if (srcUp.uploadUrl) query.uploadUrl = srcUp.uploadUrl;
-      else if (srcUp.source === 'spotify' && srcUp.spotifyTrackId) query.spotifyTrackId = srcUp.spotifyTrackId;
 
       const newUpload = await Upload.findOneAndUpdate(
         query,
@@ -118,7 +116,6 @@ export async function cloneProject(
           source: srcUp.source,
           uploadUrl: srcUp.uploadUrl || null,
           publicId: srcUp.publicId || null,
-          spotifyTrackId: srcUp.spotifyTrackId || null,
           fileName: srcUp.fileName || '',
           title: srcUp.title || '',
           duration: srcUp.duration || null,
