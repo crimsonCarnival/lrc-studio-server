@@ -21,16 +21,14 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
 
   // Use model toPublic for consistency and mandatory fields
   if (project.uploadId && typeof project.uploadId === 'object') {
-    const uploadDoc = project.uploadId as unknown as { _id?: { toString(): string }; id?: string; toPublic?: () => unknown; source?: string; fileName?: string; title?: string; youtubeUrl?: string; uploadUrl?: string; spotifyTrackId?: string; artist?: string; duration?: number };
+    const uploadDoc = project.uploadId as unknown as { _id?: { toString(): string }; id?: string; toPublic?: () => unknown; source?: string; fileName?: string; title?: string; uploadUrl?: string; spotifyTrackId?: string; duration?: number };
     pub.upload = typeof uploadDoc.toPublic === 'function' ? uploadDoc.toPublic() : {
       id: uploadDoc._id?.toString() || uploadDoc.id,
       source: uploadDoc.source,
       fileName: uploadDoc.fileName || '',
       title: uploadDoc.title || '',
-      youtubeUrl: uploadDoc.youtubeUrl,
       uploadUrl: uploadDoc.uploadUrl,
       spotifyTrackId: uploadDoc.spotifyTrackId,
-      artist: uploadDoc.artist,
       duration: uploadDoc.duration,
     };
   } else {
@@ -39,7 +37,7 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
 
   pub.lyrics = lyrics
     ? (lyrics as unknown as { toPublic(): unknown }).toPublic()
-    : { id: null, projectId, editorMode: 'lrc', language: null, lines: [] };
+    : { id: null, projectId, editorMode: 'lrc', lines: [] };
 
   // Ensure lyrics has id and projectId (mandatory in GraphQL schema)
   if (pub.lyrics && lyrics) {
@@ -110,8 +108,7 @@ export async function cloneProject(
     if (sourceUpload) {
       const srcUp = sourceUpload as unknown as Record<string, unknown>;
       const query: Record<string, unknown> = { userId: newUserId, source: srcUp.source };
-      if (srcUp.source === 'cloudinary' && srcUp.uploadUrl) query.uploadUrl = srcUp.uploadUrl;
-      else if (srcUp.source === 'youtube' && srcUp.youtubeUrl) query.youtubeUrl = srcUp.youtubeUrl;
+      if (srcUp.uploadUrl) query.uploadUrl = srcUp.uploadUrl;
       else if (srcUp.source === 'spotify' && srcUp.spotifyTrackId) query.spotifyTrackId = srcUp.spotifyTrackId;
 
       const newUpload = await Upload.findOneAndUpdate(
@@ -121,9 +118,7 @@ export async function cloneProject(
           source: srcUp.source,
           uploadUrl: srcUp.uploadUrl || null,
           publicId: srcUp.publicId || null,
-          youtubeUrl: srcUp.youtubeUrl || null,
           spotifyTrackId: srcUp.spotifyTrackId || null,
-          artist: srcUp.artist || null,
           fileName: srcUp.fileName || '',
           title: srcUp.title || '',
           duration: srcUp.duration || null,

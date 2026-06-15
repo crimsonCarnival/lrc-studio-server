@@ -30,7 +30,6 @@ export async function createUpload(req: FastifyRequest, reply: FastifyReply): Pr
     source: 'spotify',
     spotifyTrackId: (resolved as Record<string, unknown>).trackId as string,
     title: (resolved as Record<string, unknown>).name as string,
-    artist: (resolved as Record<string, unknown>).artist as string,
     duration: (resolved as Record<string, unknown>).duration ? ((resolved as Record<string, number>).duration / 1000) : null,
     fileName: '',
     coverImage: (resolved as Record<string, unknown>).albumArt as string | null,
