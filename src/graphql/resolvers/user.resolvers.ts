@@ -61,7 +61,11 @@ export const userResolvers = {
     me: async (_root: unknown, _args: Record<string, unknown>, context: Context) => {
       if (!context.userId) return null;
       const user = await User.findById(context.userId);
-      return user?.toPublic();
+      if (!user) return null;
+      const wasJustUnbanned = await user.checkBanStatus();
+      const pub = user.toPublic();
+      if (wasJustUnbanned) pub.wasJustUnbanned = true;
+      return pub;
     },
 
     publicProfile: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
@@ -139,10 +143,9 @@ export const userResolvers = {
         badges: user.badges ?? [],
         showcasedBadges,
         showcasePublic: showcaseVisible,
-        level: user.level ?? 0,
-        xp: user.xp ?? 0,
-        minutesSynced: user.minutesSynced ?? 0,
-        currentStreak: user.currentStreak ?? 0,
+        stats: { minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0 },
+        streak: { current: user.streak?.current ?? 0, longest: user.streak?.longest ?? 0, lastActiveDate: user.streak?.lastActiveDate ?? null },
+        progression: { xp: user.progression?.xp ?? 0, level: user.progression?.level ?? 0 },
       };
     },
 
@@ -154,10 +157,10 @@ export const userResolvers = {
       const cap = Math.min(limit, 50);
       const [users, total] = await Promise.all([
         User.find({ isDeleted: { $ne: true } })
-          .sort({ minutesSynced: -1 })
+          .sort({ 'stats.minutesSynced': -1 })
           .skip(offset)
           .limit(cap + 1)
-          .select('_id accountName displayName avatarUrl badges minutesSynced wordsSynced karaokeLines level xp currentStreak social')
+          .select('_id accountName displayName avatarUrl badges stats streak progression social')
           .lean<IUser[]>(),
         User.countDocuments({ isDeleted: { $ne: true } }),
       ]);
@@ -178,12 +181,9 @@ export const userResolvers = {
           displayName: u.displayName ?? null,
           avatarUrl: u.avatarUrl ?? null,
           badges: u.badges ?? [],
-          minutesSynced: u.minutesSynced ?? 0,
-          wordsSynced: u.wordsSynced ?? 0,
-          karaokeLines: u.karaokeLines ?? 0,
-          level: u.level ?? 0,
-          xp: u.xp ?? 0,
-          currentStreak: u.currentStreak ?? 0,
+          stats: { minutesSynced: u.stats?.minutesSynced ?? 0, wordsSynced: u.stats?.wordsSynced ?? 0, karaokeLines: u.stats?.karaokeLines ?? 0 },
+          streak: { current: u.streak?.current ?? 0, longest: u.streak?.longest ?? 0, lastActiveDate: u.streak?.lastActiveDate ?? null },
+          progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },
           projectCount: pcMap.get(u._id.toString()) ?? 0,
           totalStarsReceived: u.social?.totalStarsReceived ?? 0,
           totalForksReceived: u.social?.totalForksReceived ?? 0,
@@ -461,8 +461,8 @@ export const userResolvers = {
     updateShowcase: async (_root: unknown, { badgeIds, showcasePublic }: { badgeIds: string[]; showcasePublic?: boolean }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await updateShowcase(context.userId, badgeIds, showcasePublic);
-      const user = await User.findById(context.userId).select('level showcasePublic').lean<IUser>();
-      const level = user?.level ?? 0;
+      const user = await User.findById(context.userId).select('progression showcasePublic').lean<IUser>();
+      const level = user?.progression?.level ?? 0;
       return {
         success: result.success,
         error: result.error ?? null,
@@ -538,14 +538,10 @@ export const userResolvers = {
     createdAt: (user: IUser) => user.createdAt ? new Date(user.createdAt).toISOString() : null,
     badges:          (user: IUser) => user.badges ?? [],
     showcasedBadges: (user: IUser) => user.showcasedBadges ?? [],
-    minutesSynced:   (user: IUser) => user.minutesSynced ?? 0,
-    wordsSynced:     (user: IUser) => user.wordsSynced ?? 0,
-    karaokeLines:    (user: IUser) => user.karaokeLines ?? 0,
-    currentStreak:   (user: IUser) => user.currentStreak ?? 0,
-    longestStreak:   (user: IUser) => user.longestStreak ?? 0,
-    level:           (user: IUser) => user.level ?? 0,
-    xp:              (user: IUser) => user.xp ?? 0,
-    showcaseSlots:   (user: IUser) => getShowcaseSlots(user.level ?? 0),
+    stats:           (user: IUser) => ({ minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0 }),
+    streak:          (user: IUser) => ({ current: user.streak?.current ?? 0, longest: user.streak?.longest ?? 0, lastActiveDate: user.streak?.lastActiveDate ?? null }),
+    progression:     (user: IUser) => ({ xp: user.progression?.xp ?? 0, level: user.progression?.level ?? 0 }),
+    showcaseSlots:   (user: IUser) => getShowcaseSlots(user.progression?.level ?? 0),
 
     // The `User` type is reachable through edges (Project.user, Upload.user) that
     // resolve for ANY viewer, including unauthenticated ones. Field resolvers that

@@ -84,10 +84,8 @@ const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
 type UserForCondition = {
   _id: mongoose.Types.ObjectId;
   createdAt?: Date;
-  minutesSynced?: number;
-  wordsSynced?: number;
-  karaokeLines?: number;
-  currentStreak?: number;
+  stats?: { minutesSynced?: number; wordsSynced?: number; karaokeLines?: number };
+  streak?: { current?: number };
   isVerified: boolean;
   role: 'user' | 'admin';
   social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number };
@@ -100,11 +98,11 @@ export async function checkCondition(user: UserForCondition, def: IBadgeDefiniti
       return rank <= (def.conditionValue ?? 0);
     }
     case 'minutes_synced':
-      return (user.minutesSynced ?? 0) >= (def.conditionValue ?? 0);
+      return (user.stats?.minutesSynced ?? 0) >= (def.conditionValue ?? 0);
     case 'words_synced':
-      return (user.wordsSynced ?? 0) >= (def.conditionValue ?? 0);
+      return (user.stats?.wordsSynced ?? 0) >= (def.conditionValue ?? 0);
     case 'karaoke_lines':
-      return (user.karaokeLines ?? 0) >= (def.conditionValue ?? 0);
+      return (user.stats?.karaokeLines ?? 0) >= (def.conditionValue ?? 0);
     case 'project_count': {
       const n = await Project.countDocuments({ userId: user._id });
       return n >= (def.conditionValue ?? 0);
@@ -128,7 +126,7 @@ export async function checkCondition(user: UserForCondition, def: IBadgeDefiniti
       return days >= (def.conditionValue ?? 0);
     }
     case 'streak_days':
-      return (user.currentStreak ?? 0) >= (def.conditionValue ?? 0);
+      return (user.streak?.current ?? 0) >= (def.conditionValue ?? 0);
     case 'is_verified':
       return user.isVerified === true;
     case 'role_admin':
@@ -216,7 +214,7 @@ export async function retroactiveGrant(
   }
 
   const users = await User.find({ isDeleted: { $ne: true } })
-    .select('_id badges minutesSynced wordsSynced karaokeLines currentStreak isVerified role createdAt social')
+    .select('_id badges stats streak isVerified role createdAt social')
     .limit(limit)
     .lean<IUser[]>();
 
@@ -281,7 +279,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
   const projectIds: string[] = userProjects.map((p) => p.projectId);
 
   if (projectIds.length === 0) {
-    await User.updateOne({ _id: userId }, { minutesSynced: 0, wordsSynced: 0, karaokeLines: 0 });
+    await User.updateOne({ _id: userId }, { 'stats.minutesSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0 });
     return { minutesSynced: 0, wordsSynced: 0, karaokeLines: 0 };
   }
 
@@ -340,33 +338,33 @@ export async function recomputeSyncStats(userId: string): Promise<{
   const wordsSynced = wordAgg[0]?.total ?? 0;
   const karaokeLines = karaokeAgg[0]?.total ?? 0;
 
-  await User.updateOne({ _id: userId }, { minutesSynced, wordsSynced, karaokeLines });
+  await User.updateOne({ _id: userId }, { 'stats.minutesSynced': minutesSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines });
   return { minutesSynced, wordsSynced, karaokeLines };
 }
 
 // ─── Streak management ────────────────────────────────────────────────────────
 
-type LeanUserStreak = Pick<IUser, 'currentStreak' | 'longestStreak' | 'lastActiveDate'>;
+type LeanUserStreak = Pick<IUser, 'streak'>;
 
 export async function updateStreak(userId: string): Promise<number> {
-  const user = await User.findById(userId).select('currentStreak longestStreak lastActiveDate').lean<LeanUserStreak>();
+  const user = await User.findById(userId).select('streak').lean<LeanUserStreak>();
   if (!user) return 0;
 
   const todayStr = new Date().toISOString().slice(0, 10); // "2026-06-02"
-  const lastDate = user.lastActiveDate
-    ? new Date(user.lastActiveDate).toISOString().slice(0, 10)
+  const lastDate = user.streak?.lastActiveDate
+    ? new Date(user.streak.lastActiveDate).toISOString().slice(0, 10)
     : null;
 
-  if (lastDate === todayStr) return user.currentStreak ?? 1;
+  if (lastDate === todayStr) return user.streak?.current ?? 1;
 
   const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const current = lastDate === yesterdayStr ? (user.currentStreak ?? 0) + 1 : 1;
-  const longest = Math.max(current, user.longestStreak ?? 0);
+  const current = lastDate === yesterdayStr ? (user.streak?.current ?? 0) + 1 : 1;
+  const longest = Math.max(current, user.streak?.longest ?? 0);
 
   await User.updateOne({ _id: userId }, {
-    currentStreak: current,
-    longestStreak: longest,
-    lastActiveDate: new Date(),
+    'streak.current': current,
+    'streak.longest': longest,
+    'streak.lastActiveDate': new Date(),
   });
 
   return current;
@@ -391,11 +389,11 @@ const BUILTIN_XP: Map<string, number> = new Map(
   BUILTIN_BADGES.map((b) => [b.id, b.xpReward])
 );
 
-type LeanUserXP = Pick<IUser, 'badges' | 'minutesSynced' | 'wordsSynced' | 'social' | 'xpBonus'>;
+type LeanUserXP = Pick<IUser, 'badges' | 'stats' | 'social'>;
 
 export async function recomputeXP(userId: string): Promise<number> {
   const user = await User.findById(userId)
-    .select('badges minutesSynced wordsSynced social xpBonus')
+    .select('badges stats social')
     .lean<LeanUserXP>();
   if (!user) return 0;
 
@@ -416,19 +414,18 @@ export async function recomputeXP(userId: string): Promise<number> {
     }
   }
 
-  const mins      = user.minutesSynced ?? 0;
-  const words     = user.wordsSynced ?? 0;
+  const mins      = user.stats?.minutesSynced ?? 0;
+  const words     = user.stats?.wordsSynced ?? 0;
   const stars     = user.social?.totalStarsReceived ?? 0;
   const forks     = user.social?.totalForksReceived ?? 0;
   const followers = user.social?.followerCount ?? 0;
-  const bonus     = user.xpBonus ?? 0;
 
   const xp = Math.max(0, Math.floor(
-    badgeXp + mins * 2 + words * 0.1 + stars * 5 + forks * 10 + followers * 3 + bonus
+    badgeXp + mins * 2 + words * 0.1 + stars * 5 + forks * 10 + followers * 3
   ));
   const level = computeLevel(xp);
 
-  await User.updateOne({ _id: userId }, { xp, level });
+  await User.updateOne({ _id: userId }, { 'progression.xp': xp, 'progression.level': level });
   return xp;
 }
 
@@ -458,17 +455,17 @@ export async function getBadgeRarity(badgeId: string): Promise<{
 
 // ─── Showcase management ──────────────────────────────────────────────────────
 
-type LeanUserShowcase = Pick<IUser, 'badges' | 'level' | 'showcasedBadges'>;
+type LeanUserShowcase = Pick<IUser, 'badges' | 'progression' | 'showcasedBadges'>;
 
 export async function updateShowcase(
   userId: string,
   badgeIds: string[],
   showcasePublic?: boolean
 ): Promise<{ success: boolean; error?: string }> {
-  const user = await User.findById(userId).select('badges level showcasedBadges').lean<LeanUserShowcase>();
+  const user = await User.findById(userId).select('badges progression showcasedBadges').lean<LeanUserShowcase>();
   if (!user) return { success: false, error: 'User not found' };
 
-  const level = user.level ?? 0;
+  const level = user.progression?.level ?? 0;
   const maxSlots = getShowcaseSlots(level);
 
   if (badgeIds.length > maxSlots) {

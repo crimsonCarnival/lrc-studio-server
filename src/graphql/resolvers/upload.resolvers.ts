@@ -6,7 +6,6 @@ import { triggerBadgeCheck } from '../../modules/badges/badge.service.js';
 
 export interface SaveMediaInput {
   source: string;
-  youtubeUrl?: string;
   uploadUrl?: string;
   spotifyTrackId?: string;
   title?: string;
@@ -40,19 +39,19 @@ export const uploadResolvers = {
     saveMedia: async (_root: unknown, { input }: { input: SaveMediaInput }, context: Context) => {
       // Spotify always requires auth. Cloudinary and YouTube are open to guests.
       if (!context.userId && input.source === 'spotify') throw new Error('Unauthorized');
-      const { source, youtubeUrl, uploadUrl, spotifyTrackId } = input;
+      const { source, uploadUrl, spotifyTrackId } = input;
 
       // Auto-resolve or refresh the title from the YouTube API
       let resolvedTitle = input.title || '';
       const isGeneric = !resolvedTitle || ['Sin título', 'Untitled', '無題', 'test'].includes(resolvedTitle);
 
-      if (source === 'youtube' && youtubeUrl && isGeneric) {
-        const fetched = await fetchYouTubeTitle(youtubeUrl);
+      if (source === 'youtube' && uploadUrl && isGeneric) {
+        const fetched = await fetchYouTubeTitle(uploadUrl);
         if (fetched) resolvedTitle = fetched;
       }
 
       const query: Record<string, unknown> = { userId: context.userId || null, source };
-      if (source === 'youtube' && youtubeUrl) query.youtubeUrl = youtubeUrl;
+      if (source === 'youtube' && uploadUrl) query.uploadUrl = uploadUrl;
       else if (source === 'cloudinary' && uploadUrl) query.uploadUrl = uploadUrl;
       else if (source === 'spotify' && spotifyTrackId) query.spotifyTrackId = spotifyTrackId;
 

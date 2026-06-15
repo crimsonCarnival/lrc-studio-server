@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 export interface IPlaylist {
-  owner: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
   name: string;
   description?: string;
   coverImage?: string;
@@ -17,7 +17,7 @@ export interface IPlaylist {
 
 const playlistSchema = new mongoose.Schema<IPlaylist>(
   {
-    owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     name: { type: String, required: true, maxlength: 100 },
     description: { type: String, maxlength: 500 },
     coverImage: { type: String },
@@ -35,7 +35,7 @@ const playlistSchema = new mongoose.Schema<IPlaylist>(
   { timestamps: true, collection: 'playlists' }
 );
 
-playlistSchema.index({ owner: 1 });
+playlistSchema.index({ userId: 1 });
 playlistSchema.index({ tags: 1 });
 playlistSchema.index({ isPublic: 1, trendingScore: -1 });
 

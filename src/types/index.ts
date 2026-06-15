@@ -48,8 +48,6 @@ export interface ProjectState {
   playbackPosition?: number;
   playbackSpeed?: number;
   saveTime?: string | null;
-  timezone?: string | null;
-  utcOffset?: string | null;
 }
 
 export type PrimaryGenre =
@@ -77,12 +75,10 @@ export interface UploadInfo {
   id: string;
   source?: string;
   fileName?: string;
-  youtubeUrl?: string;
   uploadUrl?: string;
   duration?: number;
   title?: string;
   spotifyTrackId?: string;
-  artist?: string;
 }
 
 // ─── API Response types ──────────────────────────────────────────────
@@ -106,17 +102,11 @@ export interface UserPublic {
   isVerified: boolean;
   ban: { active: boolean; reason?: string | null; until?: Date | null };
   appeal?: { text?: string | null; status: string; submittedAt?: Date | null; resolvedAt?: Date | null } | null;
-  showUnbanMessage?: boolean;
+  wasJustUnbanned?: boolean;
   role: string;
   createdAt?: Date;
   passwordChangedAt?: Date | null;
   hasPassword?: boolean;
-  spotify?: {
-    connected: boolean;
-    spotifyId?: string | null;
-    isPremium: boolean;
-    profilePictureUrl?: string | null;
-  } | null;
   google?: {
     connected: boolean;
     googleId?: string | null;
@@ -125,6 +115,9 @@ export interface UserPublic {
     pictureUrl?: string | null;
   } | null;
   showFollowers?: boolean;
+  stats?: { minutesSynced: number; wordsSynced: number; karaokeLines: number };
+  streak?: { current: number; longest: number; lastActiveDate?: Date | null };
+  progression?: { xp: number; level: number };
 }
 
 export interface AuthTokens {

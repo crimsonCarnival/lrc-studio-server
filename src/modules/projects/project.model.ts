@@ -37,8 +37,6 @@ const stateSchema = new mongoose.Schema(
     playbackPosition: { type: Number, default: 0 },
     playbackSpeed: { type: Number, default: 1 },
     saveTime: { type: String, default: null, maxlength: 64 },
-    timezone: { type: String, default: null, maxlength: 100 },
-    utcOffset: { type: String, default: null, maxlength: 6 },
   },
   { _id: false }
 );
@@ -61,7 +59,6 @@ const metadataSchema = new mongoose.Schema(
     songArtist: { type: String, default: '', maxlength: 500, set: textSetter },
     songAlbum: { type: String, default: '', maxlength: 500, set: textSetter },
     songYear: { type: String, default: '', maxlength: 4, set: textSetter },
-    albumArt: { type: String, default: '', maxlength: 2000, set: textSetter },
     songLanguage: { type: String, default: '', maxlength: 10, set: textSetter },
     trackNumber: { type: Number, default: null },
     trackCount: { type: Number, default: null },

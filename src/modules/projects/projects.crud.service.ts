@@ -299,8 +299,8 @@ export async function getProject(projectId: string, requestingUserId?: string | 
 
   const resolvedSections = await resolveSections(lyrics);
   pub.lyrics = lyrics
-    ? { editorMode: lyrics.editorMode, language: lyrics.language || null, sections: resolvedSections }
-    : { editorMode: 'lrc', language: null, sections: [] };
+    ? { editorMode: lyrics.editorMode, sections: resolvedSections }
+    : { editorMode: 'lrc', sections: [] };
 
   if (pub.forkedFrom && !(pub.forkedFrom as Record<string, unknown>).projectId) {
     pub.forkedFrom = null;
@@ -369,8 +369,8 @@ export async function updateProject(
 
   const updateSections = await resolveSections(updatedLyrics);
   pub.lyrics = updatedLyrics
-    ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, sections: updateSections }
-    : { editorMode: 'lrc', language: null, sections: [] };
+    ? { editorMode: updatedLyrics.editorMode, sections: updateSections }
+    : { editorMode: 'lrc', sections: [] };
 
   logUserAction({
     userId: userId || null,
@@ -457,8 +457,8 @@ export async function patchProject(
 
   const patchSections = await resolveSections(updatedLyrics);
   pub.lyrics = updatedLyrics
-    ? { editorMode: updatedLyrics.editorMode, language: updatedLyrics.language || null, sections: patchSections }
-    : { editorMode: 'lrc', language: null, sections: [] };
+    ? { editorMode: updatedLyrics.editorMode, sections: patchSections }
+    : { editorMode: 'lrc', sections: [] };
 
   logUserAction({
     userId: userId || null,

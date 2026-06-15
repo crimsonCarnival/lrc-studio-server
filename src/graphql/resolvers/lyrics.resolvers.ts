@@ -22,7 +22,6 @@ export const lyricsResolvers = {
       if (!project) throw new Error('Project not found or access denied');
       const update: Record<string, unknown> = {};
       if (input.editorMode !== undefined) update.editorMode = input.editorMode;
-      if (input.language !== undefined) update.language = input.language;
       if (input.sections !== undefined) update.sections = input.sections;
       const result = await Lyrics.findOneAndUpdate(
         { projectId },

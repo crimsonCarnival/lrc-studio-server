@@ -263,9 +263,8 @@ export async function disconnectGoogle(userId: string): Promise<Record<string, u
 
   // Safety check: prevent account lockout
   const hasPassword = user.passwordHash !== 'OAUTH_NO_PASSWORD';
-  const hasSpotify = !!user.spotify?.spotifyId;
 
-  if (!hasPassword && !hasSpotify) {
+  if (!hasPassword) {
     return {
       error: 'last_auth_method',
       status: 409,

@@ -59,7 +59,7 @@ export default async function ogRoutes(fastify: FastifyInstance): Promise<void> 
         .lean<{
           title?: string;
           coverImage?: string;
-          metadata?: { songName?: string; songArtist?: string; albumArt?: string };
+          metadata?: { songName?: string; songArtist?: string };
           userId?: { displayName?: string; accountName?: string } | null;
         }>();
 
@@ -72,7 +72,7 @@ export default async function ogRoutes(fastify: FastifyInstance): Promise<void> 
       const creator = project.userId?.displayName || project.userId?.accountName || 'Unknown';
       const title = `${songName}${artist} — LRC Studio`;
       const description = `Synced lyrics by ${creator}`;
-      const image = project.coverImage || project.metadata?.albumArt || '';
+      const image = project.coverImage || '';
       const projectUrl = `${CLIENT_ORIGIN}/project/${projectId}`;
       const nonce = crypto.randomBytes(16).toString('base64');
 

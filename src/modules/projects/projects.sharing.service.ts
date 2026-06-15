@@ -152,7 +152,6 @@ export async function cloneProject(
     const [newLyricsDoc] = await Lyrics.create([{
       projectId: newProject.projectId,
       editorMode: sourceLyrics?.editorMode || 'lrc',
-      language: sourceLyrics?.language,
       lines: sourceLyrics?.lines || [],
     }], { session });
 

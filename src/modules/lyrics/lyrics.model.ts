@@ -79,11 +79,6 @@ const lyricsSchema = new mongoose.Schema(
       enum: ['lrc', 'srt', 'words'],
       default: 'lrc',
     },
-    language: {
-      type: String,
-      default: null,
-      maxlength: 10,
-    },
     sections: { type: [sectionSchema], default: [] },
     // Kept for lazy migration of pre-sections documents — removed on first write.
     lines: { type: mongoose.Schema.Types.Mixed, default: undefined, select: false },

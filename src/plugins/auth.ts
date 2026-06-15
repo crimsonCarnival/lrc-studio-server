@@ -76,7 +76,7 @@ function verifyToken(token: string): JwtPayload {
 export const jwtTools = { signAccess, signRefresh, verifyToken };
 
 // Only the fields needed for auth checks — avoids loading passwordHash, spotify tokens, etc.
-const AUTH_USER_SELECT = 'ban appeal showUnbanMessage isDeleted deletedAt role accountName lastIp';
+const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role accountName lastIp';
 
 async function lookupUser(userId: string | undefined): Promise<CachedAuthUser | null> {
   if (!userId) return null;

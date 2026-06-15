@@ -381,7 +381,6 @@ export async function checkIdentifier(
     avatarUrl: user.avatarUrl || null,
     hasPassword: user.passwordHash !== 'OAUTH_NO_PASSWORD',
     hasGoogle: !!user.google?.googleId,
-    hasSpotify: !!user.spotify?.spotifyId,
     hasPasskey: passkeyCount > 0,
   };
 }
@@ -635,12 +634,9 @@ export async function submitAppeal(
 }
 
 export async function clearUnbanMessage(
-  userId: string
+  _userId: string
 ): Promise<ServiceResult<{ success: boolean }>> {
-  const user = await User.findById(userId);
-  if (!user) return { error: 'User not found', status: 404 };
-  user.showUnbanMessage = false;
-  await user.save();
+  // showUnbanMessage is now a transient signal from checkBanStatus(), not a DB field.
   return { success: true };
 }
 

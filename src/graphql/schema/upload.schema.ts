@@ -4,9 +4,7 @@ export const uploadSchema = `
     source: String!
     uploadUrl: String
     publicId: String
-    youtubeUrl: String
     spotifyTrackId: String
-    artist: String
     fileName: String!
     title: String!
     duration: Float
@@ -21,9 +19,7 @@ export const uploadSchema = `
     source: String!
     uploadUrl: String
     publicId: String
-    youtubeUrl: String
     spotifyTrackId: String
-    artist: String
     fileName: String
     title: String
     duration: Float

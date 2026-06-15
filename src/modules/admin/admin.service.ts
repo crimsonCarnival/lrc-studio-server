@@ -32,9 +32,6 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
     if (status === 'deleted') filter.isDeleted = true;
     if (status === 'verified') filter.isVerified = true;
     if (status === 'pending') filter['appeal.status'] = 'pending';
-    if (status === 'premium') {
-      (filter as Record<string, unknown>)['spotify.isPremium'] = true;
-    }
   }
 
   if (cursor) {
@@ -42,7 +39,7 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   }
 
   const usersRaw = await User.find(filter)
-    .select('-passwordHash -spotify.accessToken -spotify.refreshToken')
+    .select('-passwordHash')
     .sort({ _id: 1 })
     .limit(Number(limit) + 1)
     .lean();
@@ -156,7 +153,6 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   } else {
     user.ban = { active: false, reason: null, until: null };
     user.appeal = { text: null, status: 'none', submittedAt: null, resolvedAt: new Date() };
-    user.showUnbanMessage = true;
   }
 
   await user.save();
@@ -370,7 +366,7 @@ export async function adjustXP(
   if (target === 'all') {
     const result = await User.updateMany(
       { isDeleted: { $ne: true } },
-      { $inc: { xpBonus: delta } }
+      { $inc: { 'progression.xp': delta } }
     );
     affected = result.modifiedCount;
 
@@ -381,7 +377,7 @@ export async function adjustXP(
       await Promise.all(users.slice(i, i + BATCH).map((u) => recomputeXP((u._id as { toString(): string }).toString())));
     }
   } else if (target === 'user' && userId) {
-    await User.updateOne({ _id: userId }, { $inc: { xpBonus: delta } });
+    await User.updateOne({ _id: userId }, { $inc: { 'progression.xp': delta } });
     await recomputeXP(userId);
     affected = 1;
   } else if (target === 'users' && userIds?.length) {
@@ -397,7 +393,7 @@ export async function adjustXP(
       }
     }
     if (resolvedIds.length) {
-      await User.updateMany({ _id: { $in: resolvedIds } }, { $inc: { xpBonus: delta } });
+      await User.updateMany({ _id: { $in: resolvedIds } }, { $inc: { 'progression.xp': delta } });
       await Promise.all(resolvedIds.map((id) => recomputeXP(id)));
     }
     affected = resolvedIds.length;

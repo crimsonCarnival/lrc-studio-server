@@ -83,7 +83,6 @@ const exportSchema = sub({
   lineEndings: { type: String, enum: ['lf', 'crlf'] },
   copyFormat: { type: String, enum: ['lrc', 'srt', 'txt'] },
   downloadFormat: { type: String, enum: ['lrc', 'srt', 'txt'] },
-  timestampPrecision: { type: String, enum: ['hundredths', 'thousandths', 'milliseconds', 'seconds'] },
   defaultFilenamePattern: { type: String, enum: ['fixed', 'media', 'title', 'date'] },
   includeMetadata: Boolean,
   stripEmptyLines: Boolean,

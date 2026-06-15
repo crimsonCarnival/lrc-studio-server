@@ -40,8 +40,6 @@ export const projectSchema = `
     playbackPosition: Float
     playbackSpeed: Float
     saveTime: String
-    timezone: String
-    utcOffset: String
   }
 
   type ProjectMetadata {
@@ -52,7 +50,6 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
-    albumArt: String
     songLanguage: String
     trackNumber: Int
     trackCount: Int
@@ -93,8 +90,6 @@ export const projectSchema = `
     playbackPosition: Float
     playbackSpeed: Float
     saveTime: String
-    timezone: String
-    utcOffset: String
   }
 
   input ProjectMetadataInput {
@@ -105,7 +100,6 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
-    albumArt: String
     songLanguage: String
     trackNumber: Int
     trackCount: Int

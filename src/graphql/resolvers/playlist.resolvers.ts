@@ -41,7 +41,7 @@ async function resolveProjects(playlist: LeanPlaylist) {
 async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
   const [projects, owner, isSavedByMe] = await Promise.all([
     resolveProjects(playlist),
-    User.findById(playlist.owner).lean<LeanUser>(),
+    User.findById(playlist.userId).lean<LeanUser>(),
     context.userId
       ? SavedPlaylist.exists({ userId: context.userId, playlistId: playlist._id })
       : Promise.resolve(false),
@@ -87,7 +87,7 @@ export const playlistResolvers = {
     playlist: async (_root: unknown, { id }: { id: string }, context: Context) => {
       const playlist = await Playlist.findById(id).lean<LeanPlaylist>();
       if (!playlist) throw new Error('not_found');
-      if (!playlist.isPublic && context.userId !== playlist.owner.toString()) {
+      if (!playlist.isPublic && context.userId !== playlist.userId.toString()) {
         throw new Error('forbidden');
       }
       return formatPlaylist(playlist, context);
@@ -97,7 +97,7 @@ export const playlistResolvers = {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<LeanUser>();
       if (!user || user.isDeleted || user.ban?.active) return [];
       const isOwner = context.userId && context.userId === user._id.toString();
-      const filter: { owner: mongoose.Types.ObjectId; isPublic?: boolean } = { owner: user._id };
+      const filter: { userId: mongoose.Types.ObjectId; isPublic?: boolean } = { userId: user._id };
       if (!isOwner) filter.isPublic = true;
       const playlists = await Playlist.find(filter).sort({ createdAt: -1 }).limit(100).lean<LeanPlaylist[]>();
       return Promise.all(playlists.map(p => formatPlaylist(p, context)));
@@ -125,7 +125,7 @@ export const playlistResolvers = {
         if (count !== input.projectIds.length) throw new Error('forbidden');
       }
       const playlist = await Playlist.create({
-        owner: context.userId,
+        userId: context.userId,
         name: input.name,
         description: input.description,
         coverImage: input.coverImage,
@@ -160,7 +160,7 @@ export const playlistResolvers = {
       validatePlaylistInput(input);
       const playlist = await Playlist.findById(id);
       if (!playlist) throw new Error('not_found');
-      if (playlist.owner.toString() !== context.userId) throw new Error('forbidden');
+      if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
       if (input.name !== undefined) playlist.name = input.name;
       if (input.description !== undefined) playlist.description = input.description ?? undefined;
       if (input.coverImage !== undefined) playlist.coverImage = input.coverImage;
@@ -175,7 +175,7 @@ export const playlistResolvers = {
       if (!context.userId) throw new Error('unauthorized');
       const playlist = await Playlist.findById(id);
       if (!playlist) throw new Error('not_found');
-      if (playlist.owner.toString() !== context.userId) throw new Error('forbidden');
+      if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
       await SavedPlaylist.deleteMany({ playlistId: new mongoose.Types.ObjectId(id) });
       await Playlist.deleteOne({ _id: id });
       return true;
@@ -189,7 +189,7 @@ export const playlistResolvers = {
       if (!context.userId) throw new Error('unauthorized');
       const playlist = await Playlist.findById(playlistId);
       if (!playlist) throw new Error('not_found');
-      if (playlist.owner.toString() !== context.userId) throw new Error('forbidden');
+      if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
       type LeanProject = IProject & { _id: mongoose.Types.ObjectId };
       const project = await Project.findById(projectId).lean<LeanProject>();
       if (!project || project.userId?.toString() !== context.userId) throw new Error('forbidden');
@@ -210,7 +210,7 @@ export const playlistResolvers = {
       if (!context.userId) throw new Error('unauthorized');
       const playlist = await Playlist.findById(playlistId);
       if (!playlist) throw new Error('not_found');
-      if (playlist.owner.toString() !== context.userId) throw new Error('forbidden');
+      if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
       const updated = await Playlist.findByIdAndUpdate(
         playlistId,
         { $pull: { projectIds: new mongoose.Types.ObjectId(projectId) } },
@@ -228,7 +228,7 @@ export const playlistResolvers = {
       if (!context.userId) throw new Error('unauthorized');
       const playlist = await Playlist.findById(playlistId);
       if (!playlist) throw new Error('not_found');
-      if (playlist.owner.toString() !== context.userId) throw new Error('forbidden');
+      if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
       if (playlist.sortMode !== 'MANUAL') throw new Error('bad_request');
       if (projectIds.length !== playlist.projectIds.length) throw new Error('bad_request');
       const currentSet = new Set(playlist.projectIds.map(id => id.toString()));
