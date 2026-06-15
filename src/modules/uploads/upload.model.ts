@@ -7,7 +7,7 @@ const urlSetter = (v: unknown) => sanitizeUrl(v as string);
 export interface IUpload {
   userId?: mongoose.Types.ObjectId | null;
   source: 'cloudinary' | 'youtube' | 'spotify';
-  cloudinaryUrl?: string | null;
+  uploadUrl?: string | null;
   publicId?: string | null;
   youtubeUrl?: string | null;
   spotifyTrackId?: string | null;
@@ -37,7 +37,7 @@ const uploadSchema = new mongoose.Schema<IUpload, UploadModel, IUploadMethods>(
       enum: ['cloudinary', 'youtube', 'spotify'],
       required: true,
     },
-    cloudinaryUrl: { type: String, default: null, maxlength: 500, set: urlSetter },
+    uploadUrl: { type: String, default: null, maxlength: 500, set: urlSetter },
     publicId: { type: String, default: null, maxlength: 500 },
     youtubeUrl: { type: String, default: null, maxlength: 500, set: urlSetter },
     spotifyTrackId: { type: String, default: null, maxlength: 100 },
@@ -50,7 +50,7 @@ const uploadSchema = new mongoose.Schema<IUpload, UploadModel, IUploadMethods>(
   { timestamps: true, collection: 'uploads' }
 );
 
-uploadSchema.index({ userId: 1, source: 1, cloudinaryUrl: 1 }, { sparse: true });
+uploadSchema.index({ userId: 1, source: 1, uploadUrl: 1 }, { sparse: true });
 uploadSchema.index({ userId: 1, source: 1, youtubeUrl: 1 }, { sparse: true });
 uploadSchema.index({ userId: 1, source: 1, spotifyTrackId: 1 }, { sparse: true });
 uploadSchema.index({ userId: 1, updatedAt: -1 });

@@ -58,7 +58,7 @@ export const loaders: MercuriusLoaders = {
         if (toFetch.length > 0) {
           const ids = toFetch.map(tf => tf.id);
           const uploads = await Upload.find({ _id: { $in: ids } })
-            .select('source fileName title youtubeUrl cloudinaryUrl publicId spotifyTrackId artist duration userId')
+            .select('source fileName title youtubeUrl uploadUrl publicId spotifyTrackId artist duration userId')
             .lean();
           toFetch.forEach(tf => {
             results[tf.index] = uploads.find((u) => (u._id as { toString(): string }).toString() === String(tf.id)) || null;

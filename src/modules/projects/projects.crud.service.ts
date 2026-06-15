@@ -45,8 +45,8 @@ interface CreateProjectData {
   public?: boolean;
   recaptchaToken?: string;
   ytUrl?: string;
-  cloudinaryUrl?: string;
-  cloudinaryPublicId?: string;
+  uploadUrl?: string;
+  uploadPublicId?: string;
   fileName?: string;
   duration?: number;
 }
@@ -84,7 +84,7 @@ export async function createProject(
   const data = rawData as CreateProjectData;
   const {
     title, uploadId, lyrics, state, metadata, readOnly, public: isPublic,
-    recaptchaToken, ytUrl, cloudinaryUrl, cloudinaryPublicId, fileName, duration,
+    recaptchaToken, ytUrl, uploadUrl, uploadPublicId, fileName, duration,
   } = data;
 
   if (!userId) {
@@ -122,12 +122,12 @@ export async function createProject(
         duration: duration ?? null,
       }], { session });
       resolvedUploadId = upload._id;
-    } else if (!resolvedUploadId && cloudinaryUrl) {
+    } else if (!resolvedUploadId && uploadUrl) {
       const [upload] = await Upload.create([{
         userId: userId || null,
         source: 'cloudinary',
-        cloudinaryUrl,
-        publicId: cloudinaryPublicId || null,
+        uploadUrl,
+        publicId: uploadPublicId || null,
         fileName: fileName || '',
         title: title || '',
         duration: duration ?? null,
@@ -179,7 +179,7 @@ export async function createProject(
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
     .select('projectId title metadata coverImage uploadId readOnly createdAt updatedAt forkedFrom forkCount starCount')
-    .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist')
+    .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist')
     .sort({ updatedAt: -1 })
     .limit(100)
     .lean<LeanProjectListItem[]>();
@@ -279,7 +279,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
 export async function getProject(projectId: string, requestingUserId?: string | null): Promise<ProjectPublic | null> {
   const [project, lyrics] = await Promise.all([
     Project.findOne({ projectId })
-      .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist'),
+      .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist'),
     Lyrics.findOne({ projectId }),
   ]);
   if (!project) return null;
@@ -352,7 +352,7 @@ export async function updateProject(
       { projectId },
       { $set: projectUpdate, $inc: { version: 1 } },
       { new: true }
-    ).populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist'),
+    ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist'),
     lyricsPromise,
   ]);
 
@@ -392,7 +392,7 @@ export async function patchProject(
 ): Promise<ServiceResult<{ project: ProjectPublic }>> {
   const data = rawData as UpdateProjectData;
   const project = await Project.findOne({ projectId })
-    .populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist');
+    .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist');
   if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
   // Require ownership unconditionally. Guest drafts live client-side (IndexedDB)
@@ -428,7 +428,7 @@ export async function patchProject(
         { projectId },
         { $set: projectUpdate, $inc: { version: 1 } },
         { new: true, session }
-      ).populate('uploadId', 'source fileName youtubeUrl cloudinaryUrl duration title spotifyTrackId artist');
+      ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title spotifyTrackId artist');
       if (found) updatedProject = found;
     }
 

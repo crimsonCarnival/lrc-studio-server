@@ -10,7 +10,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const ALLOWED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma', 'webm', 'mp4'];
 const UPLOAD_FOLDER = 'lyrics-syncer/audio';
 
-export function isCloudinaryConfigured(): boolean {
+export function isStorageConfigured(): boolean {
   return !!(
     process.env.CLOUDINARY_CLOUD_NAME &&
     process.env.CLOUDINARY_API_KEY &&
@@ -19,7 +19,7 @@ export function isCloudinaryConfigured(): boolean {
 }
 
 export async function generateAudioSignature(data: Record<string, unknown>, userId: string | null | undefined, ip: string): Promise<Record<string, unknown>> {
-  if (!isCloudinaryConfigured()) {
+  if (!isStorageConfigured()) {
     return { error: 'Upload service not configured', status: 503 };
   }
 
@@ -60,7 +60,7 @@ export async function generateAudioSignature(data: Record<string, unknown>, user
 }
 
 export async function generateAvatarSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
-  if (!isCloudinaryConfigured()) {
+  if (!isStorageConfigured()) {
     return { error: 'Upload service not configured', status: 503 };
   }
 
@@ -99,7 +99,7 @@ const MAX_COVER_SIZE = 5 * 1024 * 1024;
 const COVER_FOLDER = 'lyrics-syncer/covers';
 
 export async function generateCoverSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
-  if (!isCloudinaryConfigured()) {
+  if (!isStorageConfigured()) {
     return { error: 'Upload service not configured', status: 503 };
   }
 
@@ -151,7 +151,7 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
     uploads: uploads.map((u: Record<string, unknown>) => ({
       id: (u._id as Record<string, unknown>).toString(),
       source: u.source,
-      cloudinaryUrl: u.cloudinaryUrl,
+      uploadUrl: u.uploadUrl,
       publicId: u.publicId,
       youtubeUrl: u.youtubeUrl,
       spotifyTrackId: u.spotifyTrackId,
@@ -168,7 +168,7 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
 }
 
 export async function createMedia(userId: string | null | undefined, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { source, cloudinaryUrl, publicId, youtubeUrl, spotifyTrackId, artist, fileName, title, duration, coverImage } = data as Record<string, string | undefined>;
+  const { source, uploadUrl: cloudinaryUrl, publicId, youtubeUrl, spotifyTrackId, artist, fileName, title, duration, coverImage } = data as Record<string, string | undefined>;
   const query: Record<string, unknown> = { source };
   if (userId) query.userId = userId;
   else query.userId = null;
@@ -199,7 +199,7 @@ export async function createMedia(userId: string | null | undefined, data: Recor
         throw new Error('Invalid Cloudinary public ID');
       }
     }
-    query.cloudinaryUrl = cloudinaryUrl;
+    query.uploadUrl = cloudinaryUrl;
   } else if (source === 'spotify' && spotifyTrackId) {
     query.spotifyTrackId = spotifyTrackId;
   }
@@ -224,7 +224,7 @@ export async function createMedia(userId: string | null | undefined, data: Recor
     {
       userId: userId || null,
       source,
-      cloudinaryUrl: cloudinaryUrl || null,
+      uploadUrl: cloudinaryUrl || null,
       publicId: publicId || null,
       youtubeUrl: youtubeUrl || null,
       spotifyTrackId: spotifyTrackId || null,
@@ -245,7 +245,7 @@ export async function deleteMedia(uploadId: string, userId: string, logger: Reco
   if (!upload) return { error: 'Upload not found', status: 404 };
   if (!upload.userId || upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
 
-  if (upload.source === 'cloudinary' && upload.publicId && isCloudinaryConfigured()) {
+  if (upload.source === 'cloudinary' && upload.publicId && isStorageConfigured()) {
     try {
       cloudinary.config({
         cloud_name: process.env.CLOUDINARY_CLOUD_NAME,

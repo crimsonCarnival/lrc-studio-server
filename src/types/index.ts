@@ -78,7 +78,7 @@ export interface UploadInfo {
   source?: string;
   fileName?: string;
   youtubeUrl?: string;
-  cloudinaryUrl?: string;
+  uploadUrl?: string;
   duration?: number;
   title?: string;
   spotifyTrackId?: string;

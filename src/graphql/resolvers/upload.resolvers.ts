@@ -7,7 +7,7 @@ import { triggerBadgeCheck } from '../../modules/badges/badge.service.js';
 export interface SaveMediaInput {
   source: string;
   youtubeUrl?: string;
-  cloudinaryUrl?: string;
+  uploadUrl?: string;
   spotifyTrackId?: string;
   title?: string;
   [key: string]: unknown;
@@ -40,7 +40,7 @@ export const uploadResolvers = {
     saveMedia: async (_root: unknown, { input }: { input: SaveMediaInput }, context: Context) => {
       // Spotify always requires auth. Cloudinary and YouTube are open to guests.
       if (!context.userId && input.source === 'spotify') throw new Error('Unauthorized');
-      const { source, youtubeUrl, cloudinaryUrl, spotifyTrackId } = input;
+      const { source, youtubeUrl, uploadUrl, spotifyTrackId } = input;
 
       // Auto-resolve or refresh the title from the YouTube API
       let resolvedTitle = input.title || '';
@@ -53,7 +53,7 @@ export const uploadResolvers = {
 
       const query: Record<string, unknown> = { userId: context.userId || null, source };
       if (source === 'youtube' && youtubeUrl) query.youtubeUrl = youtubeUrl;
-      else if (source === 'cloudinary' && cloudinaryUrl) query.cloudinaryUrl = cloudinaryUrl;
+      else if (source === 'cloudinary' && uploadUrl) query.uploadUrl = uploadUrl;
       else if (source === 'spotify' && spotifyTrackId) query.spotifyTrackId = spotifyTrackId;
 
       const upload = await Upload.findOneAndUpdate(

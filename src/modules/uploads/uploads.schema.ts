@@ -17,7 +17,7 @@ export const createMediaSchema = {
     type: 'object',
     properties: {
       source: { type: 'string', enum: ['cloudinary', 'youtube', 'spotify'] },
-      cloudinaryUrl: { type: ['string', 'null'], maxLength: 500 },
+      uploadUrl: { type: ['string', 'null'], maxLength: 500 },
       publicId: { type: ['string', 'null'], maxLength: 500 },
       youtubeUrl: { type: ['string', 'null'], maxLength: 500 },
       spotifyTrackId: { type: ['string', 'null'], maxLength: 100 },
