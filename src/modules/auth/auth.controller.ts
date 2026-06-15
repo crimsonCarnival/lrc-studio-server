@@ -422,7 +422,14 @@ export async function generateRegistrationOptionsHandler(req: FastifyRequest, re
 }
 
 export async function verifyRegistrationResponseHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await authService.verifyPasskeyRegistration(req.userId!, req.body as import('@simplewebauthn/server').RegistrationResponseJSON);
+  const userAgent = (req.headers['user-agent'] as string) || '';
+  const secCHUAPlatformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
+  const result = await authService.verifyPasskeyRegistration(
+    req.userId!,
+    req.body as import('@simplewebauthn/server').RegistrationResponseJSON,
+    userAgent,
+    secCHUAPlatformVersion
+  );
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error });
   }

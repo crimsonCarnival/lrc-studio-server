@@ -333,7 +333,7 @@ export const userResolvers = {
 
       if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
         const COOLDOWN_DAYS = 7;
-        if (user.lastAccountNameChangedAt) {
+        if (user.lastAccountNameChangedAt && user.role !== 'admin') {
           const daysSince = (Date.now() - (user.lastAccountNameChangedAt as Date).getTime()) / (1000 * 60 * 60 * 24);
           if (daysSince < COOLDOWN_DAYS) {
             const daysLeft = Math.ceil(COOLDOWN_DAYS - daysSince);

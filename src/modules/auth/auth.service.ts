@@ -524,7 +524,7 @@ export async function updateProfile(
 
   if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
     const ACCOUNT_NAME_COOLDOWN_DAYS = 7;
-    if (user.lastAccountNameChangedAt) {
+    if (user.lastAccountNameChangedAt && user.role !== 'admin') {
       const daysSince = (Date.now() - user.lastAccountNameChangedAt.getTime()) / (1000 * 60 * 60 * 24);
       if (daysSince < ACCOUNT_NAME_COOLDOWN_DAYS) {
         const daysLeft = Math.ceil(ACCOUNT_NAME_COOLDOWN_DAYS - daysSince);
@@ -781,7 +781,9 @@ export async function getPasskeyRegistrationOptions(userId: string): Promise<Ser
 
 export async function verifyPasskeyRegistration(
   userId: string,
-  response: RegistrationResponseJSON
+  response: RegistrationResponseJSON,
+  userAgent?: string,
+  secCHUAPlatformVersion?: string
 ): Promise<ServiceResult<{ success: boolean }>> {
   const user = await User.findById(userId);
   if (!user || !user.currentChallenge) return err('invalid_state', 400);
@@ -818,12 +820,17 @@ export async function verifyPasskeyRegistration(
     return err('credential_already_in_use', 400);
   }
 
+  const parsedUA = userAgent ? parseUA(userAgent, secCHUAPlatformVersion) : null;
   await Passkey.create({
     credentialID: registrationInfo.credential.id,
     credentialPublicKey: Buffer.from(registrationInfo.credential.publicKey),
     counter: registrationInfo.credential.counter,
     transports: registrationInfo.credential.transports,
     userId: user._id,
+    deviceName: parsedUA?.deviceName,
+    browser: parsedUA?.browser,
+    os: parsedUA?.os,
+    deviceType: parsedUA?.deviceType,
   });
 
   resolveSticky(user._id.toString(), 'set_password').catch(() => {});
@@ -941,6 +948,10 @@ interface PasskeyPublic {
   createdAt: Date | undefined;
   lastUsedAt: Date | undefined;
   transports: string[];
+  deviceName?: string;
+  browser?: string;
+  os?: string;
+  deviceType?: string;
 }
 
 export async function getPasskeysForUser(userId: string): Promise<ServiceResult<{ passkeys: PasskeyPublic[] }>> {
@@ -949,8 +960,12 @@ export async function getPasskeysForUser(userId: string): Promise<ServiceResult<
     id: p._id.toString(),
     credentialID: p.credentialID,
     createdAt: p.createdAt,
-    lastUsedAt: p.updatedAt, // Passkey models don't have lastUsedAt specifically yet, updatedAt works
-    transports: p.transports || []
+    lastUsedAt: p.updatedAt,
+    transports: p.transports || [],
+    deviceName: p.deviceName,
+    browser: p.browser,
+    os: p.os,
+    deviceType: p.deviceType,
   }));
   return { passkeys: sanitized };
 }
