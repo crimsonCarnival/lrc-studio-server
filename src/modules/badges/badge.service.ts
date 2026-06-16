@@ -7,29 +7,30 @@ import Upload from '../uploads/upload.model.js';
 import BadgeDefinition from './badge-definition.model.js';
 import type { IBadgeDefinition } from './badge-definition.model.js';
 import Notification from '../notifications/notification.model.js';
+import XPEvent, { type IXPEvent } from '../progression/xp-event.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 
 // ─── Builtin seed data ────────────────────────────────────────────────────────
 
 export const BUILTIN_BADGES = [
-  { id: 'og',          label: 'Side A',         description: 'One of the first 100 users to join',       icon: '🏆', color: 'amber',   conditionType: 'registration_rank',    conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 500 },
-  { id: 'pioneer',     label: 'Debut',          description: 'Among the first 1,000 users',              icon: '🚀', color: 'teal',    conditionType: 'registration_rank',    conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 100 },
-  { id: 'syncer10h',   label: 'Open Mic',       description: 'Synced at least 10 hours of lyrics',       icon: '🎵', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 600,   autoGrant: true, isBuiltin: true, xpReward: 100 },
-  { id: 'syncer100h',  label: 'World Tour',     description: 'Synced at least 100 hours of lyrics',      icon: '🎶', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 6000,  autoGrant: true, isBuiltin: true, xpReward: 350 },
-  { id: 'wordsmith1k', label: 'Verse One',      description: 'Timestamped 1,000 individual words',       icon: '✍️', color: 'blue',    conditionType: 'words_synced',         conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 125 },
-  { id: 'wordsmith50k',label: 'Grand Opus',     description: 'Timestamped 50,000 individual words',      icon: '📖', color: 'shimmer', conditionType: 'words_synced',         conditionValue: 50000, autoGrant: true, isBuiltin: true, xpReward: 350 },
-  { id: 'karaoke100',  label: 'On Stage',       description: 'Word-synced 100 lyric lines',              icon: '🎤', color: 'orange',  conditionType: 'karaoke_lines',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 100 },
-  { id: 'karaoke1k',   label: 'Headliner',      description: 'Word-synced 1,000 lyric lines',            icon: '🌟', color: 'amber',   conditionType: 'karaoke_lines',        conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 250 },
-  { id: 'century',     label: 'Anthology',      description: 'Created 100+ projects',                    icon: '💫', color: 'shimmer', conditionType: 'project_count',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 200 },
-  { id: 'published10', label: 'In Rotation',    description: 'Published 10 public projects',             icon: '📢', color: 'teal',    conditionType: 'public_project_count', conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 100 },
-  { id: 'beloved',     label: 'Gold Record',    description: 'Received 50 stars on your work',           icon: '⭐', color: 'amber',   conditionType: 'stars_received',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 200 },
-  { id: 'influential', label: 'Sampled',        description: 'Your work has been forked 25 times',       icon: '🌿', color: 'green',   conditionType: 'forks_received',       conditionValue: 25,    autoGrant: true, isBuiltin: true, xpReward: 250 },
-  { id: 'following50', label: 'Fan Base',       description: 'Reached 50 followers',                     icon: '🤝', color: 'primary', conditionType: 'follower_count',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 125 },
-  { id: 'uploader',    label: 'Studio Ready',   description: 'Uploaded 10 media files',                  icon: '📤', color: 'blue',    conditionType: 'upload_count',         conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 50  },
-  { id: 'veteran',     label: 'Session Player', description: 'Account is at least 1 year old',           icon: '🎖️', color: 'rose',   conditionType: 'account_age_days',     conditionValue: 365,   autoGrant: true, isBuiltin: true, xpReward: 150 },
-  { id: 'streak7',     label: 'Daily Mix',      description: '7-day activity streak',                    icon: '🔥', color: 'orange',  conditionType: 'streak_days',          conditionValue: 7,     autoGrant: true, isBuiltin: true, xpReward: 50  },
-  { id: 'streak30',    label: 'Extended Play',  description: '30-day activity streak',                   icon: '⚡', color: 'amber',   conditionType: 'streak_days',          conditionValue: 30,    autoGrant: true, isBuiltin: true, xpReward: 150 },
-  { id: 'verified',    label: 'In Key',         description: 'Verified email address',                   icon: '✓',  color: 'primary', conditionType: 'is_verified',          conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 25  },
+  { id: 'og',          label: 'Side A',         description: 'One of the first 100 users to join',       icon: '🏆', color: 'amber',   conditionType: 'registration_rank',    conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 750 },
+  { id: 'pioneer',     label: 'Debut',          description: 'Among the first 1,000 users',              icon: '🚀', color: 'teal',    conditionType: 'registration_rank',    conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 200 },
+  { id: 'syncer10h',   label: 'Open Mic',       description: 'Synced at least 10 hours of lyrics',       icon: '🎵', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 600,   autoGrant: true, isBuiltin: true, xpReward: 200 },
+  { id: 'syncer100h',  label: 'World Tour',     description: 'Synced at least 100 hours of lyrics',      icon: '🎶', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 6000,  autoGrant: true, isBuiltin: true, xpReward: 1000 },
+  { id: 'wordsmith1k', label: 'Verse One',      description: 'Timestamped 1,000 individual words',       icon: '✍️', color: 'blue',    conditionType: 'words_synced',         conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 300 },
+  { id: 'wordsmith50k',label: 'Grand Opus',     description: 'Timestamped 50,000 individual words',      icon: '📖', color: 'shimmer', conditionType: 'words_synced',         conditionValue: 50000, autoGrant: true, isBuiltin: true, xpReward: 1500 },
+  { id: 'karaoke100',  label: 'On Stage',       description: 'Word-synced 100 lyric lines',              icon: '🎤', color: 'orange',  conditionType: 'karaoke_lines',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 250 },
+  { id: 'karaoke1k',   label: 'Headliner',      description: 'Word-synced 1,000 lyric lines',            icon: '🌟', color: 'amber',   conditionType: 'karaoke_lines',        conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 800 },
+  { id: 'century',     label: 'Anthology',      description: 'Created 100+ projects',                    icon: '💫', color: 'shimmer', conditionType: 'project_count',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 600 },
+  { id: 'published10', label: 'In Rotation',    description: 'Published 10 public projects',             icon: '📢', color: 'teal',    conditionType: 'public_project_count', conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 150 },
+  { id: 'beloved',     label: 'Gold Record',    description: 'Received 50 stars on your work',           icon: '⭐', color: 'amber',   conditionType: 'stars_received',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 250 },
+  { id: 'influential', label: 'Sampled',        description: 'Your work has been forked 25 times',       icon: '🌿', color: 'green',   conditionType: 'forks_received',       conditionValue: 25,    autoGrant: true, isBuiltin: true, xpReward: 200 },
+  { id: 'following50', label: 'Fan Base',       description: 'Reached 50 followers',                     icon: '🤝', color: 'primary', conditionType: 'follower_count',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 100 },
+  { id: 'uploader',    label: 'Studio Ready',   description: 'Uploaded 10 media files',                  icon: '📤', color: 'blue',    conditionType: 'upload_count',         conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 150 },
+  { id: 'veteran',     label: 'Session Player', description: 'Account is at least 1 year old',           icon: '🎖️', color: 'rose',   conditionType: 'account_age_days',     conditionValue: 365,   autoGrant: true, isBuiltin: true, xpReward: 300 },
+  { id: 'streak7',     label: 'Daily Mix',      description: '7-day activity streak',                    icon: '🔥', color: 'orange',  conditionType: 'streak_days',          conditionValue: 7,     autoGrant: true, isBuiltin: true, xpReward: 100 },
+  { id: 'streak30',    label: 'Extended Play',  description: '30-day activity streak',                   icon: '⚡', color: 'amber',   conditionType: 'streak_days',          conditionValue: 30,    autoGrant: true, isBuiltin: true, xpReward: 300 },
+  { id: 'verified',    label: 'In Key',         description: 'Verified email address',                   icon: '✓',  color: 'primary', conditionType: 'is_verified',          conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 50  },
   { id: 'admin',       label: 'A&R',            description: 'Platform administrator',                   icon: '🛡️', color: 'rose',   conditionType: 'role_admin',           conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 500 },
 ];
 
@@ -352,6 +353,72 @@ export async function recomputeSyncStats(userId: string): Promise<{
   return { minutesSynced, wordsSynced, karaokeLines };
 }
 
+// ─── XP Event logging (event-based system) ────────────────────────────────────
+
+export async function logXPEvent(
+  userId: string,
+  type: 'badge_grant' | 'badge_revoke' | 'admin_adjustment' | 'backfill',
+  source: string,
+  delta: number,
+  reason?: string
+): Promise<number> {
+  const user = await User.findById(userId).select('progression').lean<{ progression?: { xp?: number } }>();
+  if (!user) return 0;
+
+  const newTotalXp = Math.max(0, (user.progression?.xp ?? 0) + delta);
+  const newLevel = computeLevel(newTotalXp);
+
+  await Promise.all([
+    User.updateOne({ _id: userId }, {
+      'progression.xp': newTotalXp,
+      'progression.level': newLevel,
+      'progression.lastXpEventAt': new Date(),
+    }),
+    XPEvent.create({
+      userId: new mongoose.Types.ObjectId(userId),
+      type,
+      source,
+      delta,
+      totalXpAfter: newTotalXp,
+      reason,
+      createdAt: new Date(),
+    }),
+  ]);
+
+  return newTotalXp;
+}
+
+export async function getXPHistory(userId: string, limit = 50): Promise<IXPEvent[]> {
+  return XPEvent.find({ userId: new mongoose.Types.ObjectId(userId) })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean<IXPEvent[]>();
+}
+
+export async function validateXPIntegrity(userId: string): Promise<{
+  valid: boolean;
+  storedXp: number;
+  calculatedXp: number;
+  mismatch?: number;
+}> {
+  const user = await User.findById(userId).select('progression').lean<{ progression?: { xp?: number } }>();
+  if (!user) return { valid: false, storedXp: 0, calculatedXp: 0 };
+
+  const events = await XPEvent.find({ userId: new mongoose.Types.ObjectId(userId) })
+    .sort({ createdAt: 1 })
+    .lean<IXPEvent[]>();
+
+  const calculated = events.length > 0 ? events[events.length - 1].totalXpAfter : 0;
+  const stored = user.progression?.xp ?? 0;
+
+  return {
+    valid: stored === calculated,
+    storedXp: stored,
+    calculatedXp: calculated,
+    mismatch: stored !== calculated ? stored - calculated : undefined,
+  };
+}
+
 // ─── Streak management ────────────────────────────────────────────────────────
 
 type LeanUserStreak = Pick<IUser, 'streak'>;
@@ -382,8 +449,42 @@ export async function updateStreak(userId: string): Promise<number> {
 
 // ─── XP / Level ──────────────────────────────────────────────────────────────
 
+// Coefficients: craft-focused economy, followers less inflated
+const XP_COEFFICIENTS = {
+  minutesSynced: 3,        // 1h music = 180 XP
+  wordsSynced: 0.25,       // 1000 words = 250 XP
+  karaokeLines: 0.5,       // 100 lines = 50 XP
+  starsReceived: 3,        // 10 stars = 30 XP
+  forksReceived: 5,        // 10 forks = 50 XP
+  followerCount: 1.5,      // 100 followers = 150 XP (reduced from 3)
+};
+
 export function computeLevel(xp: number): number {
   return Math.floor(Math.sqrt(xp / 100));
+}
+
+// Compute XP from stats without persisting (for validation/preview)
+export function computeXPFromStats(
+  badgeXp: number,
+  stats: { minutesSynced?: number; wordsSynced?: number; karaokeLines?: number },
+  social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number }
+): number {
+  const mins = stats?.minutesSynced ?? 0;
+  const words = stats?.wordsSynced ?? 0;
+  const karaoke = stats?.karaokeLines ?? 0;
+  const stars = social?.totalStarsReceived ?? 0;
+  const forks = social?.totalForksReceived ?? 0;
+  const followers = social?.followerCount ?? 0;
+
+  const craftXp = mins * XP_COEFFICIENTS.minutesSynced +
+                  words * XP_COEFFICIENTS.wordsSynced +
+                  karaoke * XP_COEFFICIENTS.karaokeLines;
+
+  const communityXp = stars * XP_COEFFICIENTS.starsReceived +
+                      forks * XP_COEFFICIENTS.forksReceived +
+                      followers * XP_COEFFICIENTS.followerCount;
+
+  return Math.max(0, Math.floor(badgeXp + craftXp + communityXp));
 }
 
 export function getShowcaseSlots(level: number): number {
@@ -403,8 +504,8 @@ type LeanUserXP = Pick<IUser, 'badges' | 'stats' | 'social'>;
 
 export async function recomputeXP(userId: string): Promise<number> {
   const user = await User.findById(userId)
-    .select('badges stats social')
-    .lean<LeanUserXP>();
+    .select('badges stats social progression')
+    .lean<LeanUserXP & { progression?: { xp?: number } }>();
   if (!user) return 0;
 
   const earnedBadgeIds: string[] = (user.badges ?? []).map((b: IUserBadge) => b.id);
@@ -424,19 +525,27 @@ export async function recomputeXP(userId: string): Promise<number> {
     }
   }
 
-  const mins      = user.stats?.minutesSynced ?? 0;
-  const words     = user.stats?.wordsSynced ?? 0;
-  const stars     = user.social?.totalStarsReceived ?? 0;
-  const forks     = user.social?.totalForksReceived ?? 0;
-  const followers = user.social?.followerCount ?? 0;
+  const newXp = computeXPFromStats(badgeXp, user.stats ?? {}, user.social);
+  const newLevel = computeLevel(newXp);
+  const oldXp = user.progression?.xp ?? 0;
+  const delta = newXp - oldXp;
 
-  const xp = Math.max(0, Math.floor(
-    badgeXp + mins * 2 + words * 0.1 + stars * 5 + forks * 10 + followers * 3
-  ));
-  const level = computeLevel(xp);
+  await User.updateOne({ _id: userId }, { 'progression.xp': newXp, 'progression.level': newLevel, 'progression.lastXpEventAt': new Date() });
 
-  await User.updateOne({ _id: userId }, { 'progression.xp': xp, 'progression.level': level });
-  return xp;
+  // Log event if XP changed (indicates badge grant/revoke or stats update triggered this)
+  if (delta !== 0) {
+    await XPEvent.create({
+      userId: new mongoose.Types.ObjectId(userId),
+      type: 'badge_grant',
+      source: 'system',
+      delta,
+      totalXpAfter: newXp,
+      reason: 'badge or stat update',
+      createdAt: new Date(),
+    });
+  }
+
+  return newXp;
 }
 
 // ─── Badge rarity (global %) ──────────────────────────────────────────────────
