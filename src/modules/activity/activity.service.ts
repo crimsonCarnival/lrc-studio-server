@@ -81,3 +81,25 @@ export async function getUserActivity(
     hasMore: items.length > limit,
   };
 }
+
+export interface ActivityHeatmapDay {
+  date: string;
+  count: number;
+}
+
+// Aggregates activity counts by calendar date (UTC), bounded to the 90-day TTL window.
+export async function getUserActivityHeatmap(userId: string): Promise<ActivityHeatmapDay[]> {
+  const results = await Activity.aggregate([
+    { $match: { actorId: new mongoose.Types.ObjectId(userId) } },
+    {
+      $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+        count: { $sum: 1 },
+      },
+    },
+    { $project: { _id: 0, date: '$_id', count: 1 } },
+    { $sort: { date: 1 } },
+  ]);
+
+  return results as ActivityHeatmapDay[];
+}

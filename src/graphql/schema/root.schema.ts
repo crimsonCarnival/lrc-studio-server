@@ -33,6 +33,7 @@ export const rootSchema = `
     badgeDefinitions: [BadgeDef!]!
     userShowcase(accountName: String!): [ShowcasedBadge!]!
     myMusicLibrary: [MusicLibraryEntry!]!
+    userContentStats: ContentStats!
   }
 
   type Mutation {
@@ -166,5 +167,29 @@ export const rootSchema = `
     genre: String
     language: String
     trackCount: Int
+  }
+
+  type ProjectStats {
+    title: String!
+    count: Int!
+  }
+
+  type ContentStats {
+    totalProjects: Int!
+    totalLines: Int!
+    syncedLines: Int!
+    completionPercentage: Int!
+    averageProjectCompletion: Int!
+    averageLinesPerProject: Int!
+    fullySyncedProjects: Int!
+    musicSyncedMinutes: Int!
+    wordsTimestamped: Int!
+    karaokeLines: Int!
+    publicProjects: Int!
+    starsReceived: Int!
+    forksReceived: Int!
+    mostSyncedProject: ProjectStats
+    largestProject: ProjectStats
+    syncTrendPercentage: Int!
   }
 `;

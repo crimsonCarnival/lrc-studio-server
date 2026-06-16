@@ -8,6 +8,7 @@ import { playlistResolvers } from './playlist.resolvers.js';
 import { activityResolvers } from './activity.resolvers.js';
 import { exploreResolvers }  from './explore.resolvers.js';
 import { commentResolvers }  from './comment.resolvers.js';
+import { statsResolvers }    from './stats.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -20,6 +21,7 @@ export const resolvers = {
     ...activityResolvers.Query,
     ...exploreResolvers.Query,
     ...commentResolvers.Query,
+    ...statsResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
