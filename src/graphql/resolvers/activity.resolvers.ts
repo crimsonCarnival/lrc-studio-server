@@ -1,5 +1,5 @@
 import User from '../../db/user.model.js';
-import { getFeed, getUserActivity } from '../../modules/activity/activity.service.js';
+import { getFeed, getUserActivity, getUserActivityHeatmap } from '../../modules/activity/activity.service.js';
 import { Context } from './context.js';
 
 export interface ActivityDoc {
@@ -41,6 +41,14 @@ export const activityResolvers = {
         throw err;
       }
       return getUserActivity(context.userId, offset, Math.min(limit, 100));
+    },
+
+    userActivityHeatmap: async (_root: unknown, _args: unknown, context: Context) => {
+      if (!context.userId) {
+        const err = Object.assign(new Error('Unauthorized'), { status: 401 });
+        throw err;
+      }
+      return getUserActivityHeatmap(context.userId);
     },
   },
 
