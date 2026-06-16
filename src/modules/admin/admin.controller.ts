@@ -12,7 +12,13 @@ function setSudoCookie(req: FastifyRequest, reply: FastifyReply): void {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    path: '/admin',
+    // The server mounts this route at /admin, but the client always calls
+    // through the /api proxy (vite dev proxy and the prod reverse proxy both
+    // strip /api before forwarding), so the browser's actual request path is
+    // /api/admin/... — a Path of "/admin" never prefix-matches that, so the
+    // cookie was silently dropped on every retry. Match the other auth
+    // cookies (accessToken/refreshToken) and use the root path.
+    path: '/',
     maxAge: 5 * 60,
   });
 }

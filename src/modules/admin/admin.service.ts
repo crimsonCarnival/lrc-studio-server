@@ -359,26 +359,33 @@ export async function adjustXP(
   userId?: string,
   userIds?: string[]
 ): Promise<{ affected: number }> {
-  const { recomputeXP } = await import('../../modules/badges/badge.service.js');
+  const { computeLevel } = await import('../../modules/badges/badge.service.js');
   const delta = action === 'grant' ? Math.abs(amount) : -Math.abs(amount);
   let affected = 0;
 
-  if (target === 'all') {
-    const result = await User.updateMany(
-      { isDeleted: { $ne: true } },
-      { $inc: { 'progression.xp': delta } }
-    );
-    affected = result.modifiedCount;
+  // Manual admin grants/revokes are applied directly to progression.xp and
+  // must NOT be followed by recomputeXP() — that function derives xp purely
+  // from stats/badges and would silently overwrite (discard) this delta.
+  const applyDelta = async (ids: string[]) => {
+    if (!ids.length) return;
+    await User.updateMany({ _id: { $in: ids } }, { $inc: { 'progression.xp': delta } });
+    const updated = await User.find({ _id: { $in: ids } }).select('_id progression.xp').lean<{ _id: mongoose.Types.ObjectId; progression?: { xp?: number } }[]>();
+    await Promise.all(updated.map((u) => {
+      const xp = Math.max(0, u.progression?.xp ?? 0);
+      return User.updateOne({ _id: u._id }, { 'progression.xp': xp, 'progression.level': computeLevel(xp) });
+    }));
+  };
 
-    // Recompute levels in batches of 100
+  if (target === 'all') {
     const users = await User.find({ isDeleted: { $ne: true } }).select('_id').lean();
+    const ids = users.map((u) => (u._id as { toString(): string }).toString());
     const BATCH = 100;
-    for (let i = 0; i < users.length; i += BATCH) {
-      await Promise.all(users.slice(i, i + BATCH).map((u) => recomputeXP((u._id as { toString(): string }).toString())));
+    for (let i = 0; i < ids.length; i += BATCH) {
+      await applyDelta(ids.slice(i, i + BATCH));
     }
+    affected = ids.length;
   } else if (target === 'user' && userId) {
-    await User.updateOne({ _id: userId }, { $inc: { 'progression.xp': delta } });
-    await recomputeXP(userId);
+    await applyDelta([userId]);
     affected = 1;
   } else if (target === 'users' && userIds?.length) {
     // Resolve each entry: if it looks like a valid ObjectId use it directly,
@@ -392,10 +399,7 @@ export async function adjustXP(
         if (found) resolvedIds.push(found._id.toString());
       }
     }
-    if (resolvedIds.length) {
-      await User.updateMany({ _id: { $in: resolvedIds } }, { $inc: { 'progression.xp': delta } });
-      await Promise.all(resolvedIds.map((id) => recomputeXP(id)));
-    }
+    await applyDelta(resolvedIds);
     affected = resolvedIds.length;
   }
 
