@@ -21,6 +21,7 @@ import projectRoutes from './modules/projects/projects.routes.js';
 import lyricsRoutes from './modules/lyrics/lyrics.routes.js';
 import uploadRoutes from './modules/uploads/uploads.routes.js';
 import settingsRoutes from './modules/settings/settings.routes.js';
+import songMetadataRoutes from './modules/song-metadata/song-metadata.routes.js';
 import { googleRoutes } from './modules/google/google.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import youtubeRoutes from './modules/youtube/youtube.routes.js';
@@ -125,6 +126,7 @@ async function build() {
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(projectRoutes, { prefix: '/projects' });
   await app.register(uploadRoutes, { prefix: '/uploads' });
+  await app.register(songMetadataRoutes, { prefix: '/song-metadata' });
   await app.register(googleRoutes, { prefix: '/google' });
   await app.register(settingsRoutes, { prefix: '/settings' });
   await app.register(adminRoutes, { prefix: '/admin' });

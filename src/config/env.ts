@@ -23,6 +23,9 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_REDIRECT_URI?: string;
+  TRACK_METADATA_CLIENT_ID?: string;
+  TRACK_METADATA_CLIENT_SECRET?: string;
+  LASTFM_API_KEY?: string;
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -66,6 +69,9 @@ export function loadEnv(): Env {
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
+    TRACK_METADATA_CLIENT_ID: process.env.TRACK_METADATA_CLIENT_ID,
+    TRACK_METADATA_CLIENT_SECRET: process.env.TRACK_METADATA_CLIENT_SECRET,
+    LASTFM_API_KEY: process.env.LASTFM_API_KEY,
   };
 }
 
