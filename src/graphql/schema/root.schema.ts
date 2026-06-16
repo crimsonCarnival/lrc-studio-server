@@ -20,6 +20,7 @@ export const rootSchema = `
     playlists(accountName: String!): [Playlist!]!
     savedPlaylists: [Playlist!]!
     feed(offset: Int, limit: Int): FeedResult!
+    userActivity(offset: Int, limit: Int): FeedResult!
     searchProjects(query: String!, sortBy: SearchSort, offset: Int, limit: Int): SearchResult!
     searchUsers(query: String!, limit: Int): [FollowUser!]!
     trendingProjects(offset: Int, limit: Int): ProjectPage!

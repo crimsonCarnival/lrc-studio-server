@@ -13,7 +13,7 @@ import Follow from '../../db/follow.model.js';
 import { upsertFollow } from '../../modules/notifications/notifications.service.js';
 import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
-import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots, getXPHistory } from '../../modules/badges/badge.service.js';
+import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots } from '../../modules/badges/badge.service.js';
 import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
 import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
@@ -587,19 +587,6 @@ export const userResolvers = {
         }
       }
       return [];
-    },
-
-    xpHistory: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
-      if (!(await isSelfOrAdmin(user, context))) return [];
-      const events = await getXPHistory(user._id?.toString() ?? '', 100);
-      return events.map(e => ({
-        type: e.type,
-        source: e.source,
-        delta: e.delta,
-        totalXpAfter: e.totalXpAfter,
-        reason: e.reason ?? null,
-        createdAt: e.createdAt?.toISOString() ?? '',
-      }));
     },
   },
 };

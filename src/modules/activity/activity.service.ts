@@ -64,3 +64,20 @@ export async function getFeed(
     hasMore: items.length > limit,
   };
 }
+
+export async function getUserActivity(
+  userId: string,
+  offset: number = 0,
+  limit: number = 50
+): Promise<{ activities: unknown[]; hasMore: boolean }> {
+  const items = await Activity.find({ actorId: new mongoose.Types.ObjectId(userId) })
+    .sort({ createdAt: -1 })
+    .skip(offset)
+    .limit(limit + 1)
+    .lean();
+
+  return {
+    activities: items.slice(0, limit),
+    hasMore: items.length > limit,
+  };
+}

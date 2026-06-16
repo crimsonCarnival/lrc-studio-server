@@ -35,7 +35,6 @@ export const userSchema = `
     accountNameChangeCount: Int!
     previousAccountNames: [NameChange!]!
     emailHistory: [EmailChange!]!
-    xpHistory: [XpHistoryEvent!]!
     hasPassword: Boolean!
     google: GoogleInfo
     projects: [Project!]!
@@ -81,15 +80,6 @@ export const userSchema = `
     from: String!
     to: String!
     changedAt: String!
-  }
-
-  type XpHistoryEvent {
-    type: String!
-    source: String!
-    delta: Int!
-    totalXpAfter: Int!
-    reason: String
-    createdAt: String!
   }
 
   type PublicUser {
