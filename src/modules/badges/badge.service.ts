@@ -284,34 +284,44 @@ export async function recomputeSyncStats(userId: string): Promise<{
   }
 
   const [minAgg, wordAgg, karaokeAgg] = await Promise.all([
-    // Minutes: max timestamp per project, sum across projects
+    // Minutes: max timestamp per project (across all sections' lines), sum across projects
     Lyrics.aggregate([
       { $match: { projectId: { $in: projectIds } } },
       {
         $project: {
-          maxTs: {
-            $max: {
-              $map: { input: { $ifNull: ['$lines', []] }, as: 'l', in: { $ifNull: ['$$l.timestamp', 0] } },
+          allTimestamps: {
+            $reduce: {
+              input: { $ifNull: ['$sections', []] },
+              initialValue: [],
+              in: {
+                $concatArrays: [
+                  '$$value',
+                  { $map: { input: { $ifNull: ['$$this.lines', []] }, as: 'l', in: { $ifNull: ['$$l.timestamp', 0] } } },
+                ],
+              },
             },
           },
         },
       },
+      { $project: { maxTs: { $max: '$allTimestamps' } } },
       { $group: { _id: null, total: { $sum: '$maxTs' } } },
     ]),
 
     // Words synced: words with non-null time
     Lyrics.aggregate([
       { $match: { projectId: { $in: projectIds } } },
-      { $unwind: { path: '$lines', preserveNullAndEmptyArrays: false } },
-      { $unwind: { path: '$lines.words', preserveNullAndEmptyArrays: false } },
-      { $match: { 'lines.words.time': { $ne: null } } },
+      { $unwind: { path: '$sections', preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: '$sections.lines', preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: '$sections.lines.words', preserveNullAndEmptyArrays: false } },
+      { $match: { 'sections.lines.words.time': { $ne: null } } },
       { $count: 'total' },
     ]),
 
     // Karaoke lines: lines where ≥1 word has a time
     Lyrics.aggregate([
       { $match: { projectId: { $in: projectIds } } },
-      { $unwind: { path: '$lines', preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: '$sections', preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: '$sections.lines', preserveNullAndEmptyArrays: false } },
       {
         $project: {
           hasKaraoke: {
@@ -319,7 +329,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
               {
                 $size: {
                   $filter: {
-                    input: { $ifNull: ['$lines.words', []] },
+                    input: { $ifNull: ['$sections.lines.words', []] },
                     cond: { $ne: ['$$this.time', null] },
                   },
                 },
