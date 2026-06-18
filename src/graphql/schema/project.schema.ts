@@ -1,7 +1,7 @@
 export const projectSchema = `
   type Project {
     id: ID!
-    projectId: String!
+    publicId: String!
     title: String
     user: User
     upload: Upload
@@ -26,10 +26,11 @@ export const projectSchema = `
     isStarredByMe: Boolean
     isForkedByMe: Boolean
     forksEnabled: Boolean
+    trendingScore: Float
   }
 
   type ForkedFrom {
-    projectId: String
+    publicId: String
     userId: ID
     accountName: String
   }

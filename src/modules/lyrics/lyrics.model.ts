@@ -68,7 +68,7 @@ const sectionSchema = new mongoose.Schema(
 // --- Main: Lyrics ---
 const lyricsSchema = new mongoose.Schema(
   {
-    projectId: {
+    publicId: {
       type: String,
       required: true,
       unique: true,

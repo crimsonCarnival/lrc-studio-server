@@ -13,7 +13,7 @@ function emitToUser(userId: string, event: string, payload: unknown): void {
 export interface UpsertSocialParams {
   ownerId: string;
   type: 'star' | 'fork';
-  projectId: string;
+  publicId: string;
   projectTitle: string;
   actorId: string;
   actorAccountName: string;
@@ -21,7 +21,7 @@ export interface UpsertSocialParams {
 }
 
 export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
-  const { ownerId, type, projectId, projectTitle, actorId, actorAccountName, actorAvatarUrl } = params;
+  const { ownerId, type, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl } = params;
   if (ownerId === actorId) return;
 
   const actor = {
@@ -33,7 +33,7 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
   // actorCount tracks total star/fork events (may overcount if same actor re-stars).
   // actors[] is deduplicated via $addToSet for display; actorCount is the display hint for "and N others".
   const notification = await Notification.findOneAndUpdate(
-    { userId: new mongoose.Types.ObjectId(ownerId), type, projectId },
+    { userId: new mongoose.Types.ObjectId(ownerId), type, publicId },
     {
       $setOnInsert: { sticky: false, body: null },
       $set: { read: false, projectTitle },
@@ -48,7 +48,7 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
 
 export interface UpsertReactionParams {
   ownerId: string;
-  projectId: string;
+  publicId: string;
   projectTitle: string;
   actorId: string;
   actorAccountName: string;
@@ -57,13 +57,13 @@ export interface UpsertReactionParams {
 }
 
 export async function upsertReaction(params: UpsertReactionParams): Promise<void> {
-  const { ownerId, projectId, projectTitle, actorId, actorAccountName, actorAvatarUrl, emoji } = params;
+  const { ownerId, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl, emoji } = params;
   if (ownerId === actorId) return;
 
   const actor = { userId: new mongoose.Types.ObjectId(actorId), accountName: actorAccountName, avatarUrl: actorAvatarUrl };
 
   const notification = await Notification.findOneAndUpdate(
-    { userId: new mongoose.Types.ObjectId(ownerId), type: 'reaction', projectId },
+    { userId: new mongoose.Types.ObjectId(ownerId), type: 'reaction', publicId },
     {
       $setOnInsert: { sticky: false },
       $set: { read: false, projectTitle, body: emoji },
@@ -99,7 +99,7 @@ export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
   const notification = await Notification.findOneAndUpdate(
     { userId: new mongoose.Types.ObjectId(ownerId), type: 'follow' },
     {
-      $setOnInsert: { sticky: false, body: null, projectId: null, projectTitle: null },
+      $setOnInsert: { sticky: false, body: null, publicId: null, projectTitle: null },
       $set: { read: false, actorCount: totalFollowers },
       $push: {
         actors: {
@@ -120,7 +120,7 @@ export async function notifyAdminGranted(userId: string): Promise<void> {
     type: 'admin_granted',
     sticky: false,
     body: null,
-    projectId: null,
+    publicId: null,
     projectTitle: null,
     actors: [],
     actorCount: 0,
@@ -146,7 +146,7 @@ export async function createOnce(params: {
       $setOnInsert: {
         sticky,
         body,
-        projectId: null,
+        publicId: null,
         projectTitle: null,
         actors: [],
         actorCount: 0,

@@ -28,20 +28,21 @@ export const rootSchema = `
     popularPlaylists(offset: Int, limit: Int): PlaylistPage!
     suggestedUsers(limit: Int): [FollowUser!]!
     exploreStats: ExploreStats!
-    publicProject(projectId: String!): Project
-    projectReactions(projectId: String!): ProjectReactions!
+    publicProject(publicId: String!): Project
+    projectReactions(publicId: String!): ProjectReactions!
     leaderboard(limit: Int, offset: Int): LeaderboardResult!
     badgeDefinitions: [BadgeDef!]!
     userShowcase(accountName: String!): [ShowcasedBadge!]!
     myMusicLibrary: [MusicLibraryEntry!]!
     userContentStats: ContentStats!
+    adminAddictionLevels: [AddictionLevel!]!
   }
 
   type Mutation {
     createProject(input: CreateProjectInput!): Project!
     updateProject(id: ID!, input: UpdateProjectInput!): Project!
     deleteProject(id: ID!): Boolean!
-    updateLyrics(projectId: String!, input: UpdateLyricsInput!): Lyrics!
+    updateLyrics(publicId: String!, input: UpdateLyricsInput!): Lyrics!
     updateProfile(input: UpdateProfileInput!): User!
     updateSettings(input: UpdateSettingsInput!): Settings!
     resetSettings: Boolean!
@@ -56,14 +57,14 @@ export const rootSchema = `
     createPlaylist(input: CreatePlaylistInput!): Playlist!
     updatePlaylist(id: ID!, input: UpdatePlaylistInput!): Playlist!
     deletePlaylist(id: ID!): Boolean!
-    addProjectToPlaylist(playlistId: ID!, projectId: ID!): Playlist!
-    removeProjectFromPlaylist(playlistId: ID!, projectId: ID!): Playlist!
-    reorderPlaylist(playlistId: ID!, projectIds: [ID!]!): Playlist!
+    addProjectToPlaylist(playlistId: ID!, publicId: ID!): Playlist!
+    removeProjectFromPlaylist(playlistId: ID!, publicId: ID!): Playlist!
+    reorderPlaylist(playlistId: ID!, publicIds: [ID!]!): Playlist!
     savePlaylist(playlistId: ID!): Boolean!
     unsavePlaylist(playlistId: ID!): Boolean!
-    setForksEnabled(projectId: ID!, enabled: Boolean!): Project!
-    boostProject(projectId: ID!): Boolean!
-    reactToProject(projectId: String!, emoji: String!): ProjectReactions!
+    setForksEnabled(publicId: ID!, enabled: Boolean!): Project!
+    boostProject(publicId: ID!): Boolean!
+    reactToProject(publicId: String!, emoji: String!): ProjectReactions!
     updateShowcase(badgeIds: [String!]!, showcasePublic: Boolean): UpdateShowcaseResult!
     adminGrantBadge(userIdentifier: String!, badgeId: String!): Boolean!
     adminRevokeBadge(userId: ID!, badgeId: String!): Boolean!
@@ -71,6 +72,9 @@ export const rootSchema = `
     adminUpdateBadge(id: String!, input: BadgeDefInput!): BadgeDef!
     adminDeleteBadge(id: String!): Boolean!
     adminRetroactiveScan(badgeId: String!): RetroactiveResult!
+    adminCreateAddictionLevel(input: AddictionLevelInput!): AddictionLevel!
+    adminUpdateAddictionLevel(id: String!, input: AddictionLevelUpdateInput!): AddictionLevel!
+    adminDeleteAddictionLevel(id: String!): Boolean!
   }
 
   input UpdateProfileInput {
@@ -88,12 +92,9 @@ export const rootSchema = `
     displayName: String
     avatarUrl: String
     badges: [UserBadge!]!
-    minutesSynced: Int!
-    wordsSynced: Int!
-    karaokeLines: Int!
-    level: Int!
-    xp: Int!
-    currentStreak: Int!
+    stats: UserStats
+    progression: UserProgression
+    streak: UserStreak
     projectCount: Int!
     totalStarsReceived: Int!
     totalForksReceived: Int!
@@ -111,9 +112,19 @@ export const rootSchema = `
     grantedBy: String!
   }
 
+  type LocalizedString {
+    en: String!
+    es: String!
+  }
+
+  input LocalizedStringInput {
+    en: String!
+    es: String
+  }
+
   type ShowcasedBadge {
     id: String!
-    label: String!
+    label: LocalizedString!
     icon: String!
     color: String!
     rarity: String!
@@ -132,8 +143,8 @@ export const rootSchema = `
 
   type BadgeDef {
     id: String!
-    label: String!
-    description: String!
+    label: LocalizedString!
+    description: LocalizedString!
     icon: String!
     color: String!
     conditionType: String!
@@ -146,8 +157,8 @@ export const rootSchema = `
 
   input BadgeDefInput {
     id: String
-    label: String!
-    description: String
+    label: LocalizedStringInput!
+    description: LocalizedStringInput
     icon: String!
     color: String!
     conditionType: String!
@@ -184,11 +195,12 @@ export const rootSchema = `
     totalProjects: Int!
     totalLines: Int!
     syncedLines: Int!
-    completionPercentage: Int!
-    averageProjectCompletion: Int!
-    averageLinesPerProject: Int!
+    completionPercentage: Float!
+    averageProjectCompletion: Float!
+    averageLinesPerProject: Float!
     fullySyncedProjects: Int!
     musicSyncedMinutes: Int!
+    musicSyncedSeconds: Int!
     wordsTimestamped: Int!
     karaokeLines: Int!
     publicProjects: Int!
@@ -196,6 +208,52 @@ export const rootSchema = `
     forksReceived: Int!
     mostSyncedProject: ProjectStats
     largestProject: ProjectStats
-    syncTrendPercentage: Int!
+    syncTrendPercentage: Float!
+    addictionId: String!
+    addictionTitle: LocalizedString!
+    currentStreak: Int!
+    longestStreak: Int!
+  }
+  type AddictionLevelRequirements {
+    syncedLines: Int
+    karaokeLines: Int
+    musicSyncedMinutes: Int
+    publicProjects: Int
+    starsReceived: Int
+    wordsTimestamped: Int
+    totalProjects: Int
+  }
+
+  type AddictionLevel {
+    id: String!
+    title: LocalizedString!
+    description: LocalizedString!
+    requirements: AddictionLevelRequirements!
+    order: Int!
+  }
+
+  input AddictionLevelRequirementsInput {
+    syncedLines: Int
+    karaokeLines: Int
+    musicSyncedMinutes: Int
+    publicProjects: Int
+    starsReceived: Int
+    wordsTimestamped: Int
+    totalProjects: Int
+  }
+
+  input AddictionLevelInput {
+    id: String!
+    title: LocalizedStringInput!
+    description: LocalizedStringInput
+    requirements: AddictionLevelRequirementsInput
+    order: Int
+  }
+
+  input AddictionLevelUpdateInput {
+    title: LocalizedStringInput
+    description: LocalizedStringInput
+    requirements: AddictionLevelRequirementsInput
+    order: Int
   }
 `;

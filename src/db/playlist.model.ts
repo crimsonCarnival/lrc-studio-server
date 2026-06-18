@@ -8,7 +8,7 @@ export interface IPlaylist {
   tags: string[];
   isPublic: boolean;
   sortMode: 'MANUAL' | 'DATE_ADDED' | 'STARS' | 'ALPHABETICAL';
-  projectIds: mongoose.Types.ObjectId[];
+  publicIds: mongoose.Types.ObjectId[];
   savedCount: number;
   trendingScore: number;
   createdAt: Date;
@@ -28,7 +28,7 @@ const playlistSchema = new mongoose.Schema<IPlaylist>(
       enum: ['MANUAL', 'DATE_ADDED', 'STARS', 'ALPHABETICAL'],
       default: 'DATE_ADDED',
     },
-    projectIds: { type: [mongoose.Schema.Types.ObjectId], ref: 'Project', default: [] },
+    publicIds: { type: [mongoose.Schema.Types.ObjectId], ref: 'Project', default: [] },
     savedCount: { type: Number, default: 0 },
     trendingScore: { type: Number, default: 0 },
   },

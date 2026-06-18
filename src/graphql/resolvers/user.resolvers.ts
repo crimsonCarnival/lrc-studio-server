@@ -6,6 +6,7 @@ import type { IProject } from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
+import { requireAdmin } from './auth-guards.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
@@ -28,11 +29,10 @@ export interface UpdateProfileInput {
   showFollowers?: boolean;
 }
 
-/** Input shape for adminCreateBadge / adminUpdateBadge mutations */
 export interface BadgeInput {
   id?: string;
-  label?: string;
-  description?: string;
+  label?: { en: string; es?: string };
+  description?: { en: string; es?: string };
   icon?: string;
   color?: string;
   conditionType?: string;
@@ -416,7 +416,7 @@ export const userResolvers = {
           writeActivity({
             actorId: context.userId,
             type: 'user_followed',
-            projectId: '',
+            publicId: '',
             projectTitle: target.displayName || target.accountName || '',
             coverImage: target.avatarUrl ?? '',
             targetPath: `/${target.accountName ?? ''}`,
@@ -473,9 +473,7 @@ export const userResolvers = {
     },
 
     adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId }: { userIdentifier: string; badgeId: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean<IUser>();
-      if (admin?.role !== 'admin') throw new Error('Forbidden');
+      const adminId = await requireAdmin(context);
       // Accept accountName or MongoDB _id
       let resolvedId = userIdentifier.trim();
       if (!/^[a-f\d]{24}$/i.test(resolvedId)) {
@@ -484,29 +482,23 @@ export const userResolvers = {
         resolvedId = target._id.toString();
       }
       const { grantBadge } = await import('../../modules/badges/badge.service.js');
-      return grantBadge(resolvedId, badgeId, context.userId);
+      return grantBadge(resolvedId, badgeId, adminId);
     },
 
     adminRevokeBadge: async (_root: unknown, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean<IUser>();
-      if (admin?.role !== 'admin') throw new Error('Forbidden');
+      await requireAdmin(context);
       const { revokeBadge } = await import('../../modules/badges/badge.service.js');
       return revokeBadge(userId, badgeId);
     },
 
     adminCreateBadge: async (_root: unknown, { input }: { input: BadgeInput }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean<IUser>();
-      if (admin?.role !== 'admin') throw new Error('Forbidden');
+      await requireAdmin(context);
       const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy: context.userId });
       return { ...def.toObject(), holderCount: 0 };
     },
 
     adminUpdateBadge: async (_root: unknown, { id, input }: { id: string; input: BadgeInput }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean<IUser>();
-      if (admin?.role !== 'admin') throw new Error('Forbidden');
+      await requireAdmin(context);
       const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { new: true });
       if (!def) throw new Error('Badge not found');
       const hc = await User.countDocuments({ 'badges.id': id, isDeleted: { $ne: true } });
@@ -514,9 +506,7 @@ export const userResolvers = {
     },
 
     adminDeleteBadge: async (_root: unknown, { id }: { id: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean<IUser>();
-      if (admin?.role !== 'admin') throw new Error('Forbidden');
+      await requireAdmin(context);
       const def = await BadgeDefinition.findOne({ id }).lean<IBadgeDefinition>();
       if (!def) throw new Error('Badge not found');
       if (def.isBuiltin) throw new Error('Cannot delete built-in badges');
@@ -525,9 +515,7 @@ export const userResolvers = {
     },
 
     adminRetroactiveScan: async (_root: unknown, { badgeId }: { badgeId: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean<IUser>();
-      if (admin?.role !== 'admin') throw new Error('Forbidden');
+      await requireAdmin(context);
       const { retroactiveGrant } = await import('../../modules/badges/badge.service.js');
       return retroactiveGrant(badgeId);
     },

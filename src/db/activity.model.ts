@@ -11,7 +11,7 @@ export type ActivityType =
 export interface IActivity {
   actorId: mongoose.Types.ObjectId;
   type: ActivityType;
-  projectId: string;
+  publicId: string;
   projectTitle: string;
   coverImage: string;
   targetPath: string;
@@ -29,7 +29,7 @@ const activitySchema = new mongoose.Schema<IActivity>(
       ],
       required: true,
     },
-    projectId:    { type: String, default: '' },
+    publicId:    { type: String, default: '' },
     projectTitle: { type: String, default: '' },
     coverImage:   { type: String, default: '' },
     targetPath:   { type: String, default: '' },
@@ -38,6 +38,6 @@ const activitySchema = new mongoose.Schema<IActivity>(
 );
 
 activitySchema.index({ actorId: 1, createdAt: -1 });
-activitySchema.index({ createdAt: 1 }, { expireAfterSeconds: 7776000 }); // 90 days TTL
+activitySchema.index({ createdAt: 1 }, { expireAfterSeconds: 31536000 }); // 365 days TTL
 
 export default mongoose.model<IActivity>('Activity', activitySchema);

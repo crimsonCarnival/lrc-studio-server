@@ -47,6 +47,7 @@ export interface IUserBadge {
 
 export interface IUserStats {
   minutesSynced: number;
+  secondsSynced: number;
   wordsSynced: number;
   karaokeLines: number;
 }
@@ -152,6 +153,7 @@ const userBadgeSchema = new mongoose.Schema<IUserBadge>(
 const statsSchema = new mongoose.Schema<IUserStats>(
   {
     minutesSynced: { type: Number, default: 0, min: 0 },
+    secondsSynced: { type: Number, default: 0, min: 0 },
     wordsSynced:   { type: Number, default: 0, min: 0 },
     karaokeLines:  { type: Number, default: 0, min: 0 },
   },
@@ -361,6 +363,7 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
     showcasePublic:  this.showcasePublic ?? true,
     stats: {
       minutesSynced: this.stats?.minutesSynced ?? 0,
+      secondsSynced: this.stats?.secondsSynced ?? 0,
       wordsSynced:   this.stats?.wordsSynced ?? 0,
       karaokeLines:  this.stats?.karaokeLines ?? 0,
     },

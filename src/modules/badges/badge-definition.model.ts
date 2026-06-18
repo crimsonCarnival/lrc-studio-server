@@ -19,10 +19,15 @@ export type ConditionType =
 
 export type BadgeColor = 'amber' | 'teal' | 'green' | 'primary' | 'rose' | 'shimmer' | 'blue' | 'orange';
 
+export interface LocalizedString {
+  en: string;
+  es: string;
+}
+
 export interface IBadgeDefinition {
   id: string;
-  label: string;
-  description: string;
+  label: LocalizedString;
+  description: LocalizedString;
   icon: string;
   color: BadgeColor;
   conditionType: ConditionType;
@@ -46,8 +51,14 @@ const badgeDefSchema = new mongoose.Schema<IBadgeDefinition>(
       match: /^[a-z0-9_-]+$/,
       maxlength: 40,
     },
-    label: { type: String, required: true, trim: true, maxlength: 50 },
-    description: { type: String, default: '', maxlength: 200 },
+    label: {
+      en: { type: String, required: true, trim: true, maxlength: 50 },
+      es: { type: String, default: '', trim: true, maxlength: 50 }
+    },
+    description: {
+      en: { type: String, default: '', maxlength: 200 },
+      es: { type: String, default: '', maxlength: 200 }
+    },
     icon: { type: String, required: true, maxlength: 10 },
     color: {
       type: String,

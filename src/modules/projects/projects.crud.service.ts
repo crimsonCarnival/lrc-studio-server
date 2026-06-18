@@ -13,22 +13,23 @@ import { writeActivity } from '../activity/activity.service.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
   _id: mongoose.Types.ObjectId;
-  projectId: string;
+  publicId: string;
   title?: string;
   metadata?: Record<string, unknown>;
   coverImage?: string;
   uploadId?: Record<string, unknown> | null;
   readOnly: boolean;
+  public?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
-  forkedFrom?: { projectId?: string | null } | null;
+  forkedFrom?: { publicId?: string | null } | null;
   forkCount?: number;
   starCount?: number;
 }
 
 // Shape of aggregate lyrics metadata result
 interface LyricsMetaItem {
-  projectId: string;
+  publicId: string;
   editorMode?: string;
   lineCount?: number;
   syncedLineCount?: number;
@@ -41,6 +42,7 @@ interface CreateProjectData {
   lyrics?: { editorMode?: string; sections?: unknown[]; lines?: unknown[] };
   state?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  coverImage?: string;
   readOnly?: boolean;
   public?: boolean;
   recaptchaToken?: string;
@@ -80,11 +82,11 @@ export async function createProject(
   rawData: unknown,
   userId: string | null | undefined,
   ip: string
-): Promise<{ projectId: string; url: string } | ServiceResult> {
+): Promise<{ publicId: string; url: string } | ServiceResult> {
   const data = rawData as CreateProjectData;
   const {
     title, uploadId, lyrics, state, metadata, readOnly, public: isPublic,
-    recaptchaToken, ytUrl, uploadUrl, uploadPublicId, fileName, duration,
+    coverImage, recaptchaToken, ytUrl, uploadUrl, uploadPublicId, fileName, duration,
   } = data;
 
   if (!userId) {
@@ -141,6 +143,7 @@ export async function createProject(
       uploadId: resolvedUploadId,
       state: state || {},
       metadata: metadata || {},
+      coverImage: coverImage ? sanitizeUrl(coverImage) : '',
       readOnly: readOnly ?? true,
       public: isPublic ?? true,
     }], { session });
@@ -150,7 +153,7 @@ export async function createProject(
       : migrateLinesToSections((lyrics?.lines as LineEntry[]) || []);
 
     const [lyricsDoc] = await Lyrics.create([{
-      projectId: project.projectId,
+      publicId: project.publicId,
       editorMode: lyrics?.editorMode || 'lrc',
       sections: incomingSections,
     }], { session });
@@ -158,18 +161,18 @@ export async function createProject(
     project.lyricsId = lyricsDoc._id;
     await project.save({ session });
 
-    return { projectId: project.projectId, url: `/s/${project.projectId}` };
+    return { publicId: project.publicId, url: `/s/${project.publicId}` };
   }, { operation: 'createProject', userId: userId ?? null });
 
-  if ('projectId' in result) {
+  if ('publicId' in result) {
     logUserAction({
       userId: userId || null,
       action: 'PROJECT_CREATE',
       entityType: 'Project',
-      entityId: result.projectId,
+      entityId: result.publicId,
       ip,
       deviceId: 'unknown',
-      metadata: { projectId: result.projectId, title: title || '' },
+      metadata: { publicId: result.publicId, title: title || '' },
     });
   }
 
@@ -178,21 +181,21 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('projectId title metadata coverImage uploadId readOnly createdAt updatedAt forkedFrom forkCount starCount')
+    .select('publicId title metadata coverImage uploadId readOnly public createdAt updatedAt forkedFrom forkCount starCount')
     .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist')
     .sort({ updatedAt: -1 })
     .limit(100)
     .lean<LeanProjectListItem[]>();
 
-  const projectIds: string[] = projects.map((s) => s.projectId);
-  if (projectIds.length === 0) return [];
+  const publicIds: string[] = projects.map((s) => s.publicId);
+  if (publicIds.length === 0) return [];
 
   const lyricsMetadata = await Lyrics.aggregate<LyricsMetaItem>([
-    { $match: { projectId: { $in: projectIds } } },
+    { $match: { publicId: { $in: publicIds } } },
     {
       $project: {
         _id: 0,
-        projectId: 1,
+        publicId: 1,
         editorMode: 1,
         lineCount: {
           $cond: {
@@ -245,11 +248,11 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
 
   const lyricsMap = new Map<string, LyricsMetaItem>();
   for (const l of lyricsMetadata) {
-    lyricsMap.set(l.projectId, l);
+    lyricsMap.set(l.publicId, l);
   }
 
   return projects.map((s) => {
-    const lyrics = lyricsMap.get(s.projectId);
+    const lyrics = lyricsMap.get(s.publicId);
     const upload = s.uploadId;
     let uploadObj: UploadInfo | null = null;
     if (upload && typeof upload === 'object') {
@@ -258,7 +261,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
     }
     return {
       id: s._id.toString(),
-      projectId: s.projectId,
+      publicId: s.publicId,
       title: s.title,
       metadata: s.metadata || {},
       coverImage: s.coverImage || '',
@@ -267,20 +270,21 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       lineCount: lyrics?.lineCount ?? 0,
       syncedLineCount: lyrics?.syncedLineCount ?? 0,
       readOnly: s.readOnly,
+      public: s.public,
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
-      forkedFrom: s.forkedFrom?.projectId ? s.forkedFrom : null,
+      forkedFrom: s.forkedFrom?.publicId ? s.forkedFrom : null,
       forkCount: s.forkCount ?? 0,
       starCount: s.starCount ?? 0,
     };
   });
 }
 
-export async function getProject(projectId: string, requestingUserId?: string | null): Promise<ProjectPublic | null> {
+export async function getProject(publicId: string, requestingUserId?: string | null): Promise<ProjectPublic | null> {
   const [project, lyrics] = await Promise.all([
-    Project.findOne({ projectId })
+    Project.findOne({ publicId })
       .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist'),
-    Lyrics.findOne({ projectId }),
+    Lyrics.findOne({ publicId }),
   ]);
   if (!project) return null;
 
@@ -302,7 +306,7 @@ export async function getProject(projectId: string, requestingUserId?: string | 
     ? { editorMode: lyrics.editorMode, sections: resolvedSections }
     : { editorMode: 'lrc', sections: [] };
 
-  if (pub.forkedFrom && !(pub.forkedFrom as Record<string, unknown>).projectId) {
+  if (pub.forkedFrom && !(pub.forkedFrom as Record<string, unknown>).publicId) {
     pub.forkedFrom = null;
   }
 
@@ -310,12 +314,12 @@ export async function getProject(projectId: string, requestingUserId?: string | 
 }
 
 export async function updateProject(
-  projectId: string,
+  publicId: string,
   rawData: unknown,
   userId: string | null | undefined
 ): Promise<ServiceResult<{ project: ProjectPublic }>> {
   const data = rawData as UpdateProjectData;
-  const project = await Project.findOne({ projectId });
+  const project = await Project.findOne({ publicId });
   if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
   // Ownership required unconditionally — see patchProject / F7.
@@ -335,13 +339,13 @@ export async function updateProject(
   if (data.coverImage !== undefined) projectUpdate.coverImage = sanitizeUrl(data.coverImage);
 
   const lyricsPromise = (() => {
-    if (lyrics === undefined) return Lyrics.findOne({ projectId });
+    if (lyrics === undefined) return Lyrics.findOne({ publicId });
     const lyricsUpdate: Record<string, unknown> = {};
     if (lyrics.editorMode !== undefined) lyricsUpdate.editorMode = lyrics.editorMode;
     if (lyrics.language !== undefined) lyricsUpdate.language = lyrics.language;
     if (lyrics.sections !== undefined) lyricsUpdate.sections = lyrics.sections;
     return Lyrics.findOneAndUpdate(
-      { projectId },
+      { publicId },
       { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },
       { upsert: true, new: true }
     );
@@ -349,7 +353,7 @@ export async function updateProject(
 
   const [updatedProject, updatedLyrics] = await Promise.all([
     Project.findOneAndUpdate(
-      { projectId },
+      { publicId },
       { $set: projectUpdate, $inc: { version: 1 } },
       { new: true }
     ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist'),
@@ -379,19 +383,19 @@ export async function updateProject(
     entityId: updatedProject?._id.toString(),
     ip: 'unknown',
     deviceId: 'unknown',
-    metadata: { projectId, fieldsUpdated: Object.keys(projectUpdate) },
+    metadata: { publicId, fieldsUpdated: Object.keys(projectUpdate) },
   });
 
   return { project: pub as unknown as ProjectPublic };
 }
 
 export async function patchProject(
-  projectId: string,
+  publicId: string,
   rawData: unknown,
   userId: string | null | undefined
 ): Promise<ServiceResult<{ project: ProjectPublic }>> {
   const data = rawData as UpdateProjectData;
-  const project = await Project.findOne({ projectId })
+  const project = await Project.findOne({ publicId })
     .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist');
   if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
@@ -425,7 +429,7 @@ export async function patchProject(
     let updatedProject = project;
     if (hasProjectUpdate) {
       const found = await Project.findOneAndUpdate(
-        { projectId },
+        { publicId },
         { $set: projectUpdate, $inc: { version: 1 } },
         { new: true, session }
       ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist');
@@ -434,13 +438,13 @@ export async function patchProject(
 
     let updatedLyrics;
     if (data.lyrics !== undefined) {
-      updatedLyrics = await patchLyricsWithSession(projectId, data.lyrics, session);
+      updatedLyrics = await patchLyricsWithSession(publicId, data.lyrics, session);
     } else {
-      updatedLyrics = await Lyrics.findOne({ projectId }, null, { session });
+      updatedLyrics = await Lyrics.findOne({ publicId }, null, { session });
     }
 
     return { updatedProject, updatedLyrics };
-  }, { operation: 'patchProject', projectId, userId: userId ?? null });
+  }, { operation: 'patchProject', publicId, userId: userId ?? null });
 
   const { updatedProject, updatedLyrics } = result;
 
@@ -467,14 +471,14 @@ export async function patchProject(
     entityId: updatedProject?._id.toString(),
     ip: 'unknown',
     deviceId: 'unknown',
-    metadata: { projectId, fieldsUpdated: Object.keys(projectUpdate) },
+    metadata: { publicId, fieldsUpdated: Object.keys(projectUpdate) },
   });
 
   if (isPublishing && userId) {
     writeActivity({
       actorId:      userId,
       type:         'project_published',
-      projectId,
+      publicId,
       projectTitle: updatedProject?.title || '',
       coverImage:   updatedProject?.coverImage || '',
     }).catch(() => {});
@@ -499,7 +503,7 @@ function isValidIndex(n: unknown, max: number): n is number {
 }
 
 async function patchLyricsWithSession(
-  projectId: string,
+  publicId: string,
   lyricsData: NonNullable<UpdateProjectData['lyrics']>,
   session: mongoose.ClientSession
 ): Promise<LyricsDoc | null> {
@@ -513,9 +517,9 @@ async function patchLyricsWithSession(
       if (!LINE_FIELDS.has(key)) continue;
       update[`sections.${lyricsData.sectionIdx}.lines.${lyricsData.lineIdx}.${key}`] = value;
     }
-    if (Object.keys(update).length === 0) return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
+    if (Object.keys(update).length === 0) return Lyrics.findOne({ publicId }, null, { session }) as Promise<LyricsDoc | null>;
     return Lyrics.findOneAndUpdate(
-      { projectId },
+      { publicId },
       { $set: update, $inc: { version: 1 } },
       { upsert: true, new: true, session }
     ) as Promise<LyricsDoc | null>;
@@ -535,9 +539,9 @@ async function patchLyricsWithSession(
       if (!WORD_FIELDS.has(key)) continue;
       update[`sections.${lyricsData.sectionIdx}.lines.${lyricsData.lineIdx}.words.${lyricsData.wordIndex}.${key}`] = value;
     }
-    if (Object.keys(update).length === 0) return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
+    if (Object.keys(update).length === 0) return Lyrics.findOne({ publicId }, null, { session }) as Promise<LyricsDoc | null>;
     return Lyrics.findOneAndUpdate(
-      { projectId },
+      { publicId },
       { $set: update, $inc: { version: 1 } },
       { upsert: true, new: true, session }
     ) as Promise<LyricsDoc | null>;
@@ -550,13 +554,13 @@ async function patchLyricsWithSession(
 
   if (Object.keys(lyricsUpdate).length > 0) {
     return Lyrics.findOneAndUpdate(
-      { projectId },
+      { publicId },
       { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },
       { upsert: true, new: true, session }
     ) as Promise<LyricsDoc | null>;
   }
 
-  return Lyrics.findOne({ projectId }, null, { session }) as Promise<LyricsDoc | null>;
+  return Lyrics.findOne({ publicId }, null, { session }) as Promise<LyricsDoc | null>;
 }
 
 // Lazy migration: if doc has legacy flat lines[] but no sections[], convert and save.
@@ -570,17 +574,17 @@ async function resolveSections(doc: LyricsDoc | null): Promise<SectionEntry[]> {
   const migrated = migrateLinesToSections(legacyLines);
   // Fire-and-forget migration write — don't block the response
   Lyrics.updateOne(
-    { projectId: (doc as unknown as { projectId: string }).projectId },
+    { publicId: (doc as unknown as { publicId: string }).publicId },
     { $set: { sections: migrated }, $unset: { lines: 1 } }
   ).catch(() => {});
   return migrated;
 }
 
 export async function deleteProject(
-  projectId: string,
+  publicId: string,
   userId: string
 ): Promise<ServiceResult> {
-  const project = await Project.findOne({ projectId });
+  const project = await Project.findOne({ publicId });
   if (!project) return { error: 'Project not found', status: 404 } as ServiceResult;
 
   if (!project.isOwnedBy(userId)) {
@@ -588,9 +592,9 @@ export async function deleteProject(
   }
 
   await withTransaction(async (session) => {
-    await Project.deleteOne({ projectId }, { session });
-    await Lyrics.deleteOne({ projectId }, { session });
-  }, { operation: 'deleteProject', projectId, userId });
+    await Project.deleteOne({ publicId }, { session });
+    await Lyrics.deleteOne({ publicId }, { session });
+  }, { operation: 'deleteProject', publicId, userId });
 
   logUserAction({
     userId,
@@ -599,7 +603,7 @@ export async function deleteProject(
     entityId: project._id.toString(),
     ip: 'unknown',
     deviceId: 'unknown',
-    metadata: { projectId },
+    metadata: { publicId },
   });
 
   return {};

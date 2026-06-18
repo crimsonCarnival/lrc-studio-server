@@ -1,7 +1,7 @@
 export const lyricsSchema = `
   type Lyrics {
     id: ID!
-    projectId: String!
+    publicId: String!
     editorMode: String!
     language: String
     sections: [Section!]!

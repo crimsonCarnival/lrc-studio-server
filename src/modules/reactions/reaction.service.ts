@@ -23,7 +23,7 @@ async function getReactionSummary(
 
 async function runToggle(
   userId: string,
-  targetType: 'comment' | 'project',
+  targetType: 'project',
   targetId: string,
   emoji: string
 ): Promise<boolean> {
@@ -49,33 +49,33 @@ async function runToggle(
 }
 
 export async function reactToProject(
-  projectId: string,
+  publicId: string,
   userId: string,
   emoji: string
 ): Promise<{ reactions: ReactionSummary[]; myReaction: string | null }> {
   if (!(ALLOWED_EMOJIS as readonly string[]).includes(emoji)) throw new Error('Invalid emoji');
 
-  const kept = await runToggle(userId, 'project', projectId, emoji);
+  const kept = await runToggle(userId, 'project', publicId, emoji);
 
-  const reactions = await getReactionSummary('project', projectId);
+  const reactions = await getReactionSummary('project', publicId);
   const myReaction = kept ? emoji : null;
 
   try {
     getIO()
-      .to(`project:${projectId}`)
-      .emit('reaction:update', { targetType: 'project', targetId: projectId, reactions });
+      .to(`project:${publicId}`)
+      .emit('reaction:update', { targetType: 'project', targetId: publicId, reactions });
   } catch {}
 
   if (kept) {
     try {
       const [project, actor] = await Promise.all([
-        Project.findOne({ projectId }, 'userId title metadata').lean<{ userId: { toString(): string }; title?: string; metadata?: { songName?: string } }>(),
+        Project.findOne({ publicId }, 'userId title metadata').lean<{ userId: { toString(): string }; title?: string; metadata?: { songName?: string } }>(),
         User.findById(userId, 'accountName avatarUrl').lean<{ accountName: string; avatarUrl?: string | null }>(),
       ]);
       if (project && actor) {
         await upsertReaction({
           ownerId: project.userId.toString(),
-          projectId,
+          publicId,
           projectTitle: project.title || project.metadata?.songName || '',
           actorId: userId,
           actorAccountName: actor.accountName,
@@ -90,17 +90,17 @@ export async function reactToProject(
 }
 
 export async function getProjectReactions(
-  projectId: string,
+  publicId: string,
   viewerUserId?: string
 ): Promise<{ reactions: ReactionSummary[]; myReaction: string | null }> {
-  const reactions = await getReactionSummary('project', projectId);
+  const reactions = await getReactionSummary('project', publicId);
 
   let myReaction: string | null = null;
   if (viewerUserId) {
     const r = await Reaction.findOne({
       userId: new mongoose.Types.ObjectId(viewerUserId),
       targetType: 'project',
-      targetId: projectId,
+      targetId: publicId,
     }).lean();
     myReaction = r?.emoji ?? null;
   }

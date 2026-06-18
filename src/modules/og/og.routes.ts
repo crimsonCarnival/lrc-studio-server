@@ -48,12 +48,12 @@ export default async function ogRoutes(fastify: FastifyInstance): Promise<void> 
     || process.env.CORS_ORIGIN?.split(',')[0]?.trim()
     || '';
 
-  fastify.get<{ Params: { projectId: string } }>(
-    '/project/:projectId',
+  fastify.get<{ Params: { publicId: string } }>(
+    '/project/:publicId',
     async (request, reply) => {
-      const { projectId } = request.params;
+      const { publicId } = request.params;
 
-      const project = await Project.findOne({ projectId, public: true })
+      const project = await Project.findOne({ publicId, public: true })
         .select('title metadata coverImage userId')
         .populate('userId', 'accountName displayName')
         .lean<{
@@ -73,7 +73,7 @@ export default async function ogRoutes(fastify: FastifyInstance): Promise<void> 
       const title = `${songName}${artist} — LRC Studio`;
       const description = `Synced lyrics by ${creator}`;
       const image = project.coverImage || '';
-      const projectUrl = `${CLIENT_ORIGIN}/project/${projectId}`;
+      const projectUrl = `${CLIENT_ORIGIN}/project/${publicId}`;
       const nonce = crypto.randomBytes(16).toString('base64');
 
       return reply

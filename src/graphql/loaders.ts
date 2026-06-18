@@ -98,28 +98,28 @@ export const loaders: MercuriusLoaders = {
     isStarredByMe: {
       loader: async (queries: Array<{ obj: LoaderObj }>, context: MercuriusContext & { userId?: string | null }) => {
         if (!context.userId) return queries.map(() => false);
-        const projectIds = queries.map(({ obj }) => obj.projectId);
+        const publicIds = queries.map(({ obj }) => obj.publicId);
         const stars = await ProjectStar
-          .find({ userId: context.userId, projectId: { $in: projectIds } })
-          .select('projectId')
-          .lean<Array<{ projectId: string }>>();
-        const starredSet = new Set(stars.map((s) => s.projectId));
-        return queries.map(({ obj }) => starredSet.has(obj.projectId as string));
+          .find({ userId: context.userId, publicId: { $in: publicIds } })
+          .select('publicId')
+          .lean<Array<{ publicId: string }>>();
+        const starredSet = new Set(stars.map((s) => s.publicId));
+        return queries.map(({ obj }) => starredSet.has(obj.publicId as string));
       },
     },
 
     // Batches lineCount across all projects in a single query per request
     lineCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
-        const projectIds = queries.map(({ obj }) => obj.projectId);
+        const publicIds = queries.map(({ obj }) => obj.publicId);
         const lyricsList = await Lyrics.find(
-          { projectId: { $in: projectIds } },
-          { projectId: 1, lines: 1 }
-        ).lean<Array<{ projectId: string; lines?: LineEntry[] }>>();
-        const map = new Map(lyricsList.map((l) => [l.projectId, l]));
+          { publicId: { $in: publicIds } },
+          { publicId: 1, lines: 1 }
+        ).lean<Array<{ publicId: string; lines?: LineEntry[] }>>();
+        const map = new Map(lyricsList.map((l) => [l.publicId, l]));
         return queries.map(({ obj }) => {
           if (obj.lineCount !== undefined) return obj.lineCount;
-          const lyrics = map.get(obj.projectId as string);
+          const lyrics = map.get(obj.publicId as string);
           return lyrics?.lines?.length ?? 0;
         });
       },
@@ -128,15 +128,15 @@ export const loaders: MercuriusLoaders = {
     // Batches syncedLineCount across all projects in a single query per request
     syncedLineCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
-        const projectIds = queries.map(({ obj }) => obj.projectId);
+        const publicIds = queries.map(({ obj }) => obj.publicId);
         const lyricsList = await Lyrics.find(
-          { projectId: { $in: projectIds } },
-          { projectId: 1, lines: 1 }
-        ).lean<Array<{ projectId: string; lines?: LineEntry[] }>>();
-        const map = new Map(lyricsList.map((l) => [l.projectId, l]));
+          { publicId: { $in: publicIds } },
+          { publicId: 1, lines: 1 }
+        ).lean<Array<{ publicId: string; lines?: LineEntry[] }>>();
+        const map = new Map(lyricsList.map((l) => [l.publicId, l]));
         return queries.map(({ obj }) => {
           if (obj.syncedLineCount !== undefined) return obj.syncedLineCount;
-          const lyrics = map.get(obj.projectId as string);
+          const lyrics = map.get(obj.publicId as string);
           if (!lyrics?.lines) return 0;
           return lyrics.lines.filter(
             (l) => l.timestamp !== null && l.timestamp !== undefined

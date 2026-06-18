@@ -290,12 +290,12 @@ export async function getMedia(uploadId: string, userId: string): Promise<Record
   if (!upload) return { error: 'Upload not found', status: 404 };
   if (!upload.userId || upload.userId.toString() !== userId) return { error: 'Not authorized', status: 403 };
 
-  const projects = await Project.find({ uploadId }).select('projectId title updatedAt').lean();
+  const projects = await Project.find({ uploadId }).select('publicId title updatedAt').lean();
 
   return {
     ...upload.toPublic(),
     projects: projects.map((p: Record<string, unknown>) => ({
-      projectId: p.projectId,
+      publicId: p.publicId,
       title: (p as Record<string, string>).title || 'Untitled',
       updatedAt: p.updatedAt,
     })),

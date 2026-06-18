@@ -13,37 +13,38 @@ import { getIO } from '../../socket/socket.manager.js';
 // ─── Builtin seed data ────────────────────────────────────────────────────────
 
 export const BUILTIN_BADGES = [
-  { id: 'og',          label: 'Side A',         description: 'One of the first 100 users to join',       icon: '🏆', color: 'amber',   conditionType: 'registration_rank',    conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 750 },
-  { id: 'pioneer',     label: 'Debut',          description: 'Among the first 1,000 users',              icon: '🚀', color: 'teal',    conditionType: 'registration_rank',    conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 200 },
-  { id: 'syncer10h',   label: 'Open Mic',       description: 'Synced at least 10 hours of lyrics',       icon: '🎵', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 600,   autoGrant: true, isBuiltin: true, xpReward: 200 },
-  { id: 'syncer100h',  label: 'World Tour',     description: 'Synced at least 100 hours of lyrics',      icon: '🎶', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 6000,  autoGrant: true, isBuiltin: true, xpReward: 1000 },
-  { id: 'wordsmith1k', label: 'Verse One',      description: 'Timestamped 1,000 individual words',       icon: '✍️', color: 'blue',    conditionType: 'words_synced',         conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 300 },
-  { id: 'wordsmith50k',label: 'Grand Opus',     description: 'Timestamped 50,000 individual words',      icon: '📖', color: 'shimmer', conditionType: 'words_synced',         conditionValue: 50000, autoGrant: true, isBuiltin: true, xpReward: 1500 },
-  { id: 'karaoke100',  label: 'On Stage',       description: 'Word-synced 100 lyric lines',              icon: '🎤', color: 'orange',  conditionType: 'karaoke_lines',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 250 },
-  { id: 'karaoke1k',   label: 'Headliner',      description: 'Word-synced 1,000 lyric lines',            icon: '🌟', color: 'amber',   conditionType: 'karaoke_lines',        conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 800 },
-  { id: 'century',     label: 'Anthology',      description: 'Created 100+ projects',                    icon: '💫', color: 'shimmer', conditionType: 'project_count',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 600 },
-  { id: 'published10', label: 'In Rotation',    description: 'Published 10 public projects',             icon: '📢', color: 'teal',    conditionType: 'public_project_count', conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 150 },
-  { id: 'beloved',     label: 'Gold Record',    description: 'Received 50 stars on your work',           icon: '⭐', color: 'amber',   conditionType: 'stars_received',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 250 },
-  { id: 'influential', label: 'Sampled',        description: 'Your work has been forked 25 times',       icon: '🌿', color: 'green',   conditionType: 'forks_received',       conditionValue: 25,    autoGrant: true, isBuiltin: true, xpReward: 200 },
-  { id: 'following50', label: 'Fan Base',       description: 'Reached 50 followers',                     icon: '🤝', color: 'primary', conditionType: 'follower_count',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 100 },
-  { id: 'uploader',    label: 'Studio Ready',   description: 'Uploaded 10 media files',                  icon: '📤', color: 'blue',    conditionType: 'upload_count',         conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 150 },
-  { id: 'veteran',     label: 'Session Player', description: 'Account is at least 1 year old',           icon: '🎖️', color: 'rose',   conditionType: 'account_age_days',     conditionValue: 365,   autoGrant: true, isBuiltin: true, xpReward: 300 },
-  { id: 'streak7',     label: 'Daily Mix',      description: '7-day activity streak',                    icon: '🔥', color: 'orange',  conditionType: 'streak_days',          conditionValue: 7,     autoGrant: true, isBuiltin: true, xpReward: 100 },
-  { id: 'streak30',    label: 'Extended Play',  description: '30-day activity streak',                   icon: '⚡', color: 'amber',   conditionType: 'streak_days',          conditionValue: 30,    autoGrant: true, isBuiltin: true, xpReward: 300 },
-  { id: 'verified',    label: 'In Key',         description: 'Verified email address',                   icon: '✓',  color: 'primary', conditionType: 'is_verified',          conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 50  },
-  { id: 'admin',       label: 'A&R',            description: 'Platform administrator',                   icon: '🛡️', color: 'rose',   conditionType: 'role_admin',           conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 500 },
+  { id: 'og',          label: { en: 'Side A', es: 'OG' },         description: { en: 'One of the first 100 users to join', es: 'Uno de los primeros 100 usuarios en unirse' },       icon: '🏆', color: 'amber',   conditionType: 'registration_rank',    conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 750 },
+  { id: 'pioneer',     label: { en: 'Pioneer', es: 'Pionero' },          description: { en: 'Among the first 1,000 users', es: 'Entre los primeros 1.000 usuarios' },              icon: '🚀', color: 'teal',    conditionType: 'registration_rank',    conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 200 },
+  { id: 'syncer10h',   label: { en: 'Open Mic', es: 'Sincronizado 10h' },       description: { en: 'Synced at least 10 hours of lyrics', es: '10 horas de letras sincronizadas' },       icon: '🎵', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 600,   autoGrant: true, isBuiltin: true, xpReward: 200 },
+  { id: 'syncer100h',  label: { en: 'World Tour', es: 'Sincronizado 100h' },     description: { en: 'Synced at least 100 hours of lyrics', es: '100 horas de letras sincronizadas' },      icon: '🎶', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 6000,  autoGrant: true, isBuiltin: true, xpReward: 1000 },
+  { id: 'wordsmith1k', label: { en: 'Verse One', es: 'Artesano' },      description: { en: 'Timestamped 1,000 individual words', es: '1.000 palabras con marca de tiempo' },       icon: '✍️', color: 'blue',    conditionType: 'words_synced',         conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 300 },
+  { id: 'wordsmith50k',label: { en: 'Grand Opus', es: 'Maestro lírico' },     description: { en: 'Timestamped 50,000 individual words', es: '50.000 palabras con marca de tiempo' },      icon: '📖', color: 'shimmer', conditionType: 'words_synced',         conditionValue: 50000, autoGrant: true, isBuiltin: true, xpReward: 1500 },
+  { id: 'karaoke100',  label: { en: 'On Stage', es: 'Héroe del karaoke' },       description: { en: 'Word-synced 100 lyric lines', es: '100 líneas con tiempo a nivel de palabra' },              icon: '🎤', color: 'orange',  conditionType: 'karaoke_lines',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 250 },
+  { id: 'karaoke1k',   label: { en: 'Headliner', es: 'Estrella' },      description: { en: 'Word-synced 1,000 lyric lines', es: '1.000 líneas con tiempo a nivel de palabra' },            icon: '🌟', color: 'amber',   conditionType: 'karaoke_lines',        conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 800 },
+  { id: 'century',     label: { en: 'Anthology', es: 'Centenario' },      description: { en: 'Created 100+ projects', es: '100 proyectos creados' },                    icon: '💫', color: 'shimmer', conditionType: 'project_count',        conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 600 },
+  { id: 'published10', label: { en: 'In Rotation', es: 'Publicador' },    description: { en: 'Published 10 public projects', es: '10 proyectos públicos publicados' },             icon: '📢', color: 'teal',    conditionType: 'public_project_count', conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 150 },
+  { id: 'beloved',     label: { en: 'Gold Record', es: 'Amado' },    description: { en: 'Received 50 stars on your work', es: '50 estrellas recibidas en tu trabajo' },           icon: '⭐', color: 'amber',   conditionType: 'stars_received',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 250 },
+  { id: 'influential', label: { en: 'Sampled', es: 'Influyente' },        description: { en: 'Your work has been forked 25 times', es: 'Tu trabajo ha sido bifurcado 25 veces' },       icon: '🌿', color: 'green',   conditionType: 'forks_received',       conditionValue: 25,    autoGrant: true, isBuiltin: true, xpReward: 200 },
+  { id: 'following50', label: { en: 'Fan Base', es: 'Bien conectado' },       description: { en: 'Reached 50 followers', es: '50 seguidores' },                     icon: '🤝', color: 'primary', conditionType: 'follower_count',       conditionValue: 50,    autoGrant: true, isBuiltin: true, xpReward: 100 },
+  { id: 'uploader',    label: { en: 'Studio Ready', es: 'Subidor' },   description: { en: 'Uploaded 10 media files', es: '10 archivos multimedia subidos' },                  icon: '📤', color: 'blue',    conditionType: 'upload_count',         conditionValue: 10,    autoGrant: true, isBuiltin: true, xpReward: 150 },
+  { id: 'veteran',     label: { en: 'Session Player', es: 'Veterano' }, description: { en: 'Account is at least 1 year old', es: 'Cuenta con al menos 1 año de antigüedad' },           icon: '🎖️', color: 'rose',   conditionType: 'account_age_days',     conditionValue: 365,   autoGrant: true, isBuiltin: true, xpReward: 300 },
+  { id: 'streak7',     label: { en: 'Daily Mix', es: 'En racha' },      description: { en: '7-day activity streak', es: 'Racha de actividad de 7 días' },                    icon: '🔥', color: 'orange',  conditionType: 'streak_days',          conditionValue: 7,     autoGrant: true, isBuiltin: true, xpReward: 100 },
+  { id: 'streak30',    label: { en: 'Extended Play', es: 'Imparable' },  description: { en: '30-day activity streak', es: 'Racha de actividad de 30 días' },                   icon: '⚡', color: 'amber',   conditionType: 'streak_days',          conditionValue: 30,    autoGrant: true, isBuiltin: true, xpReward: 300 },
+  { id: 'verified',    label: { en: 'In Key', es: 'Verificado' },         description: { en: 'Verified email address', es: 'Correo electrónico verificado' },                   icon: '✓',  color: 'primary', conditionType: 'is_verified',          conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 50  },
+  { id: 'admin',       label: { en: 'A&R', es: 'Staff' },            description: { en: 'Platform administrator', es: 'Miembro del equipo de LRC Studio' },                   icon: '🛡️', color: 'rose',   conditionType: 'role_admin',           conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 500 },
 ];
 
 // Seeds built-in badges to DB — called on server startup.
 // $setOnInsert: display fields (label, description, icon, color) so admin edits survive redeployment.
 // $set: xpReward only — always synced from code so balance changes deploy immediately.
+// Additionally, we merge Spanish localization strings into existing records during this transition.
 export async function seedBuiltinBadges(): Promise<void> {
   for (const { id, label, description, icon, color, conditionType, conditionValue, autoGrant, isBuiltin, xpReward } of BUILTIN_BADGES) {
     await BadgeDefinition.findOneAndUpdate(
       { id },
       {
-        $setOnInsert: { id, label, description, icon, color, conditionType, conditionValue, autoGrant, isBuiltin },
-        $set: { xpReward },
+        $setOnInsert: { icon, color, conditionType, conditionValue, autoGrant, isBuiltin },
+        $set: { xpReward, label, description },
       },
       { upsert: true }
     );
@@ -81,11 +82,10 @@ const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
 
 // ─── Condition evaluation ─────────────────────────────────────────────────────
 
-// Minimal user fields needed by checkCondition (compatible with lean() results)
 type UserForCondition = {
   _id: mongoose.Types.ObjectId;
   createdAt?: Date;
-  stats?: { minutesSynced?: number; wordsSynced?: number; karaokeLines?: number };
+  stats?: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number };
   streak?: { current?: number };
   isVerified: boolean;
   role: 'user' | 'admin';
@@ -273,21 +273,22 @@ async function retroactiveRegistrationRank(
 
 export async function recomputeSyncStats(userId: string): Promise<{
   minutesSynced: number;
+  secondsSynced: number;
   wordsSynced: number;
   karaokeLines: number;
 }> {
-  const userProjects = await Project.find({ userId }).select('projectId').lean<{ projectId: string }[]>();
-  const projectIds: string[] = userProjects.map((p) => p.projectId);
+  const userProjects = await Project.find({ userId }).select('publicId').lean<{ publicId: string }[]>();
+  const publicIds: string[] = userProjects.map((p) => p.publicId);
 
-  if (projectIds.length === 0) {
-    await User.updateOne({ _id: userId }, { 'stats.minutesSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0 });
-    return { minutesSynced: 0, wordsSynced: 0, karaokeLines: 0 };
+  if (publicIds.length === 0) {
+    await User.updateOne({ _id: userId }, { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0 });
+    return { minutesSynced: 0, secondsSynced: 0, wordsSynced: 0, karaokeLines: 0 };
   }
 
   const [minAgg, wordAgg, karaokeAgg] = await Promise.all([
     // Minutes: max timestamp per project (across all sections' lines), sum across projects
     Lyrics.aggregate([
-      { $match: { projectId: { $in: projectIds } } },
+      { $match: { publicId: { $in: publicIds } } },
       {
         $project: {
           allTimestamps: {
@@ -310,7 +311,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
 
     // Words synced: words with non-null time
     Lyrics.aggregate([
-      { $match: { projectId: { $in: projectIds } } },
+      { $match: { publicId: { $in: publicIds } } },
       { $unwind: { path: '$sections', preserveNullAndEmptyArrays: false } },
       { $unwind: { path: '$sections.lines', preserveNullAndEmptyArrays: false } },
       { $unwind: { path: '$sections.lines.words', preserveNullAndEmptyArrays: false } },
@@ -320,7 +321,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
 
     // Karaoke lines: lines where ≥1 word has a time
     Lyrics.aggregate([
-      { $match: { projectId: { $in: projectIds } } },
+      { $match: { publicId: { $in: publicIds } } },
       { $unwind: { path: '$sections', preserveNullAndEmptyArrays: false } },
       { $unwind: { path: '$sections.lines', preserveNullAndEmptyArrays: false } },
       {
@@ -345,12 +346,14 @@ export async function recomputeSyncStats(userId: string): Promise<{
     ]),
   ]);
 
-  const minutesSynced = Math.floor((minAgg[0]?.total ?? 0) / 60);
+  const totalSeconds = minAgg[0]?.total ?? 0;
+  const minutesSynced = Math.floor(totalSeconds / 60);
+  const secondsSynced = Math.floor(totalSeconds % 60);
   const wordsSynced = wordAgg[0]?.total ?? 0;
   const karaokeLines = karaokeAgg[0]?.total ?? 0;
 
-  await User.updateOne({ _id: userId }, { 'stats.minutesSynced': minutesSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines });
-  return { minutesSynced, wordsSynced, karaokeLines };
+  await User.updateOne({ _id: userId }, { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines });
+  return { minutesSynced, secondsSynced, wordsSynced, karaokeLines };
 }
 
 // ─── XP Event logging (event-based system) ────────────────────────────────────
@@ -463,10 +466,9 @@ export function computeLevel(xp: number): number {
   return Math.floor(Math.sqrt(xp / 100));
 }
 
-// Compute XP from stats without persisting (for validation/preview)
 export function computeXPFromStats(
   badgeXp: number,
-  stats: { minutesSynced?: number; wordsSynced?: number; karaokeLines?: number },
+  stats: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number },
   social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number }
 ): number {
   const mins = stats?.minutesSynced ?? 0;

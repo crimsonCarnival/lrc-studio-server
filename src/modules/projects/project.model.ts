@@ -4,7 +4,7 @@ import { stripHtml } from '../../utils/sanitize.js';
 import { PRIMARY_GENRES, type ProjectMetadata, type ProjectState } from '../../types/index.js';
 
 export interface IProject extends Document {
-  projectId: string;
+  publicId: string;
   userId?: mongoose.Types.ObjectId | null;
   title?: string;
   uploadId?: mongoose.Types.ObjectId | null;
@@ -17,7 +17,7 @@ export interface IProject extends Document {
   forksEnabled: boolean;
   trendingScore: number;
   forkedFrom?: {
-    projectId?: string | null;
+    publicId?: string | null;
     userId?: mongoose.Types.ObjectId | null;
     accountName?: string | null;
   };
@@ -69,7 +69,7 @@ const metadataSchema = new mongoose.Schema(
 // --- Main: Project ---
 const projectSchema = new mongoose.Schema(
   {
-    projectId: {
+    publicId: {
       type: String,
       required: true,
       unique: true,
@@ -111,7 +111,7 @@ const projectSchema = new mongoose.Schema(
     trendingScore: { type: Number, default: 0 },
 
     forkedFrom: {
-      projectId: { type: String, default: null },
+      publicId: { type: String, default: null },
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
       accountName: { type: String, default: null },
     },

@@ -19,7 +19,7 @@ export async function recomputeTrendingScores(): Promise<void> {
     { $match: { createdAt: { $gte: ago30d } } },
     {
       $group: {
-        _id: '$projectId',
+        _id: '$publicId',
         stars24h: { $sum: { $cond: [{ $gte: ['$createdAt', ago24h] }, 1, 0] } },
         stars7d: { $sum: { $cond: [{ $gte: ['$createdAt', ago7d] }, 1, 0] } },
         stars30d: { $sum: 1 },
@@ -29,7 +29,7 @@ export async function recomputeTrendingScores(): Promise<void> {
       $lookup: {
         from: 'projects',
         localField: '_id',
-        foreignField: 'projectId',
+        foreignField: 'publicId',
         as: 'project',
       },
     },
@@ -46,13 +46,13 @@ export async function recomputeTrendingScores(): Promise<void> {
   }>([
     {
       $match: {
-        'forkedFrom.projectId': { $ne: null },
+        'forkedFrom.publicId': { $ne: null },
         createdAt: { $gte: ago30d },
       },
     },
     {
       $group: {
-        _id: '$forkedFrom.projectId',
+        _id: '$forkedFrom.publicId',
         forks24h: { $sum: { $cond: [{ $gte: ['$createdAt', ago24h] }, 1, 0] } },
         forks7d: { $sum: { $cond: [{ $gte: ['$createdAt', ago7d] }, 1, 0] } },
         forks30d: { $sum: 1 },
@@ -62,7 +62,7 @@ export async function recomputeTrendingScores(): Promise<void> {
       $lookup: {
         from: 'projects',
         localField: '_id',
-        foreignField: 'projectId',
+        foreignField: 'publicId',
         as: 'project',
       },
     },
@@ -70,13 +70,13 @@ export async function recomputeTrendingScores(): Promise<void> {
     { $match: { 'project.public': true } },
   ]);
 
-  // Merge stars and forks by projectId
+  // Merge stars and forks by publicId
   const forkMap = new Map(forkStats.map((f) => [f._id, f]));
   const starMap = new Map(starStats.map((s) => [s._id, s]));
-  const allProjectIds = new Set([...starMap.keys(), ...forkMap.keys()]);
+  const allpublicIds = new Set([...starMap.keys(), ...forkMap.keys()]);
 
-  if (allProjectIds.size > 0) {
-    const projectWrites = Array.from(allProjectIds).map((pid) => {
+  if (allpublicIds.size > 0) {
+    const projectWrites = Array.from(allpublicIds).map((pid) => {
       const s = starMap.get(pid);
       const f = forkMap.get(pid);
       const score =
@@ -88,7 +88,7 @@ export async function recomputeTrendingScores(): Promise<void> {
         2 * (f?.forks30d ?? 0);
       return {
         updateOne: {
-          filter: { projectId: pid, public: true },
+          filter: { publicId: pid, public: true },
           update: { $set: { trendingScore: score } },
         },
       };
@@ -97,7 +97,7 @@ export async function recomputeTrendingScores(): Promise<void> {
   }
 
   await Project.updateMany(
-    { public: true, projectId: { $nin: Array.from(allProjectIds) } },
+    { public: true, publicId: { $nin: Array.from(allpublicIds) } },
     { $set: { trendingScore: 0 } }
   );
 

@@ -28,7 +28,7 @@ import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.serv
 
 export const projectResolvers = {
   Query: {
-    // id is the projectId nanoid string, NOT the MongoDB _id
+    // id is the publicId nanoid string, NOT the MongoDB _id
     project: async (_root: unknown, { id }: { id: string }, context: Context) => {
       return getProject(id, context.userId ?? null);
     },
@@ -64,8 +64,8 @@ export const projectResolvers = {
       return getShareProject(id);
     },
 
-    publicProject: async (_root: unknown, { projectId }: { projectId: string }) => {
-      const project = await Project.findOne({ projectId, public: true }).lean();
+    publicProject: async (_root: unknown, { publicId }: { publicId: string }) => {
+      const project = await Project.findOne({ publicId, public: true }).lean();
       return project ?? null;
     },
 
@@ -84,7 +84,7 @@ export const projectResolvers = {
     createProject: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {
       const result = await createProjectService(input, context.userId, context.ip || '');
       if ('error' in result) throw new Error(result.error ?? 'Unknown error');
-      const created = result as { projectId: string; url: string };
+      const created = result as { publicId: string; url: string };
       if (context.userId) {
         Promise.all([
           updateStreak(context.userId),
@@ -92,10 +92,10 @@ export const projectResolvers = {
           ...(input.public ? [triggerBadgeCheck(context.userId, 'project_publish')] : []),
         ]).catch(() => {});
       }
-      return Project.findOne({ projectId: created.projectId });
+      return Project.findOne({ publicId: created.publicId });
     },
 
-    // id = projectId (nanoid string). Delegates to patchProject service for version locking,
+    // id = publicId (nanoid string). Delegates to patchProject service for version locking,
     // single-line atomic updates, and lyrics patching.
     updateProject: async (_root: unknown, { id, input }: { id: string; input: Record<string, unknown> }, context: Context) => {
       // If a Bearer token was sent but was expired, surface a 401 so the client
@@ -116,7 +116,7 @@ export const projectResolvers = {
       emitProjectUpdated(id, input);
       try {
         if (context.socketId) {
-          getIO().to(context.socketId).emit('autosave:ack', { projectId: id, savedAt: Date.now() });
+          getIO().to(context.socketId).emit('autosave:ack', { publicId: id, savedAt: Date.now() });
         }
       } catch { /* socket not ready */ }
       // If project is being published for the first time, check public_project_count badge
@@ -126,7 +126,7 @@ export const projectResolvers = {
       return patched.project;
     },
 
-    // id = projectId (nanoid string)
+    // id = publicId (nanoid string)
     deleteProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await deleteProjectService(id, context.userId);
@@ -136,22 +136,22 @@ export const projectResolvers = {
     cloneProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
 
-      const alreadyForked = await ProjectFork.exists({ sourceProjectId: id, userId: context.userId });
+      const alreadyForked = await ProjectFork.exists({ sourcepublicId: id, userId: context.userId });
       if (alreadyForked) throw new Error('already_forked');
 
       // Fetch source metadata before cloning — needed for the activity payload
-      const sourceProject = await Project.findOne({ projectId: id })
+      const sourceProject = await Project.findOne({ publicId: id })
         .select('title coverImage userId')
         .lean<IProject>();
 
       const result = await cloneProject(id, context.userId);
       if ('error' in result) throw new Error(result.error ?? 'Unknown error');
-      const cloned = result as { projectId: string; url: string };
+      const cloned = result as { publicId: string; url: string };
 
       writeActivity({
         actorId:      context.userId,
         type:         'project_forked',
-        projectId:    id,
+        publicId:    id,
         projectTitle: sourceProject?.title || '',
         coverImage:   sourceProject?.coverImage || '',
       }).catch(() => {});
@@ -166,7 +166,7 @@ export const projectResolvers = {
       // Badge: project_create for the forker
       Promise.all([updateStreak(context.userId), triggerBadgeCheck(context.userId, 'project_create')]).catch(() => {});
 
-      return Project.findOne({ projectId: cloned.projectId });
+      return Project.findOne({ publicId: cloned.publicId });
     },
 
     starProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
@@ -175,19 +175,19 @@ export const projectResolvers = {
         err.status = 401;
         throw err;
       }
-      const project = await Project.findOne({ projectId: id }).select('userId title coverImage').lean<IProject>();
+      const project = await Project.findOne({ publicId: id }).select('userId title coverImage').lean<IProject>();
       if (!project) throw new Error('Project not found');
 
       let isNewStar = false;
       try {
         const existing = await ProjectStar.findOneAndUpdate(
-          { projectId: id, userId: context.userId },
-          { $setOnInsert: { projectId: id, userId: context.userId } },
+          { publicId: id, userId: context.userId },
+          { $setOnInsert: { publicId: id, userId: context.userId } },
           { upsert: true, new: false }
         );
         if (!existing) {
           isNewStar = true;
-          await Project.updateOne({ projectId: id }, { $inc: { starCount: 1 } });
+          await Project.updateOne({ publicId: id }, { $inc: { starCount: 1 } });
           const ownerId = project.userId?.toString();
           if (ownerId) {
             User.findById(context.userId).select('accountName avatarUrl').lean<IUser>().then(actor => {
@@ -195,7 +195,7 @@ export const projectResolvers = {
                 upsertSocial({
                   ownerId,
                   type: 'star',
-                  projectId: id,
+                  publicId: id,
                   projectTitle: project.title || '',
                   actorId: context.userId!,
                   actorAccountName: actor.accountName ?? '',
@@ -218,12 +218,12 @@ export const projectResolvers = {
         writeActivity({
           actorId:      context.userId!,
           type:         'project_starred',
-          projectId:    id,
+          publicId:    id,
           projectTitle: project.title || '',
           coverImage:   project.coverImage || '',
         }).catch(() => {});
       }
-      return Project.findOne({ projectId: id });
+      return Project.findOne({ publicId: id });
     },
 
     unstarProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
@@ -233,34 +233,34 @@ export const projectResolvers = {
         throw err;
       }
       // deleteOne is atomic — only one concurrent request will get deletedCount: 1
-      const { deletedCount } = await ProjectStar.deleteOne({ projectId: id, userId: context.userId });
+      const { deletedCount } = await ProjectStar.deleteOne({ publicId: id, userId: context.userId });
       if (deletedCount > 0) {
         await Project.updateOne(
-          { projectId: id, starCount: { $gt: 0 } },
+          { publicId: id, starCount: { $gt: 0 } },
           { $inc: { starCount: -1 } }
         );
       }
-      return Project.findOne({ projectId: id });
+      return Project.findOne({ publicId: id });
     },
 
-    setForksEnabled: async (_root: unknown, { projectId, enabled }: { projectId: string; enabled: boolean }, context: Context) => {
+    setForksEnabled: async (_root: unknown, { publicId, enabled }: { publicId: string; enabled: boolean }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
-      const project = await Project.findOne({ projectId, userId: context.userId });
+      const project = await Project.findOne({ publicId, userId: context.userId });
       if (!project) throw new Error('Project not found or not yours');
       project.forksEnabled = enabled;
       await project.save();
       return project;
     },
 
-    boostProject: async (_: unknown, { projectId }: { projectId: string }, ctx: Context) => {
+    boostProject: async (_: unknown, { publicId }: { publicId: string }, ctx: Context) => {
       if (!ctx.userId) throw new Error('Unauthorized');
 
-      const project = await Project.findOne({ projectId, public: true }).lean<IProject>();
+      const project = await Project.findOne({ publicId, public: true }).lean<IProject>();
       if (!project) throw new Error('Project not found');
       if (project.userId?.toString() === ctx.userId) throw new Error('Cannot boost your own project');
 
       try {
-        await Boost.create({ userId: new mongoose.Types.ObjectId(ctx.userId), projectId });
+        await Boost.create({ userId: new mongoose.Types.ObjectId(ctx.userId), publicId });
       } catch (err: unknown) {
         if ((err as { code?: number }).code === 11000) return true;
         throw err;
@@ -271,7 +271,7 @@ export const projectResolvers = {
         writeActivity({
           actorId: ctx.userId,
           type: 'project_boosted',
-          projectId,
+          publicId,
           projectTitle: project.title || (project.metadata as Record<string, unknown> | undefined)?.['songName'] as string || '',
           coverImage: project.coverImage ?? '',
           targetPath: '',
@@ -291,17 +291,17 @@ export const projectResolvers = {
     createdAt: (project: IProject) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
     updatedAt: (project: IProject) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
     isStarredByMe: async (project: IProject, _args: Record<string, unknown>, ctx: Context) => {
-      if (!ctx.userId || !project.projectId) return false;
-      return !!(await ProjectStar.exists({ projectId: project.projectId, userId: ctx.userId }));
+      if (!ctx.userId || !project.publicId) return false;
+      return !!(await ProjectStar.exists({ publicId: project.publicId, userId: ctx.userId }));
     },
     isForkedByMe: async (project: IProject, _args: Record<string, unknown>, ctx: Context) => {
-      if (!ctx.userId || !project.projectId) return false;
-      return !!(await ProjectFork.exists({ sourceProjectId: project.projectId, userId: ctx.userId }));
+      if (!ctx.userId || !project.publicId) return false;
+      return !!(await ProjectFork.exists({ sourcepublicId: project.publicId, userId: ctx.userId }));
     },
-    // lyrics is fetched by projectId (more reliable than lyricsId in plain objects)
+    // lyrics is fetched by publicId (more reliable than lyricsId in plain objects)
     lyrics: async (project: IProject) => {
       if ((project as IProject & { lyrics?: unknown }).lyrics) return (project as IProject & { lyrics?: unknown }).lyrics;
-      if (project.projectId) return Lyrics.findOne({ projectId: project.projectId });
+      if (project.publicId) return Lyrics.findOne({ publicId: project.publicId });
       if (project.lyricsId) return Lyrics.findById(project.lyricsId);
       return null;
     },

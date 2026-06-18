@@ -1,9 +1,9 @@
 /**
  * Projects module — request validation schemas.
  */
-import { linesArray, projectIdParam } from '../../shared/schemas.js';
+import { linesArray, publicIdParam } from '../../shared/schemas.js';
 
-export { projectIdParam };
+export { publicIdParam };
 
 export const stateSchema = {
   type: 'object',
@@ -80,7 +80,7 @@ export const createProjectSchema = { body: projectBodySchema };
 
 export const updateProjectSchema = {
   body: projectBodySchema,
-  params: projectIdParam,
+  params: publicIdParam,
 };
 
 export const patchProjectSchema = {
@@ -98,7 +98,7 @@ export const patchProjectSchema = {
     },
     additionalProperties: false,
   },
-  params: projectIdParam,
+  params: publicIdParam,
 };
 
 

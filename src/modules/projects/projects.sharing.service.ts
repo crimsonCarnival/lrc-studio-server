@@ -8,14 +8,14 @@ import { upsertSocial } from '../notifications/notifications.service.js';
 import User from '../../db/user.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 
-export async function getShareProject(projectId: string): Promise<ProjectPublic | null> {
-  const project = await Project.findOne({ projectId })
+export async function getShareProject(publicId: string): Promise<ProjectPublic | null> {
+  const project = await Project.findOne({ publicId })
     .populate('uploadId')
     .populate('userId', 'accountName displayName avatarUrl role isVerified ban');
 
   if (!project || project.public === false) return null;
 
-  const lyrics = await Lyrics.findOne({ projectId });
+  const lyrics = await Lyrics.findOne({ publicId });
 
   const pub = (project as unknown as { toPublic(): Record<string, unknown> }).toPublic();
 
@@ -36,13 +36,13 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
 
   pub.lyrics = lyrics
     ? (lyrics as unknown as { toPublic(): unknown }).toPublic()
-    : { id: null, projectId, editorMode: 'lrc', lines: [] };
+    : { id: null, publicId, editorMode: 'lrc', lines: [] };
 
-  // Ensure lyrics has id and projectId (mandatory in GraphQL schema)
+  // Ensure lyrics has id and publicId (mandatory in GraphQL schema)
   if (pub.lyrics && lyrics) {
     const lyricsObj = pub.lyrics as Record<string, unknown>;
     lyricsObj.id = lyrics._id?.toString() || lyricsObj.id;
-    lyricsObj.projectId = projectId;
+    lyricsObj.publicId = publicId;
     pub.lyrics = lyricsObj;
   }
 
@@ -79,10 +79,10 @@ export async function getShareProject(projectId: string): Promise<ProjectPublic 
 }
 
 export async function cloneProject(
-  sourceProjectId: string,
+  sourcepublicId: string,
   newUserId: string
-): Promise<ServiceResult<{ projectId: string; url: string }>> {
-  const sourceProject = await Project.findOne({ projectId: sourceProjectId }).populate('userId', 'accountName');
+): Promise<ServiceResult<{ publicId: string; url: string }>> {
+  const sourceProject = await Project.findOne({ publicId: sourcepublicId }).populate('userId', 'accountName');
   if (!sourceProject) return { error: 'Source project not found', status: 404 };
   if (!sourceProject.public && !(sourceProject as unknown as { isOwnedBy(id: string): boolean }).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404 };
   if (sourceProject.forksEnabled === false) throw new Error('Forking is disabled for this project');
@@ -95,10 +95,10 @@ export async function cloneProject(
     return {
       error: `Project limit reached (${MAX_PROJECTS_PER_USER} max). Delete old projects to create new ones.`,
       status: 429,
-    } as ServiceResult<{ projectId: string; url: string }>;
+    } as ServiceResult<{ publicId: string; url: string }>;
   }
 
-  const sourceLyrics = await Lyrics.findOne({ projectId: sourceProjectId });
+  const sourceLyrics = await Lyrics.findOne({ publicId: sourcepublicId });
 
   // Upload upsert is idempotent and outside the transaction (shared resource)
   let newUploadId = null;
@@ -135,14 +135,14 @@ export async function cloneProject(
       metadata: sourceProject.metadata,
       readOnly: false,
       forkedFrom: {
-        projectId: sourceProjectId,
+        publicId: sourcepublicId,
         userId: (sourceProject.userId as unknown as { _id?: unknown })?._id || sourceProject.userId || null,
         accountName: (sourceProject.userId as unknown as { accountName?: string })?.accountName || null,
       },
     }], { session });
 
     const [newLyricsDoc] = await Lyrics.create([{
-      projectId: newProject.projectId,
+      publicId: newProject.publicId,
       editorMode: sourceLyrics?.editorMode || 'lrc',
       lines: sourceLyrics?.lines || [],
     }], { session });
@@ -151,10 +151,10 @@ export async function cloneProject(
     await newProject.save({ session });
 
     await Promise.all([
-      Project.updateOne({ projectId: sourceProjectId }, { $inc: { forkCount: 1 } }, { session }),
+      Project.updateOne({ publicId: sourcepublicId }, { $inc: { forkCount: 1 } }, { session }),
       ProjectFork.create([{
-        sourceProjectId,
-        forkedProjectId: newProject.projectId,
+        sourcepublicId,
+        forkedpublicId: newProject.publicId,
         userId: newUserId,
       }], { session }),
     ]);
@@ -168,7 +168,7 @@ export async function cloneProject(
           upsertSocial({
             ownerId,
             type: 'fork',
-            projectId: sourceProjectId,
+            publicId: sourcepublicId,
             projectTitle: sourceProject.title || '',
             actorId: newUserId,
             actorAccountName: actor.accountName ?? '',
@@ -179,15 +179,15 @@ export async function cloneProject(
     }
 
     try {
-      getIO().to(`project:${sourceProjectId}`).emit('project:forked', {
-        projectId: sourceProjectId,
-        forkCount: (await Project.findOne({ projectId: sourceProjectId }).select('forkCount'))?.forkCount ?? 0,
+      getIO().to(`project:${sourcepublicId}`).emit('project:forked', {
+        publicId: sourcepublicId,
+        forkCount: (await Project.findOne({ publicId: sourcepublicId }).select('forkCount'))?.forkCount ?? 0,
       });
     } catch { /* socket not ready */ }
 
     return {
-      projectId: newProject.projectId,
-      url: `/s/${newProject.projectId}`,
+      publicId: newProject.publicId,
+      url: `/s/${newProject.publicId}`,
     };
-  }, { operation: 'cloneProject', sourceProjectId, userId: newUserId });
+  }, { operation: 'cloneProject', sourcepublicId, userId: newUserId });
 }

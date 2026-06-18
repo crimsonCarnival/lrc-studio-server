@@ -16,15 +16,15 @@ export interface LyricsDoc {
 
 export const lyricsResolvers = {
   Mutation: {
-    updateLyrics: async (_root: unknown, { projectId, input }: { projectId: string; input: LyricsInput }, context: Context) => {
+    updateLyrics: async (_root: unknown, { publicId, input }: { publicId: string; input: LyricsInput }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
-      const project = await Project.findOne({ projectId, userId: context.userId });
+      const project = await Project.findOne({ publicId, userId: context.userId });
       if (!project) throw new Error('Project not found or access denied');
       const update: Record<string, unknown> = {};
       if (input.editorMode !== undefined) update.editorMode = input.editorMode;
       if (input.sections !== undefined) update.sections = input.sections;
       const result = await Lyrics.findOneAndUpdate(
-        { projectId },
+        { publicId },
         { $set: update, $unset: { lines: 1 } },
         { new: true, upsert: true }
       );

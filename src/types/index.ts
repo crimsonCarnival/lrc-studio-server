@@ -131,7 +131,7 @@ export interface AuthResponse {
 }
 
 export interface ProjectPublic {
-  projectId: string;
+  publicId: string;
   title?: string;
   upload?: UploadInfo | null;
   lyrics?: LyricsData;
@@ -146,7 +146,7 @@ export interface ProjectPublic {
 
 export interface ProjectListItem {
   id: string;
-  projectId: string;
+  publicId: string;
   title?: string;
   metadata?: ProjectMetadata;
   coverImage?: string;
@@ -155,6 +155,7 @@ export interface ProjectListItem {
   lineCount: number;
   syncedLineCount: number;
   readOnly: boolean;
+  public?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }

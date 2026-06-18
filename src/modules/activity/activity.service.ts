@@ -6,7 +6,7 @@ import { getIO } from '../../socket/socket.manager.js';
 export interface WriteActivityParams {
   actorId: string;
   type: ActivityType;
-  projectId: string;
+  publicId: string;
   projectTitle: string;
   coverImage: string;
   targetPath?: string;
@@ -17,12 +17,12 @@ function emitFeedNew(userId: string, activity: unknown): void {
 }
 
 export async function writeActivity(params: WriteActivityParams): Promise<void> {
-  const { actorId, type, projectId, projectTitle, coverImage, targetPath } = params;
+  const { actorId, type, publicId, projectTitle, coverImage, targetPath } = params;
 
   const activity = await Activity.create({
     actorId: new mongoose.Types.ObjectId(actorId),
     type,
-    projectId,
+    publicId,
     projectTitle,
     coverImage,
     targetPath: targetPath ?? '',

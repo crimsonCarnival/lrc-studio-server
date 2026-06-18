@@ -1,6 +1,7 @@
 export const userSchema = `
   type UserStats {
     minutesSynced: Float
+    secondsSynced: Float
     wordsSynced: Float
     karaokeLines: Float
   }

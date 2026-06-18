@@ -57,7 +57,7 @@ export const lineItemSchema = {
 
 export const linesArray = { type: 'array', items: lineItemSchema, maxItems: 5000 };
 
-export const projectIdParam = {
+export const publicIdParam = {
   type: 'object',
   properties: { id: { type: 'string', minLength: 1, maxLength: 21 } },
   required: ['id'],
