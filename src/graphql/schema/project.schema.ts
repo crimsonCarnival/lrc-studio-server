@@ -1,7 +1,7 @@
 export const projectSchema = `
   type Project {
     id: ID!
-    projectId: String!
+    publicId: String!
     title: String
     user: User
     upload: Upload
@@ -26,10 +26,11 @@ export const projectSchema = `
     isStarredByMe: Boolean
     isForkedByMe: Boolean
     forksEnabled: Boolean
+    trendingScore: Float
   }
 
   type ForkedFrom {
-    projectId: String
+    publicId: String
     userId: ID
     accountName: String
   }
@@ -40,12 +41,11 @@ export const projectSchema = `
     playbackPosition: Float
     playbackSpeed: Float
     saveTime: String
-    timezone: String
-    utcOffset: String
   }
 
   type ProjectMetadata {
     description: String
+    genre: String
     tags: [String!]
     songName: String
     songArtist: String
@@ -63,15 +63,26 @@ export const projectSchema = `
     word: String!
     time: Float
     reading: String
+    singerIndex: Int
+  }
+
+  input TranslationInput {
+    language: String!
+    text: String!
   }
 
   input LineInput {
     id: String
-    text: String!
+    type: String
+    label: String
+    depth: Int
+    text: String
     timestamp: Float
     endTime: Float
     secondary: String
+    singers: [String!]
     translation: String
+    translations: [TranslationInput!]
     words: [WordInput!]
     secondaryWords: [WordInput!]
   }
@@ -82,12 +93,11 @@ export const projectSchema = `
     playbackPosition: Float
     playbackSpeed: Float
     saveTime: String
-    timezone: String
-    utcOffset: String
   }
 
   input ProjectMetadataInput {
     description: String
+    genre: String
     tags: [String!]
     songName: String
     songArtist: String
@@ -103,9 +113,13 @@ export const projectSchema = `
   input ProjectLyricsInput {
     editorMode: String
     language: String
-    lines: [LineInput!]
-    lineIndex: Int
+    # Full sections replace
+    sections: [SectionInput!]
+    # Positional single-line patch
+    sectionIdx: Int
+    lineIdx: Int
     line: LineInput
+    # Positional word patch
     wordIndex: Int
     word: WordInput
   }

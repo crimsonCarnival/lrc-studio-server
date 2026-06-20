@@ -1,13 +1,22 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import type { JwtPayload, SignOptions } from 'jsonwebtoken';
 import { getEnv } from '../config/env.js';
 
+interface CachedAuthUser {
+  deletedAt?: Date | null;
+  ban?: { active?: boolean };
+  checkBanStatus(): Promise<void>;
+  role?: string;
+  lastIp?: string;
+  accountName?: string;
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
-    userId?: string;
-    _cachedAuthUser?: any; // cached to avoid duplicate DB lookups within one request
+    _cachedAuthUser?: CachedAuthUser | null; // cached to avoid duplicate DB lookups within one request
   }
 }
 
@@ -22,6 +31,17 @@ const ACCESS_EXPIRY = env.JWT_ACCESS_EXPIRY;
 const REFRESH_EXPIRY = env.JWT_REFRESH_EXPIRY;
 const JWT_ISSUER = env.JWT_ISSUER;
 const JWT_AUDIENCE = env.JWT_AUDIENCE;
+
+// Admin sudo grants are signed with a key domain-separated from the session
+// secret, so a sudo token can never double as an access/refresh token. (F24)
+const ADMIN_SUDO_TTL_SECONDS = 5 * 60;
+function getSudoSecret(): string {
+  if (process.env.ADMIN_SUDO_SECRET) return process.env.ADMIN_SUDO_SECRET;
+  return crypto.createHmac('sha256', JWT_SECRET).update('admin-sudo-v1').digest('hex');
+}
+function signAdminSudo(userId: string): string {
+  return jwt.sign({ scope: 'admin-sudo' }, getSudoSecret(), { subject: userId, expiresIn: ADMIN_SUDO_TTL_SECONDS });
+}
 
 function signAccess(payload: Record<string, unknown>): string {
   const opts: SignOptions = {
@@ -52,25 +72,28 @@ function verifyToken(token: string): JwtPayload {
   }) as JwtPayload;
 }
 
-// Only the fields needed for auth checks — avoids loading passwordHash, spotify tokens, etc.
-const AUTH_USER_SELECT = 'ban appeal showUnbanMessage isDeleted deletedAt role accountName';
+/** Module-level jwt tools — use these when this.jwt is unavailable (e.g. in standalone exported handlers). */
+export const jwtTools = { signAccess, signRefresh, verifyToken };
 
-async function lookupUser(userId: string | undefined): Promise<any> {
+// Only the fields needed for auth checks — avoids loading passwordHash, etc.
+const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role accountName lastIp';
+
+async function lookupUser(userId: string | undefined): Promise<CachedAuthUser | null> {
   if (!userId) return null;
   const User = (await import('../db/user.model.js')).default;
-  return User.findById(userId).select(AUTH_USER_SELECT);
+  return User.findById(userId).select(AUTH_USER_SELECT) as unknown as CachedAuthUser | null;
 }
 
-async function checkDeviceBan(deviceId: string): Promise<any> {
+async function checkDeviceBan(deviceId: string): Promise<{ deviceId: string } | null> {
   if (!deviceId) return null;
   const BannedDevice = (await import('../modules/admin/bannedDevice.model.js')).default;
-  return BannedDevice.findOne({ deviceId });
+  return BannedDevice.findOne({ deviceId }) as unknown as Promise<{ deviceId: string } | null>;
 }
 
-async function checkIpBan(ip: string): Promise<any> {
+async function checkIpBan(ip: string): Promise<{ ip: string } | null> {
   if (!ip) return null;
   const BannedIp = (await import('../modules/admin/bannedIp.model.js')).default;
-  return BannedIp.findOne({ ip });
+  return BannedIp.findOne({ ip }) as unknown as Promise<{ ip: string } | null>;
 }
 
 async function getOrFetchUser(request: FastifyRequest, userId: string | undefined) {
@@ -83,7 +106,8 @@ async function getOrFetchUser(request: FastifyRequest, userId: string | undefine
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.decorate('jwt', { signAccess, signRefresh, verifyToken });
 
-  fastify.decorateRequest('userId', undefined as any);
+  // The Fastify decorator initialiser; userId starts as undefined and is set during auth
+  fastify.decorateRequest('userId', undefined);
 
   fastify.decorate('optionalAuth', async function (request: FastifyRequest) {
     const token = request.cookies.accessToken;
@@ -95,17 +119,17 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
       await user.checkBanStatus();
       if (user.ban?.active) return;
       request.userId = decoded.sub;
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Expired token: treat as anonymous but flag it so resolvers can surface
       // a 401 instead of silently failing ownership checks (which produce a 403).
-      if (err?.name === 'TokenExpiredError') {
-        (request as any).tokenExpired = true;
+      if (err instanceof Error && err.name === 'TokenExpiredError') {
+        (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired = true;
       }
       // Any other error (malformed token etc.) — silently treat as anonymous
     }
   });
 
-  async function resolveAndCheckBan(request: FastifyRequest, reply: FastifyReply): Promise<any> {
+  async function resolveAndCheckBan(request: FastifyRequest, reply: FastifyReply): Promise<CachedAuthUser | null> {
     const token = request.cookies.accessToken;
     if (!token) {
       reply.code(401).send({ error: 'Authentication required' });
@@ -195,6 +219,13 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     }
 
     request.userId = decoded.sub;
+
+    // Fire-and-forget IP update — no await, never blocks the request
+    if (ip && user.lastIp !== ip) {
+      import('../db/user.model.js').then(({ default: User }) => {
+        User.updateOne({ _id: decoded.sub }, { $set: { lastIp: ip } }).catch(() => {});
+      });
+    }
   });
 
   fastify.decorate('requireActiveUser', async function (request: FastifyRequest, reply: FastifyReply) {
@@ -207,6 +238,27 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     if (!result) return;
     if (result.role !== 'admin') {
       return reply.code(403).send({ error: 'Admin access required' });
+    }
+  });
+
+  fastify.decorate('signAdminSudo', signAdminSudo);
+
+  // Gate for destructive admin actions. Must run AFTER requireAdmin (which sets
+  // request.userId). Requires a valid, unexpired sudo grant bound to this user.
+  fastify.decorate('requireSudo', async function (request: FastifyRequest, reply: FastifyReply) {
+    const token = request.cookies.adminSudo;
+    if (!token) {
+      reply.code(403).send({ error: 'sudo_required' });
+      return;
+    }
+    try {
+      const decoded = jwt.verify(token, getSudoSecret()) as JwtPayload;
+      if (decoded.scope !== 'admin-sudo' || !decoded.sub || decoded.sub !== request.userId) {
+        reply.code(403).send({ error: 'sudo_required' });
+        return;
+      }
+    } catch {
+      reply.code(403).send({ error: 'sudo_required' });
     }
   });
 

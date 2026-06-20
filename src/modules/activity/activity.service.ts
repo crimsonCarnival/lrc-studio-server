@@ -6,7 +6,7 @@ import { getIO } from '../../socket/socket.manager.js';
 export interface WriteActivityParams {
   actorId: string;
   type: ActivityType;
-  projectId: string;
+  publicId: string;
   projectTitle: string;
   coverImage: string;
   targetPath?: string;
@@ -17,12 +17,12 @@ function emitFeedNew(userId: string, activity: unknown): void {
 }
 
 export async function writeActivity(params: WriteActivityParams): Promise<void> {
-  const { actorId, type, projectId, projectTitle, coverImage, targetPath } = params;
+  const { actorId, type, publicId, projectTitle, coverImage, targetPath } = params;
 
   const activity = await Activity.create({
     actorId: new mongoose.Types.ObjectId(actorId),
     type,
-    projectId,
+    publicId,
     projectTitle,
     coverImage,
     targetPath: targetPath ?? '',
@@ -63,4 +63,43 @@ export async function getFeed(
     activities: items.slice(0, limit),
     hasMore: items.length > limit,
   };
+}
+
+export async function getUserActivity(
+  userId: string,
+  offset: number = 0,
+  limit: number = 50
+): Promise<{ activities: unknown[]; hasMore: boolean }> {
+  const items = await Activity.find({ actorId: new mongoose.Types.ObjectId(userId) })
+    .sort({ createdAt: -1 })
+    .skip(offset)
+    .limit(limit + 1)
+    .lean();
+
+  return {
+    activities: items.slice(0, limit),
+    hasMore: items.length > limit,
+  };
+}
+
+export interface ActivityHeatmapDay {
+  date: string;
+  count: number;
+}
+
+// Aggregates activity counts by calendar date (UTC), bounded to the 90-day TTL window.
+export async function getUserActivityHeatmap(userId: string): Promise<ActivityHeatmapDay[]> {
+  const results = await Activity.aggregate([
+    { $match: { actorId: new mongoose.Types.ObjectId(userId) } },
+    {
+      $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+        count: { $sum: 1 },
+      },
+    },
+    { $project: { _id: 0, date: '$_id', count: 1 } },
+    { $sort: { date: 1 } },
+  ]);
+
+  return results as ActivityHeatmapDay[];
 }

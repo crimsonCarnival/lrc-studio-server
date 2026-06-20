@@ -1,4 +1,4 @@
-export const commentSchema = `
+export const reactionSchema = `
   type ReactionSummary {
     emoji: String!
     count: Int!

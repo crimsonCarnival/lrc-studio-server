@@ -1,5 +1,3 @@
-import { projectIdParam } from '../../shared/schemas.js';
-
 export const userIdParam = {
   type: 'object',
   properties: { id: { type: 'string', minLength: 1, maxLength: 24 } },

@@ -1,9 +1,9 @@
 /**
  * Projects module — request validation schemas.
  */
-import { linesArray, projectIdParam } from '../../shared/schemas.js';
+import { linesArray, publicIdParam } from '../../shared/schemas.js';
 
-export { projectIdParam };
+export { publicIdParam };
 
 export const stateSchema = {
   type: 'object',
@@ -33,15 +33,25 @@ export const lyricsSchema = {
   additionalProperties: false,
 };
 
+const PRIMARY_GENRES = ['pop','rock','hip_hop','rnb','electronic','jazz','classical','country','folk','metal','blues','soul','reggae','latin','alternative','soundtrack','world','other',''];
+
 const metadataSchema = {
   type: 'object',
   properties: {
     description: { type: 'string', maxLength: 2000 },
-    tags: { type: 'array', items: { type: 'string', maxLength: 50 }, maxItems: 20 },
+    genre: { type: 'string', enum: PRIMARY_GENRES },
+    tags: {
+      type: 'array',
+      items: { type: 'string', minLength: 2, maxLength: 50 },
+      maxItems: 10,
+    },
     songName: { type: 'string', maxLength: 500 },
     songArtist: { type: 'string', maxLength: 500 },
     songAlbum: { type: 'string', maxLength: 500 },
     songYear: { type: 'string', maxLength: 4 },
+    songLanguage: { type: 'string', maxLength: 10 },
+    trackNumber: { type: ['integer', 'null'], minimum: 1, maximum: 999 },
+    trackCount: { type: ['integer', 'null'], minimum: 1, maximum: 999 },
   },
   additionalProperties: false,
 };
@@ -58,8 +68,8 @@ const projectBodySchema = {
     public: { type: 'boolean' },
     recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
     ytUrl: { type: 'string', maxLength: 2048 },
-    cloudinaryUrl: { type: 'string', maxLength: 2048 },
-    cloudinaryPublicId: { type: 'string', maxLength: 500 },
+    uploadUrl: { type: 'string', maxLength: 2048 },
+    uploadPublicId: { type: 'string', maxLength: 500 },
     fileName: { type: 'string', maxLength: 500 },
     duration: { type: 'number', minimum: 0 },
   },
@@ -70,7 +80,7 @@ export const createProjectSchema = { body: projectBodySchema };
 
 export const updateProjectSchema = {
   body: projectBodySchema,
-  params: projectIdParam,
+  params: publicIdParam,
 };
 
 export const patchProjectSchema = {
@@ -88,7 +98,7 @@ export const patchProjectSchema = {
     },
     additionalProperties: false,
   },
-  params: projectIdParam,
+  params: publicIdParam,
 };
 
 

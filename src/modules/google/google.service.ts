@@ -6,7 +6,20 @@ import { createOnce } from '../notifications/notifications.service.js';
 import { triggerBadgeCheck, seedBuiltinBadges } from '../badges/badge.service.js';
 import type { JwtPayload } from '../../types/index.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+/**
+ * Signing key for the OAuth `state` JWT. Kept SEPARATE from the session JWT
+ * secret so a `state` token and an access token can never be confused for each
+ * other (they're verified with different keys). Uses OAUTH_STATE_SECRET if set;
+ * otherwise derives a distinct key from JWT_SECRET via domain separation, so no
+ * new required env var is introduced. (F4)
+ */
+function getStateSecret(): string {
+  if (process.env.OAUTH_STATE_SECRET) return process.env.OAUTH_STATE_SECRET;
+  return crypto
+    .createHmac('sha256', process.env.JWT_SECRET || 'change-me')
+    .update('oauth-state-v1')
+    .digest('hex');
+}
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -19,17 +32,17 @@ export function isGoogleConfigured(): boolean {
   return !!(getClientId() && getClientSecret());
 }
 
-export function generateSignedState(payload: { sub?: string; nonce?: string; action?: string; appOrigin?: string }): string {
+export function generateSignedState(payload: { sub?: string; nonce?: string; action?: string; appOrigin?: string; deviceId?: string; loginHint?: string }): string {
   return jwt.sign(
     { ...payload, nonce: payload.nonce || crypto.randomBytes(8).toString('hex') },
-    JWT_SECRET,
+    getStateSecret(),
     { expiresIn: '10m' },
   );
 }
 
 export function verifySignedState(state: string): Record<string, string | undefined> | null {
   try {
-    const decoded = jwt.verify(state, JWT_SECRET) as Record<string, string | undefined>;
+    const decoded = jwt.verify(state, getStateSecret()) as Record<string, string | undefined>;
     return decoded;
   } catch {
     return null;
@@ -250,9 +263,8 @@ export async function disconnectGoogle(userId: string): Promise<Record<string, u
 
   // Safety check: prevent account lockout
   const hasPassword = user.passwordHash !== 'OAUTH_NO_PASSWORD';
-  const hasSpotify = !!user.spotify?.spotifyId;
 
-  if (!hasPassword && !hasSpotify) {
+  if (!hasPassword) {
     return {
       error: 'last_auth_method',
       status: 409,

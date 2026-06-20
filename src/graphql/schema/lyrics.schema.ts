@@ -1,21 +1,38 @@
 export const lyricsSchema = `
   type Lyrics {
     id: ID!
-    projectId: String!
+    publicId: String!
     editorMode: String!
     language: String
-    lines: [Line!]!
+    sections: [Section!]!
     version: Int
     createdAt: String
     updatedAt: String
   }
 
-  type Line {
+  type Section {
+    label: String
+    depth: Int
+    id: String
+    singers: [String!]
+    timestamp: Float
+    lines: [Line!]!
+  }
+
+  type Translation {
+    language: String!
     text: String!
+  }
+
+  type Line {
+    id: String
+    text: String
     timestamp: Float
     endTime: Float
     secondary: String
+    singers: [String!]
     translation: String
+    translations: [Translation!]
     words: [Word!]
     secondaryWords: [SecondaryWord!]
   }
@@ -24,6 +41,7 @@ export const lyricsSchema = `
     word: String!
     time: Float
     reading: String
+    singerIndex: Int
   }
 
   type SecondaryWord {
@@ -31,9 +49,18 @@ export const lyricsSchema = `
     time: Float
   }
 
+  input SectionInput {
+    label: String
+    depth: Int
+    id: String
+    singers: [String!]
+    timestamp: Float
+    lines: [LineInput!]
+  }
+
   input UpdateLyricsInput {
     editorMode: String
     language: String
-    lines: [LineInput!]
+    sections: [SectionInput!]
   }
 `;

@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as googleService from './google.service.js';
 import * as authService from '../auth/auth.service.js';
 import { getEnv } from '../../config/env.js';
+import { jwtTools } from '../../plugins/auth.js';
 
 function callbackHtml(success: boolean, error?: string | null, appOrigin?: string | null): string {
   const payload = { type: 'google-callback', success, error: error || null };
@@ -50,12 +51,11 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   if (!googleService.isGoogleConfigured()) {
     return reply.code(503).send({ error: 'Google OAuth integration not configured' });
   }
-  const { appOrigin: rawOrigin, loginHint: rawHint } = req.query as Record<string, string | undefined>;
+  const { appOrigin: rawOrigin, loginHint: rawHint, deviceId: rawDeviceId } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
-  // Only forward a hint that looks like an email; an accountName is meaningless
-  // to Google and would just be ignored.
   const loginHint = rawHint && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawHint) ? rawHint : undefined;
-  const state = googleService.generateSignedState({ action: 'login', appOrigin });
+  const deviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim().length > 0 ? rawDeviceId.trim().slice(0, 256) : undefined;
+  const state = googleService.generateSignedState({ action: 'login', appOrigin, deviceId, loginHint });
   return reply.redirect(googleService.getAuthUrl(state, loginHint));
 }
 
@@ -95,15 +95,25 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
       return reply.code((result as Record<string, number>).status).type('text/html').send(callbackHtml(false, (result as Record<string, string>).error, appOrigin));
     }
 
+    // If the flow was initiated with a loginHint, verify the authenticated account
+    // matches so that selecting a different account in the picker is rejected.
+    const loginHint = statePayload.loginHint as string | undefined;
+    const authenticatedEmail = (result as Record<string, string>).email;
+    if (loginHint && authenticatedEmail !== loginHint) {
+      return reply.code(400).type('text/html').send(callbackHtml(false, 'wrong_account', appOrigin));
+    }
+
     // Get tokens and set cookies
     const userId = (result as Record<string, unknown>).userId as string;
-    const deviceId = (req.headers['x-device-id'] as string) || 'unknown';
+    const deviceId = (statePayload.deviceId as string | undefined) || 'unknown';
+    const userAgent = (req.headers['user-agent'] as string) || '';
+    const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
 
-    // @ts-ignore - this refers to FastifyInstance
-    const tokens = await authService.loginByUserId(userId, this.jwt, req.ip, deviceId);
+    const tokens = await authService.loginByUserId(userId, jwtTools, req.ip, deviceId, userAgent, platformVersion);
 
-    if (!tokens || (tokens as any).error) {
-      return reply.code(500).type('text/html').send(callbackHtml(false, (tokens as any).error || 'Failed to create session', appOrigin));
+    const tokensResult = tokens as Record<string, unknown> | null;
+    if (!tokensResult || tokensResult.error) {
+      return reply.code(500).type('text/html').send(callbackHtml(false, (tokensResult?.error as string) || 'Failed to create session', appOrigin));
     }
 
     const cookieOpts = {
@@ -114,8 +124,8 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
       maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
     };
 
-    reply.setCookie('accessToken', (tokens as Record<string, string>).accessToken, cookieOpts);
-    reply.setCookie('refreshToken', (tokens as Record<string, string>).refreshToken, cookieOpts);
+    reply.setCookie('accessToken', tokensResult.accessToken as string, cookieOpts);
+    reply.setCookie('refreshToken', tokensResult.refreshToken as string, cookieOpts);
 
     return reply.type('text/html').send(callbackHtml(true, null, appOrigin));
   }

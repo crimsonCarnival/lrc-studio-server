@@ -6,6 +6,10 @@ export interface IPasskey extends Document {
   counter: number;
   transports?: string[];
   userId: mongoose.Types.ObjectId;
+  deviceName?: string;
+  browser?: string;
+  os?: string;
+  deviceType?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -30,6 +34,10 @@ const passkeySchema = new mongoose.Schema<IPasskey>(
       type: [String],
       default: [],
     },
+    deviceName: { type: String },
+    browser: { type: String },
+    os: { type: String },
+    deviceType: { type: String },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

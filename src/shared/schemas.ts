@@ -7,12 +7,30 @@
 export const lineItemSchema = {
   type: 'object',
   properties: {
+    type: { type: ['string', 'null'], maxLength: 50 },
+    label: { type: ['string', 'null'], maxLength: 500 },
+    depth: { type: ['number', 'null'] },
+    id: { type: ['string', 'null'], maxLength: 50 },
     text: { type: 'string', maxLength: 2000 },
     timestamp: { type: ['number', 'null'] },
     endTime: { type: ['number', 'null'] },
     secondary: { type: ['string', 'null'], maxLength: 2000 },
+    singers: {
+      type: ['array', 'null'],
+      items: { type: 'string', maxLength: 100 },
+      maxItems: 4
+    },
     translation: { type: ['string', 'null'], maxLength: 2000 },
-    id: { type: 'string', maxLength: 50 },
+    translations: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        properties: {
+          language: { type: 'string', maxLength: 50 },
+          text: { type: 'string', maxLength: 2000 },
+        },
+      },
+    },
     words: {
       type: ['array', 'null'],
       items: {
@@ -39,7 +57,7 @@ export const lineItemSchema = {
 
 export const linesArray = { type: 'array', items: lineItemSchema, maxItems: 5000 };
 
-export const projectIdParam = {
+export const publicIdParam = {
   type: 'object',
   properties: { id: { type: 'string', minLength: 1, maxLength: 21 } },
   required: ['id'],

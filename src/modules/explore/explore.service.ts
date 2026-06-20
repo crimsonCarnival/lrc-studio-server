@@ -4,6 +4,13 @@ import Follow from '../../db/follow.model.js';
 import User from '../../db/user.model.js';
 import mongoose from 'mongoose';
 
+interface UserLean {
+  _id: { toString(): string };
+  accountName?: string | null;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}
+
 const ACTIVE_USER_FILTER = { isDeleted: { $ne: true }, 'ban.active': { $ne: true } };
 
 export async function getTrendingProjects(offset: number, limit: number, _viewerId?: string) {
@@ -59,9 +66,9 @@ export async function getSuggestedUsers(viewerId: string, limit: number) {
       })
         .select('accountName displayName avatarUrl')
         .limit(limit)
-        .lean();
+        .lean<UserLean[]>();
 
-      return users.map((u: any) => ({
+      return users.map((u) => ({
         id: u._id.toString(),
         accountName: u.accountName ?? null,
         displayName: u.displayName ?? null,
@@ -77,9 +84,9 @@ export async function getSuggestedUsers(viewerId: string, limit: number) {
     .sort({ createdAt: -1 })
     .limit(limit)
     .select('accountName displayName avatarUrl')
-    .lean();
+    .lean<UserLean[]>();
 
-  return users.map((u: any) => ({
+  return users.map((u) => ({
     id: u._id.toString(),
     accountName: u.accountName ?? null,
     displayName: u.displayName ?? null,

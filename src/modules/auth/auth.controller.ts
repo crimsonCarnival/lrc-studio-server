@@ -1,9 +1,29 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CookieSerializeOptions } from '@fastify/cookie';
 import * as authService from './auth.service.js';
+import type { UpdateProfileData } from './auth.service.js';
 import { requestPasswordReset, validateResetToken, resetPassword, changePassword as changePasswordService, PasswordResetError } from '../password-reset/password-reset.service.js';
 import { resendVerification, verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
 import { verifyRecaptcha } from './auth.service.js';
+import { getEnv } from '../../config/env.js';
+
+/** Parse JWT duration strings ("30m", "1d", "2h") to seconds. */
+function parseExpiry(str: string | undefined, fallbackSeconds: number): number {
+  if (!str) return fallbackSeconds;
+  const match = str.match(/^(\d+)([smhd])$/);
+  if (!match) return fallbackSeconds;
+  const n = parseInt(match[1], 10);
+  const unit = match[2];
+  if (unit === 's') return n;
+  if (unit === 'm') return n * 60;
+  if (unit === 'h') return n * 3600;
+  if (unit === 'd') return n * 86400;
+  return fallbackSeconds;
+}
+
+const env = getEnv();
+const ACCESS_COOKIE_MAX_AGE = parseExpiry(env.JWT_ACCESS_EXPIRY, 30 * 60);
+const REFRESH_COOKIE_MAX_AGE = parseExpiry(env.JWT_REFRESH_EXPIRY, 24 * 60 * 60);
 
 const cookieOptions: CookieSerializeOptions = {
   httpOnly: true,
@@ -12,12 +32,12 @@ const cookieOptions: CookieSerializeOptions = {
   path: '/',
 };
 
-function setAuthCookies(reply: FastifyReply, result: any) {
+function setAuthCookies(reply: FastifyReply, result: { accessToken?: string; refreshToken?: string }) {
   if (result.accessToken) {
-    reply.setCookie('accessToken', result.accessToken, { ...cookieOptions, maxAge: 15 * 60 });
+    reply.setCookie('accessToken', result.accessToken, { ...cookieOptions, maxAge: ACCESS_COOKIE_MAX_AGE });
   }
   if (result.refreshToken) {
-    reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
+    reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: REFRESH_COOKIE_MAX_AGE });
   }
 }
 
@@ -64,16 +84,16 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
       userAgent,
       platformVersion,
     },
-    (req.server as any).jwt,
+    req.server.jwt,
     req.ip,
     deviceId
   );
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
-  
-  setAuthCookies(reply, result);
-  const { accessToken, refreshToken, ...responseData } = result as any;
+
+  setAuthCookies(reply, result as { accessToken?: string; refreshToken?: string });
+  const { accessToken: _accessToken, refreshToken: _refreshToken, ...responseData } = result as Record<string, unknown>;
   return reply.code(201).send(responseData);
 }
 
@@ -95,16 +115,16 @@ export async function login(req: FastifyRequest, reply: FastifyReply): Promise<v
       userAgent,
       platformVersion,
     },
-    (req.server as any).jwt,
+    req.server.jwt,
     req.ip,
     deviceId
   );
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
-  
-  setAuthCookies(reply, result);
-  const { accessToken, refreshToken, ...responseData } = result as any;
+
+  setAuthCookies(reply, result as { accessToken?: string; refreshToken?: string });
+  const { accessToken: _accessToken, refreshToken: _refreshToken, ...responseData } = result as Record<string, unknown>;
   return reply.send(responseData);
 }
 
@@ -127,14 +147,14 @@ export async function refresh(req: FastifyRequest, reply: FastifyReply): Promise
     return reply.code(401).send({ error: 'token_expired', code: 'token_expired' });
   }
 
-  const result = await authService.refresh(tokenToRefresh, (req.server as any).jwt, req.ip, deviceId);
+  const result = await authService.refresh(tokenToRefresh, req.server.jwt, req.ip, deviceId);
   if (result.error) {
     clearAuthCookies(reply);
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
-  
-  setAuthCookies(reply, result);
-  const { accessToken, refreshToken, ...responseData } = result as any;
+
+  setAuthCookies(reply, result as { accessToken?: string; refreshToken?: string });
+  const { accessToken: _accessToken, refreshToken: _refreshToken, ...responseData } = result as Record<string, unknown>;
   return reply.send(responseData);
 }
 
@@ -143,8 +163,8 @@ export async function logout(req: FastifyRequest, reply: FastifyReply): Promise<
   let familyId: string | undefined;
   if (refreshToken) {
     try {
-      const decoded = (req.server as any).jwt.verifyToken(refreshToken);
-      familyId = decoded.familyId;
+      const decoded = req.server.jwt.verifyToken(refreshToken) as Record<string, unknown>;
+      familyId = decoded.familyId as string | undefined;
     } catch {}
   }
   
@@ -166,7 +186,7 @@ export async function me(req: FastifyRequest, reply: FastifyReply): Promise<void
 }
 
 export async function updateProfile(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await authService.updateProfile(req.userId!, req.body, req.log);
+  const result = await authService.updateProfile(req.userId!, req.body as UpdateProfileData, req.log);
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
@@ -235,7 +255,7 @@ export async function validateResetPasswordToken(req: FastifyRequest, reply: Fas
 }
 
 export async function resetPasswordEndpoint(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { token, newPassword, confirmPassword } = req.body as any;
+  const { token, newPassword, confirmPassword } = req.body as { token?: string; newPassword?: string; confirmPassword?: string };
 
   if (!token || !newPassword || !confirmPassword) {
     return reply.code(400).send({ error: 'All fields required' });
@@ -261,7 +281,7 @@ export async function changePassword(req: FastifyRequest, reply: FastifyReply): 
     return reply.code(403).send({ error: 'Unauthorized' });
   }
 
-  const { currentPassword, newPassword, confirmPassword } = req.body as any;
+  const { currentPassword, newPassword, confirmPassword } = req.body as { currentPassword?: string; newPassword?: string; confirmPassword?: string };
 
   if (!currentPassword || !newPassword || !confirmPassword) {
     return reply.code(400).send({ error: 'All fields required' });
@@ -287,7 +307,7 @@ export async function setPassword(req: FastifyRequest, reply: FastifyReply): Pro
     return reply.code(403).send({ error: 'Unauthorized' });
   }
 
-  const { newPassword, confirmPassword } = req.body as any;
+  const { newPassword, confirmPassword } = req.body as { newPassword?: string; confirmPassword?: string };
 
   if (!newPassword || !confirmPassword) {
     return reply.code(400).send({ error: 'All fields required' });
@@ -341,7 +361,7 @@ export async function getSessions(req: FastifyRequest, reply: FastifyReply): Pro
   let currentFamilyId: string | undefined;
   if (token) {
     try {
-      const decoded = (req.server as any).jwt.verifyToken(token);
+      const decoded = req.server.jwt.verifyToken(token) as Record<string, unknown>;
       currentFamilyId = decoded.familyId as string | undefined;
     } catch {}
   }
@@ -349,8 +369,8 @@ export async function getSessions(req: FastifyRequest, reply: FastifyReply): Pro
   const currentUA = (req.headers['user-agent'] as string) || '';
   const currentPlatformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
   const result = await authService.getSessions(req.userId!, currentFamilyId, currentUA, currentPlatformVersion);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error });
   }
   return reply.send(result);
 }
@@ -361,8 +381,8 @@ export async function revokeSession(req: FastifyRequest, reply: FastifyReply): P
     return reply.code(400).send({ error: 'invalid_session_id' });
   }
   const result = await authService.revokeSession(req.userId!, id);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error, code: (result as any).code });
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
   return reply.send(result);
 }
@@ -376,7 +396,7 @@ export async function logoutAll(req: FastifyRequest, reply: FastifyReply): Promi
     const token = req.cookies.accessToken;
     if (token) {
       try {
-        const decoded = (req.server as any).jwt.verifyToken(token);
+        const decoded = req.server.jwt.verifyToken(token) as Record<string, unknown>;
         currentFamilyId = decoded.familyId as string | undefined;
       } catch {}
     }
@@ -395,16 +415,23 @@ export async function logoutAll(req: FastifyRequest, reply: FastifyReply): Promi
 
 export async function generateRegistrationOptionsHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await authService.getPasskeyRegistrationOptions(req.userId!);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error });
   }
   return reply.send(result);
 }
 
 export async function verifyRegistrationResponseHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await authService.verifyPasskeyRegistration(req.userId!, req.body as any);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  const userAgent = (req.headers['user-agent'] as string) || '';
+  const secCHUAPlatformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
+  const result = await authService.verifyPasskeyRegistration(
+    req.userId!,
+    req.body as import('@simplewebauthn/server').RegistrationResponseJSON,
+    userAgent,
+    secCHUAPlatformVersion
+  );
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error });
   }
   return reply.send(result);
 }
@@ -415,8 +442,8 @@ export async function generateAuthenticationOptionsHandler(req: FastifyRequest, 
     return reply.code(400).send({ error: 'identifier_required' });
   }
   const result = await authService.getPasskeyLoginOptions(identifier);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error });
   }
   return reply.send(result);
 }
@@ -425,13 +452,13 @@ export async function verifyAuthenticationResponseHandler(req: FastifyRequest, r
   const deviceId = extractDeviceId(req, reply);
   if (!deviceId) return;
   
-  const { identifier, response } = req.body as { identifier: string; response: any };
+  const { identifier, response } = req.body as { identifier: string; response: import('@simplewebauthn/server').AuthenticationResponseJSON };
   const userAgent = (req.headers['user-agent'] as string) || '';
 
   const result = await authService.verifyPasskeyLogin(
     identifier,
     response,
-    (req.server as any).jwt,
+    req.server.jwt,
     req.ip,
     deviceId,
     userAgent
@@ -441,15 +468,15 @@ export async function verifyAuthenticationResponseHandler(req: FastifyRequest, r
     return reply.code(result.status || 500).send({ error: result.error, code: result.code });
   }
 
-  setAuthCookies(reply, result);
-  const { accessToken, refreshToken, ...responseData } = result as any;
+  setAuthCookies(reply, result as { accessToken?: string; refreshToken?: string });
+  const { accessToken: _accessToken, refreshToken: _refreshToken, ...responseData } = result as Record<string, unknown>;
   return reply.send(responseData);
 }
 
 export async function getPasskeys(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await authService.getPasskeysForUser(req.userId!);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error });
   }
   return reply.send(result);
 }
@@ -460,16 +487,16 @@ export async function deletePasskey(req: FastifyRequest, reply: FastifyReply): P
     return reply.code(400).send({ error: 'invalid_passkey_id' });
   }
   const result = await authService.deletePasskeyForUser(req.userId!, id);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error });
   }
   return reply.send(result);
 }
 
 export async function deactivate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await authService.deactivateUser(req.userId!);
-  if ((result as any).error) {
-    return reply.code((result as any).status || 500).send({ error: (result as any).error });
+  if (result.error) {
+    return reply.code(result.status || 500).send({ error: result.error });
   }
   clearAuthCookies(reply);
   return reply.send({ success: true });

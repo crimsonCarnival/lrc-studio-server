@@ -5,7 +5,7 @@ interface LogOptions {
   action: string;
   entityType?: string;
   entityId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   ip?: string;
   deviceId?: string;
 }

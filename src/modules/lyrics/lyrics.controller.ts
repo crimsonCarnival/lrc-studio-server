@@ -4,9 +4,10 @@ import type { LineEntry } from '../../types/index.js';
 import {
   parseLrcSrtFile,
   compileLRC,
-  compileSRT,
   inferEndTimes,
 } from '../../utils/lrc.js';
+
+import { compileSRT } from '../../utils/srt.js';
 
 import {
   applyMark,
@@ -21,7 +22,7 @@ import {
 type Body = Record<string, any>;
 
 export async function parse(req: FastifyRequest, reply: FastifyReply) {
-  const { content, filename } = req.body as Body;
+  const { content, filename, options } = req.body as Body;
 
   if (!content || typeof content !== 'string') {
     return reply.code(400).send({ error: 'Lyrics content is required' });
@@ -36,7 +37,7 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ error: 'Unsupported lyrics format' });
   }
 
-  const lines = parseLrcSrtFile(content, filename as string);
+  const lines = parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {});
   return reply.send({
     lines,
     detectedFormat: filename?.toLowerCase().endsWith('.srt') ? 'srt' : 'lrc',
@@ -46,15 +47,15 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
 
 export async function compileLrc(req: FastifyRequest, reply: FastifyReply) {
   const body = req.body as Body;
-  const { lines, includeTranslations = false, precision = 'hundredths', metadata = {}, lineEndings = 'lf', includeSecondary = false, wordPrecision } = body;
-  const output = compileLRC(lines, includeTranslations, precision, metadata, lineEndings, includeSecondary, wordPrecision);
+  const { lines, includeTranslations = false, precision = 'hundredths', metadata = {}, lineEndings = 'lf', includeSecondary = false, wordPrecision, exportTranslationIndex = 0 } = body;
+  const output = compileLRC(lines, includeTranslations, precision, metadata, lineEndings, includeSecondary, wordPrecision, exportTranslationIndex);
   return reply.send({ output, format: 'lrc' });
 }
 
 export async function compileSrt(req: FastifyRequest, reply: FastifyReply) {
   const body = req.body as Body;
-  const { lines, duration = null, includeTranslations = false, lineEndings = 'lf', srtConfig = {}, includeSecondary = false } = body;
-  const output = compileSRT(lines, duration, includeTranslations, lineEndings, srtConfig, includeSecondary);
+  const { lines, duration = null, includeTranslations = false, lineEndings = 'lf', srtConfig = {}, includeSecondary = false, exportTranslationIndex = 0 } = body;
+  const output = compileSRT(lines, duration, includeTranslations, lineEndings, srtConfig, includeSecondary, exportTranslationIndex);
   return reply.send({ output, format: 'srt' });
 }
 

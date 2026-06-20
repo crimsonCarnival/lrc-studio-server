@@ -2,6 +2,7 @@ import type { FastifyLoggerInstance } from 'fastify';
 import crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import User from '../../db/user.model.js';
+import type { IUser } from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { logUserAction } from '../user_logs/logs.service.js';
@@ -24,9 +25,11 @@ import {
 import type {
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
+  AuthenticatorTransportFuture,
 } from '@simplewebauthn/server';
 import { getEnv } from '../../config/env.js';
 import { isValidAccountName, isReservedAccountName } from './auth.validation.js';
+import { stripHtml } from '../../utils/sanitize.js';
 
 function getWebAuthnConfig() {
   const env = getEnv();
@@ -35,7 +38,7 @@ function getWebAuthnConfig() {
   let rpID = 'localhost';
   try {
     rpID = new URL(primaryOrigin).hostname;
-  } catch (e) {}
+  } catch {}
   return { rpID, origins, rpName: 'LRC Studio' };
 }
 
@@ -122,6 +125,14 @@ const BAN_ERRORS: Record<string, ServiceResult> = {
 export async function verifyRecaptcha(token: string | undefined, ip: string): Promise<boolean> {
   const secret = process.env.RECAPTCHA_SECRET_KEY;
   if (!secret) {
+    // Fail OPEN only outside production (local dev without a captcha key). In
+    // production a missing secret is a misconfiguration, not a reason to wave
+    // every request through — fail closed so anti-abuse gates can't be silently
+    // disabled. Set RECAPTCHA_SECRET_KEY to restore captcha-gated flows.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[verifyRecaptcha] RECAPTCHA_SECRET_KEY is not set in production — rejecting request.');
+      return false;
+    }
     return true;
   }
   if (!token) return false;
@@ -133,19 +144,12 @@ export async function verifyRecaptcha(token: string | undefined, ip: string): Pr
     });
     const data = await res.json() as { success: boolean; score?: number };
     return data.success && (data.score === undefined || data.score >= 0.5);
-  } catch (e) {
+  } catch {
     return false;
   }
 }
 
-function isValidDeviceIdFormat(deviceId: string): boolean {
-  if (!deviceId || typeof deviceId !== 'string') return false;
-  const len = deviceId.length;
-  if (len < 10 || len > 256) return false;
-  return deviceId.startsWith('dv_fp_') || deviceId.startsWith('dv_fallback_');
-}
-
-async function checkDevice(deviceId: string | null | undefined, user: any = null): Promise<ServiceResult> {
+async function checkDevice(deviceId: string | null | undefined, user: IUser | null = null): Promise<ServiceResult> {
   if (!deviceId) return {};
 
   const deviceBanned = await BannedDevice.findOne({ deviceId });
@@ -169,15 +173,15 @@ export async function register(
   deviceId: string
 ): Promise<ServiceResult<AuthResponse>> {
   if (!(await verifyRecaptcha(data.recaptchaToken, ip))) {
-    return err('recaptcha_failed', 403) as any;
+    return err('recaptcha_failed', 403);
   }
 
   const [ipBanned, deviceCheck] = await Promise.all([
     ip ? BannedIp.findOne({ ip }) : Promise.resolve(null),
     checkDevice(deviceId),
   ]);
-  if (ipBanned) return BAN_ERRORS.IP_BANNED_REGISTER as any;
-  if (deviceCheck.error) return deviceCheck as any;
+  if (ipBanned) return BAN_ERRORS.IP_BANNED_REGISTER;
+  if (deviceCheck.error) return deviceCheck;
 
   const { email, password } = data;
   const accountName = data.accountName ? data.accountName.toLowerCase().trim() : undefined;
@@ -185,7 +189,7 @@ export async function register(
 
   if (accountName) {
     if (!isValidAccountName(accountName) || isReservedAccountName(accountName)) {
-      return err('accountName_taken', 409) as any;
+      return err('accountName_taken', 409);
     }
   }
 
@@ -194,13 +198,15 @@ export async function register(
   if (email) query.push({ email: email.toLowerCase() });
   const existing = await User.findOne({ $or: query });
   if (existing) {
-    if (existing.ban?.active) return err('register_account_restricted', 403) as any;
-    return err('accountName_taken', 409) as any;
+    if (existing.ban?.active) return err('register_account_restricted', 403);
+    // Distinguish which field caused the conflict so the client shows the right error
+    const emailMatches = email && existing.email === email.toLowerCase();
+    return emailMatches ? err('email_taken', 409) : err('accountName_taken', 409);
   }
 
   if (ip) {
     const bannedByIp = await User.findOne({ lastIp: ip, 'ban.active': true }).lean();
-    if (bannedByIp) return BAN_ERRORS.IP_LINKED_BANNED_USER as any;
+    if (bannedByIp) return BAN_ERRORS.IP_LINKED_BANNED_USER;
   }
 
   const passwordHash = await User.hashPassword(password);
@@ -239,10 +245,10 @@ export async function register(
   }
 
   return {
-    user: user.toPublic() as any,
+    user: user.toPublic() as unknown as UserPublic,
     accessToken,
     refreshToken,
-  } as any;
+  };
 }
 
 export async function login(
@@ -252,15 +258,15 @@ export async function login(
   deviceId: string
 ): Promise<ServiceResult<AuthResponse>> {
   if (!(await verifyRecaptcha(data.recaptchaToken, ip))) {
-    return err('recaptcha_failed', 403) as any;
+    return err('recaptcha_failed', 403);
   }
 
   const [ipBanned, deviceCheck] = await Promise.all([
     ip ? BannedIp.findOne({ ip }) : Promise.resolve(null),
     checkDevice(deviceId),
   ]);
-  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN as any;
-  if (deviceCheck.error) return deviceCheck as any;
+  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
+  if (deviceCheck.error) return deviceCheck;
 
   const { identifier, password } = data;
   const normalised = identifier.toLowerCase().trim();
@@ -278,18 +284,18 @@ export async function login(
       deviceId,
       metadata: { identifier },
     });
-    return err('invalid_credentials', 401) as any;
+    return err('invalid_credentials', 401);
   }
 
-  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
+  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
 
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const ipChanged = ip && user.lastIp !== ip;
   if (ipChanged) user.lastIp = ip;
   await checkDevice(deviceId, user);
-  if (ipChanged && !user.isModified()) await user.save();
+  if (ipChanged) await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
 
   const { accessToken, refreshToken } = await loginAtomically(
     user,
@@ -308,36 +314,40 @@ export async function login(
   });
 
   return {
-    user: user.toPublic() as any,
+    user: user.toPublic() as unknown as UserPublic,
     accessToken,
     refreshToken,
-  } as any;
+  };
 }
 
 export async function loginByUserId(
   userId: string,
   jwt: JwtTools,
   ip: string,
-  deviceId: string
+  deviceId: string,
+  userAgent?: string,
+  platformVersion?: string
 ): Promise<ServiceResult<AuthResponse>> {
   const user = await User.findById(userId);
-  if (!user || user.isDeleted) return err('user_not_found', 404) as any;
+  if (!user || user.isDeleted) return err('user_not_found', 404);
 
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const { accessToken, refreshToken } = await loginAtomically(
     user,
     jwt,
     ip,
-    deviceId
+    deviceId,
+    userAgent,
+    platformVersion
   );
 
   return {
-    user: user.toPublic() as any,
+    user: user.toPublic() as unknown as UserPublic,
     accessToken,
     refreshToken,
-  } as any;
+  };
 }
 
 export async function checkIdentifier(
@@ -349,19 +359,19 @@ export async function checkIdentifier(
     ip ? BannedIp.findOne({ ip }) : Promise.resolve(null),
     checkDevice(deviceId),
   ]);
-  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN as any;
-  if (deviceCheck.error) return deviceCheck as any;
+  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
+  if (deviceCheck.error) return deviceCheck;
 
   const normalised = identifier.toLowerCase().trim();
   const user = await User.findOne({
     $or: [{ accountName: normalised }, { email: normalised }],
   });
 
-  if (!user) return err('identifier_not_found', 404) as any;
-  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
+  if (!user) return err('identifier_not_found', 404);
+  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
 
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const passkeyCount = await Passkey.countDocuments({ userId: user._id });
 
@@ -372,7 +382,7 @@ export async function checkIdentifier(
     hasPassword: user.passwordHash !== 'OAUTH_NO_PASSWORD',
     hasGoogle: !!user.google?.googleId,
     hasPasskey: passkeyCount > 0,
-  } as any;
+  };
 }
 
 export async function refresh(
@@ -385,35 +395,35 @@ export async function refresh(
   try {
     decoded = jwt.verifyToken(refreshToken);
   } catch {
-    return err('token_expired', 401) as any;
+    return err('token_expired', 401);
   }
 
   const user = await User.findById(decoded.sub);
-  if (!user || user.isDeleted) return err('user_not_found', 401) as any;
+  if (!user || user.isDeleted) return err('user_not_found', 401);
 
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const deviceCheck = await checkDevice(deviceId, user);
-  if (deviceCheck.error) return deviceCheck as any;
+  if (deviceCheck.error) return deviceCheck;
 
   if (ip && user.lastIp !== ip) {
+    await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
     user.lastIp = ip;
-    if (!user.isModified()) await user.save();
   }
 
   const familyId = decoded.familyId as string | undefined;
-  if (!familyId) return err('token_expired', 401) as any;
+  if (!familyId) return err('token_expired', 401);
 
   // Find the session for this token family
   const session = await Session.findOne({ familyId, userId: user._id });
-  if (!session) return err('token_expired', 401) as any;
+  if (!session) return err('token_expired', 401);
 
   // Breach Detection: if the session is already invalidated, someone is trying to reuse an old token
   if (!session.isValid) {
     // Revoke all sessions for this user!
     await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
-    return err('token_reused', 401) as any;
+    return err('token_reused', 401);
   }
 
   // Verify the hash of the provided refresh token matches the one in DB
@@ -427,7 +437,7 @@ export async function refresh(
     if (!isGracePeriodValid) {
       // Token mismatch within a valid family implies reuse
       await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
-      return err('token_reused', 401) as any;
+      return err('token_reused', 401);
     }
     // If it is within the grace period, we allow it to proceed and generate a new token
   }
@@ -450,7 +460,7 @@ export async function refresh(
   return {
     accessToken: newAccessToken,
     refreshToken: newRefreshToken,
-  } as any;
+  };
 }
 
 export async function logout(userId: string, familyId?: string): Promise<ServiceResult<{ success: boolean }>> {
@@ -468,7 +478,7 @@ export async function logout(userId: string, familyId?: string): Promise<Service
     metadata: { familyId },
   });
 
-  return { success: true } as any;
+  return { success: true };
 }
 
 export async function getProfile(
@@ -477,49 +487,58 @@ export async function getProfile(
   deviceId?: string | null
 ): Promise<ServiceResult<{ user: UserPublic }>> {
   const user = await User.findById(userId);
-  if (!user || user.isDeleted) return err('user_not_found', 404) as any;
+  if (!user || user.isDeleted) return err('user_not_found', 404);
 
   await user.checkBanStatus();
 
   const deviceCheck = await checkDevice(deviceId, user);
-  if (deviceCheck.error) return deviceCheck as any;
+  if (deviceCheck.error) return deviceCheck;
 
   if (ip && user.lastIp !== ip) {
+    await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
     user.lastIp = ip;
-    if (!user.isModified()) await user.save();
   }
 
-  return { user: user.toPublic() as any } as any;
+  return { user: user.toPublic() as unknown as UserPublic };
+}
+
+export interface UpdateProfileData {
+  avatarUrl?: string | null;
+  avatarPublicId?: string | null;
+  accountName?: string;
+  displayName?: string | null;
+  email?: string;
+  bio?: string;
 }
 
 export async function updateProfile(
   userId: string,
-  data: any,
+  data: UpdateProfileData,
   logger: FastifyLoggerInstance
 ): Promise<ServiceResult<{ user: UserPublic }>> {
   const { avatarUrl, avatarPublicId, accountName, displayName, email, bio } = data;
   const user = await User.findById(userId);
-  if (!user) return { error: 'User not found', status: 404 } as any;
-  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
+  if (!user) return { error: 'User not found', status: 404 };
+  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
 
   if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
     const ACCOUNT_NAME_COOLDOWN_DAYS = 7;
-    if (user.lastAccountNameChangedAt) {
+    if (user.lastAccountNameChangedAt && user.role !== 'admin') {
       const daysSince = (Date.now() - user.lastAccountNameChangedAt.getTime()) / (1000 * 60 * 60 * 24);
       if (daysSince < ACCOUNT_NAME_COOLDOWN_DAYS) {
         const daysLeft = Math.ceil(ACCOUNT_NAME_COOLDOWN_DAYS - daysSince);
-        return { error: 'accountName_change_cooldown', code: 'accountName_change_cooldown', status: 429, daysLeft } as any;
+        return { error: 'accountName_change_cooldown', code: 'accountName_change_cooldown', status: 429, daysLeft };
       }
     }
     const normalised = accountName.toLowerCase().trim();
     if (!isValidAccountName(normalised)) {
-      return { error: 'accountName_invalid', code: 'accountName_invalid', status: 400 } as any;
+      return { error: 'accountName_invalid', code: 'accountName_invalid', status: 400 };
     }
     if (isReservedAccountName(normalised)) {
-      return { error: 'accountName_taken', code: 'accountName_taken', status: 409 } as any;
+      return { error: 'accountName_taken', code: 'accountName_taken', status: 409 };
     }
     const existing = await User.findOne({ accountName: normalised });
-    if (existing) return { error: 'accountName_taken', code: 'accountName_taken', status: 409 } as any;
+    if (existing) return { error: 'accountName_taken', code: 'accountName_taken', status: 409 };
     const previousAccountName = user.accountName;
     user.accountName = normalised;
     user.lastAccountNameChangedAt = new Date();
@@ -527,20 +546,22 @@ export async function updateProfile(
   }
 
   if (displayName !== undefined) {
-    user.displayName = displayName ? displayName.trim().slice(0, 50) : null;
+    // Match the GraphQL updateProfile path: strip HTML server-side so this field
+    // is sanitized regardless of which entry point wrote it (defense in depth).
+    user.displayName = displayName ? stripHtml(displayName.trim()).slice(0, 50) : null;
   }
 
   if (email && email.toLowerCase().trim() !== user.email && email.toLowerCase().trim() !== user.pendingEmail) {
     const normalised = email.toLowerCase().trim();
     const existing = await User.findOne({ $or: [{ email: normalised }, { pendingEmail: normalised }] });
-    if (existing) return { error: 'Email already in use', status: 409 } as any;
+    if (existing) return { error: 'Email already in use', status: 409 };
     user.pendingEmail = normalised;
     // Fire-and-forget — don't fail the profile save if email sending fails
     sendVerification(user._id.toString(), normalised, 'email_change').catch((e) => console.error('[email_change] sendVerification failed:', e));
   }
 
   if (bio !== undefined) {
-    user.bio = bio.trim().slice(0, 160);
+    user.bio = stripHtml(bio.trim()).slice(0, 160);
   }
 
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -548,13 +569,26 @@ export async function updateProfile(
   const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
   if (avatarUrl !== undefined && avatarUrl !== null) {
+    // Validate against the parsed hostname/path, not substring matches. The old
+    // `includes('googleusercontent.com')` / `includes('cloudinary.com')` checks
+    // accepted hostile URLs like `https://evil.com/?x=googleusercontent.com`. (F13)
+    const INVALID_IMAGE = { error: 'Invalid image URL format. Only JPG, PNG, GIF, and WEBP are allowed.', status: 400 };
+    let host: string;
+    let pathname: string;
+    try {
+      const parsed = new URL(avatarUrl);
+      if (parsed.protocol !== 'https:') return INVALID_IMAGE;
+      host = parsed.hostname.toLowerCase();
+      pathname = parsed.pathname.toLowerCase();
+    } catch {
+      return INVALID_IMAGE;
+    }
     const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-    const urlLower = avatarUrl.toLowerCase();
-    const isImage = ALLOWED_IMAGE_EXTENSIONS.some((ext: string) => urlLower.endsWith(`.${ext}`) || urlLower.includes(`.${ext}?`)) ||
-      (avatarUrl.includes('cloudinary.com') && avatarUrl.includes('/image/upload/')) ||
-      urlLower.includes('googleusercontent.com');
-    if (!isImage) {
-      return { error: 'Invalid image URL format. Only JPG, PNG, GIF, and WEBP are allowed.', status: 400 } as any;
+    const hasImageExt = ALLOWED_IMAGE_EXTENSIONS.some((ext: string) => pathname.endsWith(`.${ext}`));
+    const isCloudinary = (host === 'res.cloudinary.com' || host.endsWith('.cloudinary.com')) && pathname.includes('/image/upload/');
+    const isGoogle = host === 'googleusercontent.com' || host.endsWith('.googleusercontent.com');
+    if (!hasImageExt && !isCloudinary && !isGoogle) {
+      return INVALID_IMAGE;
     }
   }
 
@@ -571,13 +605,13 @@ export async function updateProfile(
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
   if (avatarPublicId !== undefined) {
     if (avatarPublicId && !avatarPublicId.startsWith('lyrics-syncer/avatars/')) {
-      return { error: 'Invalid Cloudinary public ID for avatar', status: 400 } as any;
+      return { error: 'Invalid Cloudinary public ID for avatar', status: 400 };
     }
     user.avatarPublicId = avatarPublicId;
   }
 
   await user.save();
-  return { user: user.toPublic() as any } as any;
+  return { user: user.toPublic() as unknown as UserPublic };
 }
 
 export async function submitAppeal(
@@ -585,10 +619,10 @@ export async function submitAppeal(
   appealText: string
 ): Promise<ServiceResult<{ user: UserPublic }>> {
   const user = await User.findById(userId);
-  if (!user) return { error: 'User not found', status: 404 } as any;
-  if (!user.ban?.active) return { error: 'User is not banned', status: 400 } as any;
+  if (!user) return { error: 'User not found', status: 404 };
+  if (!user.ban?.active) return { error: 'User is not banned', status: 400 };
   if (user.appeal.status === 'pending') {
-    return err('appeal_already_pending', 409) as any;
+    return err('appeal_already_pending', 409);
   }
 
   user.appeal.text = appealText.slice(0, 1000);
@@ -596,17 +630,14 @@ export async function submitAppeal(
   user.appeal.submittedAt = new Date();
   await user.save();
 
-  return { user: user.toPublic() as any } as any;
+  return { user: user.toPublic() as unknown as UserPublic };
 }
 
 export async function clearUnbanMessage(
-  userId: string
+  _userId: string
 ): Promise<ServiceResult<{ success: boolean }>> {
-  const user = await User.findById(userId);
-  if (!user) return { error: 'User not found', status: 404 } as any;
-  user.showUnbanMessage = false;
-  await user.save();
-  return { success: true } as any;
+  // showUnbanMessage is now a transient signal from checkBanStatus(), not a DB field.
+  return { success: true };
 }
 
 // ─── Session Management ──────────────────────────────────────────────────────
@@ -643,13 +674,13 @@ export async function getSessions(
 
   const sessions: SessionPublic[] = raw.map((s) => {
     const isCurrent = currentFamilyId ? s.familyId === currentFamilyId : false;
-    let ua = (s as any).userAgent || '';
+    let ua = s.userAgent || '';
 
     if (!ua && isCurrent && currentUA) {
       ua = currentUA;
       healPromises.push(
         Session.updateOne(
-          { _id: (s as any)._id },
+          { _id: s._id },
           { $set: { userAgent: currentUA, deviceName: parseUA(currentUA, currentPlatformVersion).deviceName } }
         ).exec().then(() => {})
       );
@@ -660,21 +691,21 @@ export async function getSessions(
       : parseUA(ua);
 
     // Prefer live-parsed values; fall back to stored deviceName for sessions missing a UA
-    const storedDeviceName = (s as any).deviceName || '';
+    const storedDeviceName = s.deviceName || '';
     const deviceName = ua ? parsed.deviceName : (storedDeviceName || parsed.deviceName);
     const browser = ua ? parsed.browser : (storedDeviceName ? storedDeviceName.split(' on ')[0] ?? parsed.browser : parsed.browser);
     const os      = ua ? parsed.os      : (storedDeviceName ? storedDeviceName.split(' on ')[1] ?? parsed.os      : parsed.os);
 
     return {
-      id: (s._id as any).toString(),
+      id: s._id.toString(),
       deviceName,
       browser,
       os,
       deviceType: parsed.deviceType,
       userAgent: ua,
       ip: s.ip || '',
-      createdAt: (s as any).createdAt,
-      lastUsedAt: (s as any).lastUsedAt || (s as any).createdAt,
+      createdAt: s.createdAt,
+      lastUsedAt: s.lastUsedAt || s.createdAt,
       expiresAt: s.expiresAt,
       isCurrent,
     };
@@ -683,7 +714,7 @@ export async function getSessions(
   // Fire-and-forget heal writes — don't block the response
   if (healPromises.length) Promise.allSettled(healPromises);
 
-  return { sessions } as any;
+  return { sessions };
 }
 
 export async function revokeSession(
@@ -691,11 +722,11 @@ export async function revokeSession(
   sessionId: string
 ): Promise<ServiceResult<{ success: boolean }>> {
   const session = await Session.findOne({ _id: sessionId, userId });
-  if (!session) return err('session_not_found', 404) as any;
+  if (!session) return err('session_not_found', 404);
   session.isValid = false;
   await session.save();
   try { getIO().to(`user:${userId}`).emit('session:revoked', { sessionId }); } catch { /* socket not ready */ }
-  return { success: true } as any;
+  return { success: true };
 }
 
 export async function revokeAllSessions(
@@ -710,15 +741,14 @@ export async function revokeAllSessions(
   if (result.modifiedCount > 0) {
     try { getIO().to(`user:${userId}`).emit('session:revoked', {}); } catch { /* socket not ready */ }
   }
-  return { revokedCount: result.modifiedCount } as any;
+  return { revokedCount: result.modifiedCount };
 }
 
 // ─── WebAuthn (Passkeys) ─────────────────────────────────────────────────────
 
-export async function getPasskeyRegistrationOptions(userId: string): Promise<ServiceResult<any>> {
+export async function getPasskeyRegistrationOptions(userId: string): Promise<ServiceResult<Record<string, unknown>>> {
   const user = await User.findById(userId);
-  if (!user) return err('user_not_found', 404) as any;
-  if (!user.isVerified) return err('email_not_verified', 403) as any;
+  if (!user) return err('user_not_found', 404);
 
   const userPasskeys = await Passkey.find({ userId: user._id });
   const { rpID, rpName } = getWebAuthnConfig();
@@ -731,7 +761,7 @@ export async function getPasskeyRegistrationOptions(userId: string): Promise<Ser
     attestationType: 'none',
     excludeCredentials: userPasskeys.map(passkey => ({
       id: passkey.credentialID,
-      transports: passkey.transports as any,
+      transports: passkey.transports as AuthenticatorTransportFuture[],
     })),
     authenticatorSelection: {
       residentKey: 'preferred',
@@ -742,15 +772,17 @@ export async function getPasskeyRegistrationOptions(userId: string): Promise<Ser
   user.currentChallenge = options.challenge;
   await user.save();
 
-  return { options } as any;
+  return { options: options as unknown as Record<string, unknown> };
 }
 
 export async function verifyPasskeyRegistration(
   userId: string,
-  response: RegistrationResponseJSON
+  response: RegistrationResponseJSON,
+  userAgent?: string,
+  secCHUAPlatformVersion?: string
 ): Promise<ServiceResult<{ success: boolean }>> {
   const user = await User.findById(userId);
-  if (!user || !user.currentChallenge) return err('invalid_state', 400) as any;
+  if (!user || !user.currentChallenge) return err('invalid_state', 400);
 
   const expectedChallenge = user.currentChallenge;
   user.currentChallenge = null;
@@ -767,44 +799,50 @@ export async function verifyPasskeyRegistration(
       expectedRPID: rpID,
       requireUserVerification: false,
     });
-  } catch (error: any) {
-    console.error('[WebAuthn] verifyRegistrationResponse threw:', error.message, { rpID, origins });
-    return err(error.message || 'verification_failed', 400) as any;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'verification_failed';
+    console.error('[WebAuthn] verifyRegistrationResponse threw:', message, { rpID, origins });
+    return err(message || 'verification_failed', 400);
   }
 
   const { verified, registrationInfo } = verification;
   if (!verified || !registrationInfo) {
     console.error('[WebAuthn] verification returned unverified', { rpID, origins });
-    return err('verification_failed', 400) as any;
+    return err('verification_failed', 400);
   }
 
   const existingPasskey = await Passkey.findOne({ credentialID: registrationInfo.credential.id });
   if (existingPasskey) {
-    return err('credential_already_in_use', 400) as any;
+    return err('credential_already_in_use', 400);
   }
 
+  const parsedUA = userAgent ? parseUA(userAgent, secCHUAPlatformVersion) : null;
   await Passkey.create({
     credentialID: registrationInfo.credential.id,
     credentialPublicKey: Buffer.from(registrationInfo.credential.publicKey),
     counter: registrationInfo.credential.counter,
     transports: registrationInfo.credential.transports,
     userId: user._id,
+    deviceName: parsedUA?.deviceName,
+    browser: parsedUA?.browser,
+    os: parsedUA?.os,
+    deviceType: parsedUA?.deviceType,
   });
 
   resolveSticky(user._id.toString(), 'set_password').catch(() => {});
 
-  return { success: true } as any;
+  return { success: true };
 }
 
-export async function getPasskeyLoginOptions(identifier: string): Promise<ServiceResult<any>> {
+export async function getPasskeyLoginOptions(identifier: string): Promise<ServiceResult<Record<string, unknown>>> {
   const normalised = identifier.toLowerCase().trim();
   const user = await User.findOne({
     $or: [{ accountName: normalised }, { email: normalised }],
   });
-  if (!user) return err('invalid_credentials', 401) as any;
+  if (!user) return err('invalid_credentials', 401);
 
   const userPasskeys = await Passkey.find({ userId: user._id });
-  if (!userPasskeys.length) return err('no_passkeys_registered', 400) as any;
+  if (!userPasskeys.length) return err('no_passkeys_registered', 400);
 
   const { rpID } = getWebAuthnConfig();
 
@@ -812,7 +850,7 @@ export async function getPasskeyLoginOptions(identifier: string): Promise<Servic
     rpID,
     allowCredentials: userPasskeys.map(passkey => ({
       id: passkey.credentialID,
-      transports: passkey.transports as any,
+      transports: passkey.transports as AuthenticatorTransportFuture[],
     })),
     userVerification: 'preferred',
   });
@@ -820,7 +858,7 @@ export async function getPasskeyLoginOptions(identifier: string): Promise<Servic
   user.currentChallenge = options.challenge;
   await user.save();
 
-  return { options } as any;
+  return { options: options as unknown as Record<string, unknown> };
 }
 
 export async function verifyPasskeyLogin(
@@ -835,14 +873,14 @@ export async function verifyPasskeyLogin(
   const user = await User.findOne({
     $or: [{ accountName: normalised }, { email: normalised }],
   });
-  if (!user || !user.currentChallenge) return err('invalid_credentials', 401) as any;
+  if (!user || !user.currentChallenge) return err('invalid_credentials', 401);
 
-  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED as any;
+  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED as any;
+  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const passkey = await Passkey.findOne({ credentialID: response.id, userId: user._id });
-  if (!passkey) return err('credential_not_found', 401) as any;
+  if (!passkey) return err('credential_not_found', 401);
 
   const expectedChallenge = user.currentChallenge;
   user.currentChallenge = null;
@@ -862,15 +900,16 @@ export async function verifyPasskeyLogin(
         id: passkey.credentialID,
         publicKey: new Uint8Array(passkey.credentialPublicKey),
         counter: passkey.counter,
-        transports: passkey.transports as any,
+        transports: passkey.transports as AuthenticatorTransportFuture[],
       },
     });
-  } catch (error: any) {
-    return err(error.message || 'verification_failed', 401) as any;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'verification_failed';
+    return err(message || 'verification_failed', 401);
   }
 
   if (!verification.verified) {
-    return err('verification_failed', 401) as any;
+    return err('verification_failed', 401);
   }
 
   passkey.counter = verification.authenticationInfo.newCounter;
@@ -893,36 +932,135 @@ export async function verifyPasskeyLogin(
   });
 
   return {
-    user: user.toPublic() as any,
+    user: user.toPublic() as unknown as UserPublic,
     accessToken,
     refreshToken,
-  } as any;
+  };
 }
 
-export async function getPasskeysForUser(userId: string): Promise<ServiceResult<{ passkeys: any[] }>> {
+interface PasskeyPublic {
+  id: string;
+  credentialID: string;
+  createdAt: Date | undefined;
+  lastUsedAt: Date | undefined;
+  transports: string[];
+  deviceName?: string;
+  browser?: string;
+  os?: string;
+  deviceType?: string;
+}
+
+export async function getPasskeysForUser(userId: string): Promise<ServiceResult<{ passkeys: PasskeyPublic[] }>> {
   const passkeys = await Passkey.find({ userId }).sort({ createdAt: -1 });
-  const sanitized = passkeys.map(p => ({
+  const sanitized: PasskeyPublic[] = passkeys.map(p => ({
     id: p._id.toString(),
     credentialID: p.credentialID,
     createdAt: p.createdAt,
-    lastUsedAt: p.updatedAt, // Passkey models don't have lastUsedAt specifically yet, updatedAt works
-    transports: p.transports || []
+    lastUsedAt: p.updatedAt,
+    transports: p.transports || [],
+    deviceName: p.deviceName,
+    browser: p.browser,
+    os: p.os,
+    deviceType: p.deviceType,
   }));
-  return { passkeys: sanitized } as any;
+  return { passkeys: sanitized };
 }
 
 export async function deletePasskeyForUser(userId: string, passkeyId: string): Promise<ServiceResult<{ success: boolean }>> {
   const result = await Passkey.deleteOne({ _id: passkeyId, userId });
   if (result.deletedCount === 0) {
-    return err('passkey_not_found', 404) as any;
+    return err('passkey_not_found', 404);
   }
-  return { success: true } as any;
+  return { success: true };
+}
+
+// ─── Admin Sudo Step-Up Factors ──────────────────────────────────────────────
+
+/** Which re-auth factors an admin can use for sudo step-up. (F24) */
+export async function getSudoFactors(userId: string): Promise<{ hasPassword: boolean; hasPasskey: boolean }> {
+  const [user, passkeyCount] = await Promise.all([
+    User.findById(userId).select('passwordHash').lean<{ passwordHash?: string }>(),
+    Passkey.countDocuments({ userId }),
+  ]);
+  return {
+    hasPassword: !!user && user.passwordHash !== 'OAUTH_NO_PASSWORD',
+    hasPasskey: passkeyCount > 0,
+  };
+}
+
+/** WebAuthn authentication options for an admin sudo step-up (by userId). */
+export async function getSudoPasskeyOptions(userId: string): Promise<ServiceResult<Record<string, unknown>>> {
+  const user = await User.findById(userId);
+  if (!user) return err('user_not_found', 404);
+
+  const userPasskeys = await Passkey.find({ userId: user._id });
+  if (!userPasskeys.length) return err('no_passkeys_registered', 400);
+
+  const { rpID } = getWebAuthnConfig();
+  const options = await generateAuthenticationOptions({
+    rpID,
+    allowCredentials: userPasskeys.map(passkey => ({
+      id: passkey.credentialID,
+      transports: passkey.transports as AuthenticatorTransportFuture[],
+    })),
+    userVerification: 'preferred',
+  });
+
+  user.currentChallenge = options.challenge;
+  await user.save();
+
+  return { options: options as unknown as Record<string, unknown> };
+}
+
+/** Verify a sudo passkey assertion. On success the caller issues the sudo grant. */
+export async function verifySudoPasskey(
+  userId: string,
+  response: AuthenticationResponseJSON
+): Promise<ServiceResult<{ success: boolean }>> {
+  const user = await User.findById(userId);
+  if (!user || !user.currentChallenge) return err('invalid_state', 400);
+
+  const passkey = await Passkey.findOne({ credentialID: response.id, userId: user._id });
+  if (!passkey) return err('credential_not_found', 401);
+
+  const expectedChallenge = user.currentChallenge;
+  user.currentChallenge = null;
+  await user.save();
+
+  const { rpID, origins } = getWebAuthnConfig();
+
+  let verification;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: origins,
+      expectedRPID: rpID,
+      requireUserVerification: false,
+      credential: {
+        id: passkey.credentialID,
+        publicKey: new Uint8Array(passkey.credentialPublicKey),
+        counter: passkey.counter,
+        transports: passkey.transports as AuthenticatorTransportFuture[],
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'verification_failed';
+    return err(message || 'verification_failed', 401);
+  }
+
+  if (!verification.verified) return err('verification_failed', 401);
+
+  passkey.counter = verification.authenticationInfo.newCounter;
+  await passkey.save();
+
+  return { success: true };
 }
 
 export async function deactivateUser(userId: string): Promise<ServiceResult<{ success: boolean }>> {
   const user = await User.findById(userId);
-  if (!user) return { error: 'User not found', status: 404 } as any;
-  if (user.role === 'admin') return { error: 'Cannot deactivate an admin', status: 403 } as any;
+  if (!user) return { error: 'User not found', status: 404 };
+  if (user.role === 'admin') return { error: 'Cannot deactivate an admin', status: 403 };
 
   user.deletedAt = new Date();
   user.isDeleted = true;
@@ -933,5 +1071,5 @@ export async function deactivateUser(userId: string): Promise<ServiceResult<{ su
   user.appeal.status = 'none';
 
   await user.save();
-  return { success: true } as any;
+  return { success: true };
 }

@@ -2,11 +2,8 @@ export const uploadSchema = `
   type Upload {
     id: ID!
     source: String!
-    cloudinaryUrl: String
+    uploadUrl: String
     publicId: String
-    youtubeUrl: String
-    spotifyTrackId: String
-    artist: String
     fileName: String!
     title: String!
     duration: Float
@@ -19,11 +16,8 @@ export const uploadSchema = `
 
   input SaveMediaInput {
     source: String!
-    cloudinaryUrl: String
+    uploadUrl: String
     publicId: String
-    youtubeUrl: String
-    spotifyTrackId: String
-    artist: String
     fileName: String
     title: String
     duration: Float

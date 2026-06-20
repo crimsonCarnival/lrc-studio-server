@@ -32,9 +32,6 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
     if (status === 'deleted') filter.isDeleted = true;
     if (status === 'verified') filter.isVerified = true;
     if (status === 'pending') filter['appeal.status'] = 'pending';
-    if (status === 'premium') {
-      (filter as Record<string, unknown>)['spotify.isPremium'] = true;
-    }
   }
 
   if (cursor) {
@@ -42,7 +39,7 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   }
 
   const usersRaw = await User.find(filter)
-    .select('-passwordHash -spotify.accessToken -spotify.refreshToken')
+    .select('-passwordHash')
     .sort({ _id: 1 })
     .limit(Number(limit) + 1)
     .lean();
@@ -156,7 +153,6 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   } else {
     user.ban = { active: false, reason: null, until: null };
     user.appeal = { text: null, status: 'none', submittedAt: null, resolvedAt: new Date() };
-    user.showUnbanMessage = true;
   }
 
   await user.save();
@@ -165,9 +161,9 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     createOnce({ userId, type: 'ban', sticky: false, body: reason || null }).catch(() => {});
     const userEmail = user.email;
     if (userEmail) {
-      Settings.findOne({ userId }).select('interface').lean().then((settings: any) => {
+      Settings.findOne({ userId }).select('interface').lean().then((settings: { interface?: { defaultLanguage?: string; theme?: string } } | null) => {
         const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
-        return sendBanEmail(userEmail, reason || null, (user as any).displayName || user.accountName, prefs);
+        return sendBanEmail(userEmail, reason || null, user.displayName || user.accountName, prefs);
       }).catch(() => {});
     }
     try { getIO().to(`user:${userId}`).emit('user:banned', { reason }); } catch { /* socket not ready */ }
@@ -351,6 +347,71 @@ export async function listAdminLogs(query: Record<string, unknown> = {}): Promis
     .populate('adminId', 'username email')
     .lean();
   return { logs, page, limit };
+}
+
+export type XPTarget = 'all' | 'user' | 'users';
+
+export async function adjustXP(
+  action: 'grant' | 'revoke',
+  amount: number,
+  target: XPTarget,
+  adminId: string,
+  userId?: string,
+  userIds?: string[]
+): Promise<{ affected: number }> {
+  const { computeLevel } = await import('../../modules/badges/badge.service.js');
+  const delta = action === 'grant' ? Math.abs(amount) : -Math.abs(amount);
+  let affected = 0;
+
+  // Manual admin grants/revokes are applied directly to progression.xp and
+  // must NOT be followed by recomputeXP() — that function derives xp purely
+  // from stats/badges and would silently overwrite (discard) this delta.
+  const applyDelta = async (ids: string[]) => {
+    if (!ids.length) return;
+    await User.updateMany({ _id: { $in: ids } }, { $inc: { 'progression.xp': delta } });
+    const updated = await User.find({ _id: { $in: ids } }).select('_id progression.xp').lean<{ _id: mongoose.Types.ObjectId; progression?: { xp?: number } }[]>();
+    await Promise.all(updated.map((u) => {
+      const xp = Math.max(0, u.progression?.xp ?? 0);
+      return User.updateOne({ _id: u._id }, { 'progression.xp': xp, 'progression.level': computeLevel(xp) });
+    }));
+  };
+
+  if (target === 'all') {
+    const users = await User.find({ isDeleted: { $ne: true } }).select('_id').lean();
+    const ids = users.map((u) => (u._id as { toString(): string }).toString());
+    const BATCH = 100;
+    for (let i = 0; i < ids.length; i += BATCH) {
+      await applyDelta(ids.slice(i, i + BATCH));
+    }
+    affected = ids.length;
+  } else if (target === 'user' && userId) {
+    await applyDelta([userId]);
+    affected = 1;
+  } else if (target === 'users' && userIds?.length) {
+    // Resolve each entry: if it looks like a valid ObjectId use it directly,
+    // otherwise treat it as an accountName and look up the corresponding _id.
+    const resolvedIds: string[] = [];
+    for (const entry of userIds) {
+      if (mongoose.Types.ObjectId.isValid(entry) && entry.length === 24) {
+        resolvedIds.push(entry);
+      } else {
+        const found = await User.findOne({ accountName: entry }).select('_id').lean<{ _id: mongoose.Types.ObjectId }>();
+        if (found) resolvedIds.push(found._id.toString());
+      }
+    }
+    await applyDelta(resolvedIds);
+    affected = resolvedIds.length;
+  }
+
+  const admin = await User.findById(adminId).select('accountName').lean<{ accountName?: string }>();
+  await logAdminAction({
+    adminId,
+    adminName: admin?.accountName || 'System',
+    action: `xp_${action}`,
+    details: `${action === 'grant' ? '+' : '-'}${amount} XP → ${target === 'all' ? 'all users' : target === 'user' ? `user ${userId}` : `${userIds?.length} users`}`,
+  });
+
+  return { affected };
 }
 
 export async function logAdminAction({ adminId, adminName, action, targetId, targetName, details, ip }: {

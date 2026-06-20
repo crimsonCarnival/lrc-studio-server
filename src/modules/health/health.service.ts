@@ -17,7 +17,6 @@ export interface HealthResponse {
   environment: string;
   checks: {
     database: ServiceCheck;
-    spotify: ServiceCheck;
     google: ServiceCheck;
     youtube: ServiceCheck;
     genius: ServiceCheck;
@@ -80,13 +79,12 @@ export async function getHealth(): Promise<HealthResponse> {
   if (cached && now - cachedAt < CACHE_TTL_MS) return cached;
 
   const database = await checkDatabase();
-  const spotify = checkConfigured(['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET']);
   const google = checkConfigured(['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']);
   const youtube = checkConfigured(['YOUTUBE_API_KEY']);
   const genius = checkConfigured(['GENIUS_CLIENT_ACCESS_TOKEN']);
   const cloudinary = checkConfigured(['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET']);
 
-  const allChecks = [database, spotify, google, youtube, genius, cloudinary];
+  const allChecks = [database, google, youtube, genius, cloudinary];
   const status: CheckStatus =
     database.status === 'error'
       ? 'error'
@@ -103,7 +101,7 @@ export async function getHealth(): Promise<HealthResponse> {
     timestamp: new Date().toISOString(),
     uptime: formatUptime(Math.floor(process.uptime())),
     environment: process.env.NODE_ENV || 'development',
-    checks: { database, spotify, google, youtube, genius, cloudinary },
+    checks: { database, google, youtube, genius, cloudinary },
     metrics: {
       memory: { used: toMB(mem.heapUsed), total: toMB(mem.heapTotal), percentUsed: `${percentUsed}%` },
     },

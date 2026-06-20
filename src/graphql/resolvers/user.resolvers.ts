@@ -1,9 +1,12 @@
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
+import type { IUser, IUserBadge } from '../../db/user.model.js';
 import Project from '../../modules/projects/project.model.js';
+import type { IProject } from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
+import { requireAdmin } from './auth-guards.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
@@ -13,20 +16,63 @@ import { searchUsers as searchUsersService } from '../../modules/users/users.sea
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots } from '../../modules/badges/badge.service.js';
 import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
+import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
+import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
+
+/** Input shape for updateProfile mutation */
+export interface UpdateProfileInput {
+  accountName?: string;
+  displayName?: string | null;
+  email?: string;
+  bio?: string;
+  avatarUrl?: string | null;
+  showFollowers?: boolean;
+}
+
+export interface BadgeInput {
+  id?: string;
+  label?: { en: string; es?: string };
+  description?: { en: string; es?: string };
+  icon?: string;
+  color?: string;
+  conditionType?: string;
+  conditionValue?: number | null;
+  autoGrant?: boolean;
+  xpReward?: number;
+}
+
+/**
+ * True if the viewer is the user themselves or an admin. Used to guard `User`
+ * field resolvers that expose private data (uploads, settings, full project list,
+ * account-name history) — those fields are reachable through Project.user /
+ * Upload.user edges that resolve for unauthenticated viewers, so the parent
+ * object being present does NOT imply the viewer is authorized to read it.
+ */
+async function isSelfOrAdmin(user: IUser, context: Context): Promise<boolean> {
+  if (!context.userId) return false;
+  const selfId = (user._id ?? user.id)?.toString();
+  if (selfId && context.userId === selfId) return true;
+  const requester = await User.findById(context.userId).select('role').lean<IUser>();
+  return requester?.role === 'admin';
+}
 
 export const userResolvers = {
   Query: {
-    me: async (_root: any, _args: any, context: Context) => {
+    me: async (_root: unknown, _args: Record<string, unknown>, context: Context) => {
       if (!context.userId) return null;
       const user = await User.findById(context.userId);
-      return user?.toPublic();
+      if (!user) return null;
+      const wasJustUnbanned = await user.checkBanStatus();
+      const pub = user.toPublic();
+      if (wasJustUnbanned) pub.wasJustUnbanned = true;
+      return pub;
     },
 
-    myMusicLibrary: async (_root: any, _args: any, context: Context) => {
+    myMusicLibrary: async (_root: unknown, _args: unknown, context: Context) => {
       if (!context.userId) return [];
-      const user = await User.findById(context.userId).select('musicLibrary').lean() as any;
-      const entries: any[] = user?.musicLibrary ?? [];
-      return entries
+      const user = await User.findById(context.userId).select('musicLibrary').lean<IUser>();
+      const entries = user?.musicLibrary ?? [];
+      return [...entries]
         .sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt))
         .map((e) => ({
           artist: e.artist || '',
@@ -38,35 +84,37 @@ export const userResolvers = {
         }));
     },
 
-    publicProfile: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
-      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
-      if (!user || (user as any).isDeleted || (user as any).ban?.active) return null;
+    publicProfile: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
+      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
+      if (!user || user.isDeleted || user.ban?.active) return null;
+
+      const isOwner = context.userId && context.userId === user._id.toString();
+      const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true };
 
       const [projects, projectCount] = await Promise.all([
-        Project.find({ userId: user._id, public: true })
+        Project.find(projectFilter)
           .sort({ starCount: -1 })
           .limit(50)
-          .lean(),
-        Project.countDocuments({ userId: user._id, public: true }),
+          .lean<IProject[]>(),
+        Project.countDocuments(projectFilter),
       ]);
 
-      const totalStarsReceived = projects.reduce((sum, p) => sum + ((p as any).starCount ?? 0), 0);
-      const totalForksReceived = projects.reduce((sum, p) => sum + ((p as any).forkCount ?? 0), 0);
+      const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
+      const totalForksReceived = projects.reduce((sum, p) => sum + (p.forkCount ?? 0), 0);
 
       const isFollowedByMe = context.userId
         ? !!(await Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }))
         : false as boolean;
 
       // Resolve showcasedBadges with rarity data — hidden if owner disabled visibility
-      const isOwner = context.userId && context.userId === (user as any)._id.toString();
-      const showcaseVisible = (user as any).showcasePublic !== false || isOwner;
-      const showcasedIds: string[] = showcaseVisible ? ((user as any).showcasedBadges ?? []) : [];
+      const showcaseVisible = user.showcasePublic !== false || isOwner;
+      const showcasedIds: string[] = showcaseVisible ? (user.showcasedBadges ?? []) : [];
       const showcasedBadges = showcasedIds.length > 0
         ? await (async () => {
-            const defs = await BadgeDefinition.find({ id: { $in: showcasedIds } }).lean();
-            const defMap = new Map((defs as any[]).map(d => [d.id, d]));
-            const ownedMap = new Map<string, any>(
-              ((user as any).badges ?? []).map((b: any) => [b.id, b])
+            const defs = await BadgeDefinition.find({ id: { $in: showcasedIds } }).lean<IBadgeDefinition[]>();
+            const defMap = new Map<string, IBadgeDefinition>(defs.map(d => [d.id, d]));
+            const ownedMap = new Map<string, IUserBadge>(
+              (user.badges ?? []).map((b: IUserBadge) => [b.id, b])
             );
             return Promise.all(
               showcasedIds
@@ -94,71 +142,67 @@ export const userResolvers = {
       return {
         id: user._id.toString(),
         accountName: user.accountName,
-        displayName: (user as any).displayName ?? null,
-        avatarUrl: (user as any).avatarUrl ?? null,
-        bio: (user as any).bio ?? null,
-        isVerified: (user as any).isVerified ?? false,
-        isAdmin: (user as any).role === 'admin',
-        createdAt: (user as any).createdAt ? new Date((user as any).createdAt).toISOString() : null,
+        displayName: user.displayName ?? null,
+        avatarUrl: user.avatarUrl ?? null,
+        bio: user.bio ?? null,
+        isVerified: user.isVerified ?? false,
+        isAdmin: user.role === 'admin',
+        createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : null,
         projects,
         projectCount,
         totalStarsReceived,
         totalForksReceived,
-        followerCount: (user as any).social?.followerCount ?? 0,
-        followingCount: (user as any).social?.followingCount ?? 0,
+        followerCount: user.social?.followerCount ?? 0,
+        followingCount: user.social?.followingCount ?? 0,
         isFollowedByMe,
-        showFollowers: (user as any).social?.showFollowers ?? true,
-        badges: (user as any).badges ?? [],
+        showFollowers: user.social?.showFollowers ?? true,
+        badges: user.badges ?? [],
         showcasedBadges,
         showcasePublic: showcaseVisible,
-        level: (user as any).level ?? 0,
-        xp: (user as any).xp ?? 0,
-        minutesSynced: (user as any).minutesSynced ?? 0,
-        currentStreak: (user as any).currentStreak ?? 0,
+        stats: { minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0 },
+        streak: { current: user.streak?.current ?? 0, longest: user.streak?.longest ?? 0, lastActiveDate: user.streak?.lastActiveDate ?? null },
+        progression: { xp: user.progression?.xp ?? 0, level: user.progression?.level ?? 0 },
       };
     },
 
-    searchUsers: async (_root: any, { query, limit = 10 }: { query: string; limit?: number }) => {
+    searchUsers: async (_root: unknown, { query, limit = 10 }: { query: string; limit?: number }) => {
       return searchUsersService(query, limit);
     },
 
-    leaderboard: async (_root: any, { limit = 25, offset = 0 }: { limit?: number; offset?: number }) => {
+    leaderboard: async (_root: unknown, { limit = 25, offset = 0 }: { limit?: number; offset?: number }) => {
       const cap = Math.min(limit, 50);
       const [users, total] = await Promise.all([
         User.find({ isDeleted: { $ne: true } })
-          .sort({ minutesSynced: -1 })
+          .sort({ 'stats.minutesSynced': -1 })
           .skip(offset)
           .limit(cap + 1)
-          .select('_id accountName displayName avatarUrl badges minutesSynced wordsSynced karaokeLines level xp currentStreak social')
-          .lean(),
+          .select('_id accountName displayName avatarUrl badges stats streak progression social')
+          .lean<IUser[]>(),
         User.countDocuments({ isDeleted: { $ne: true } }),
       ]);
 
       const hasMore = users.length > cap;
       const page = users.slice(0, cap);
 
-      const projectCounts = await Project.aggregate([
+      const projectCounts = await Project.aggregate<{ _id: mongoose.Types.ObjectId; count: number }>([
         { $match: { userId: { $in: page.map(u => u._id) } } },
         { $group: { _id: '$userId', count: { $sum: 1 } } },
       ]);
-      const pcMap = new Map((projectCounts as any[]).map(r => [r._id.toString(), r.count]));
+      const pcMap = new Map<string, number>(projectCounts.map(r => [r._id.toString(), r.count]));
 
       return {
         users: page.map(u => ({
-          id: (u._id as any).toString(),
-          accountName: (u as any).accountName,
-          displayName: (u as any).displayName ?? null,
-          avatarUrl: (u as any).avatarUrl ?? null,
-          badges: (u as any).badges ?? [],
-          minutesSynced: (u as any).minutesSynced ?? 0,
-          wordsSynced: (u as any).wordsSynced ?? 0,
-          karaokeLines: (u as any).karaokeLines ?? 0,
-          level: (u as any).level ?? 0,
-          xp: (u as any).xp ?? 0,
-          currentStreak: (u as any).currentStreak ?? 0,
-          projectCount: pcMap.get((u._id as any).toString()) ?? 0,
-          totalStarsReceived: (u as any).social?.totalStarsReceived ?? 0,
-          totalForksReceived: (u as any).social?.totalForksReceived ?? 0,
+          id: u._id.toString(),
+          accountName: u.accountName,
+          displayName: u.displayName ?? null,
+          avatarUrl: u.avatarUrl ?? null,
+          badges: u.badges ?? [],
+          stats: { minutesSynced: u.stats?.minutesSynced ?? 0, wordsSynced: u.stats?.wordsSynced ?? 0, karaokeLines: u.stats?.karaokeLines ?? 0 },
+          streak: { current: u.streak?.current ?? 0, longest: u.streak?.longest ?? 0, lastActiveDate: u.streak?.lastActiveDate ?? null },
+          progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },
+          projectCount: pcMap.get(u._id.toString()) ?? 0,
+          totalStarsReceived: u.social?.totalStarsReceived ?? 0,
+          totalForksReceived: u.social?.totalForksReceived ?? 0,
         })),
         total,
         hasMore,
@@ -166,36 +210,36 @@ export const userResolvers = {
     },
 
     badgeDefinitions: async () => {
-      const defs = await BadgeDefinition.find().lean();
-      const totalUsers = await User.countDocuments({ isDeleted: { $ne: true } });
-      const holderCounts = await User.aggregate([
+      const defs = await BadgeDefinition.find().lean<IBadgeDefinition[]>();
+      const _totalUsers = await User.countDocuments({ isDeleted: { $ne: true } });
+      const holderCounts = await User.aggregate<{ _id: string; count: number }>([
         { $unwind: '$badges' },
         { $group: { _id: '$badges.id', count: { $sum: 1 } } },
       ]);
-      const hcMap = new Map((holderCounts as any[]).map(r => [r._id, r.count]));
+      const hcMap = new Map<string, number>(holderCounts.map(r => [r._id, r.count]));
       return defs.map(d => ({
-        ...(d as any),
-        holderCount: hcMap.get((d as any).id) ?? 0,
+        ...d,
+        holderCount: hcMap.get(d.id) ?? 0,
       }));
     },
 
-    userShowcase: async (_root: any, { accountName }: { accountName: string }, _context: Context) => {
+    userShowcase: async (_root: unknown, { accountName }: { accountName: string }, _context: Context) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() })
         .select('badges showcasedBadges')
-        .lean();
+        .lean<IUser>();
       if (!user) return [];
 
-      const ownedMap = new Map<string, any>(
-        ((user as any).badges ?? []).map((b: any) => [b.id, b])
+      const ownedMap = new Map<string, IUserBadge>(
+        (user.badges ?? []).map((b: IUserBadge) => [b.id, b])
       );
 
-      const showcased = ((user as any).showcasedBadges ?? [])
+      const showcased = (user.showcasedBadges ?? [])
         .filter((id: string) => ownedMap.has(id));
 
       if (showcased.length === 0) return [];
 
-      const defs = await BadgeDefinition.find({ id: { $in: showcased } }).lean();
-      const defMap = new Map((defs as any[]).map(d => [d.id, d]));
+      const defs = await BadgeDefinition.find({ id: { $in: showcased } }).lean<IBadgeDefinition[]>();
+      const defMap = new Map<string, IBadgeDefinition>(defs.map(d => [d.id, d]));
 
       return Promise.all(
         showcased.map(async (id: string) => {
@@ -218,14 +262,14 @@ export const userResolvers = {
     },
 
     followList: async (
-      _root: any,
+      _root: unknown,
       { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING'; offset?: number },
       context: Context
     ) => {
-      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
-      if (!user || (user as any).isDeleted || (user as any).ban?.active) return { users: [], total: 0 };
-      const isOwner = context.userId && context.userId === (user as any)._id.toString();
-      if (!(user as any).social?.showFollowers && !isOwner) return { users: [], total: 0 };
+      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
+      if (!user || user.isDeleted || user.ban?.active) return { users: [], total: 0 };
+      const isOwner = context.userId && context.userId === user._id.toString();
+      if (!user.social?.showFollowers && !isOwner) return { users: [], total: 0 };
 
       const LIMIT = 50;
 
@@ -238,7 +282,7 @@ export const userResolvers = {
         const followerIds = follows.map(f => f.followerId);
         const users = await User.find({ _id: { $in: followerIds }, isDeleted: { $ne: true } })
           .select('accountName displayName avatarUrl')
-          .lean();
+          .lean<IUser[]>();
 
         // Batch-check which followers the viewer already follows back
         const myFollowedSet = new Set<string>();
@@ -253,12 +297,12 @@ export const userResolvers = {
         return {
           users: users.map(u => ({
             id: u._id.toString(),
-            accountName: (u as any).accountName,
-            displayName: (u as any).displayName ?? null,
-            avatarUrl: (u as any).avatarUrl ?? null,
+            accountName: u.accountName,
+            displayName: u.displayName ?? null,
+            avatarUrl: u.avatarUrl ?? null,
             isFollowedByMe: myFollowedSet.has(u._id.toString()),
           })),
-          total: (user as any).social?.followerCount ?? 0,
+          total: user.social?.followerCount ?? 0,
         };
       } else {
         const follows = await Follow.find({ followerId: user._id })
@@ -269,7 +313,7 @@ export const userResolvers = {
         const followingIds = follows.map(f => f.followingId);
         const users = await User.find({ _id: { $in: followingIds }, isDeleted: { $ne: true } })
           .select('accountName displayName avatarUrl')
-          .lean();
+          .lean<IUser[]>();
 
         // Batch-check which following users the viewer also follows
         const myFollowedSet = new Set<string>();
@@ -284,19 +328,19 @@ export const userResolvers = {
         return {
           users: users.map(u => ({
             id: u._id.toString(),
-            accountName: (u as any).accountName,
-            displayName: (u as any).displayName ?? null,
-            avatarUrl: (u as any).avatarUrl ?? null,
+            accountName: u.accountName,
+            displayName: u.displayName ?? null,
+            avatarUrl: u.avatarUrl ?? null,
             isFollowedByMe: myFollowedSet.has(u._id.toString()),
           })),
-          total: (user as any).social?.followingCount ?? 0,
+          total: user.social?.followingCount ?? 0,
         };
       }
     },
   },
 
   Mutation: {
-    updateProfile: async (_root: any, { input }: { input: any }, context: Context) => {
+    updateProfile: async (_root: unknown, { input }: { input: UpdateProfileInput }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const user = await User.findById(context.userId);
       if (!user) throw new Error('User not found');
@@ -305,7 +349,7 @@ export const userResolvers = {
 
       if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
         const COOLDOWN_DAYS = 7;
-        if (user.lastAccountNameChangedAt) {
+        if (user.lastAccountNameChangedAt && user.role !== 'admin') {
           const daysSince = (Date.now() - (user.lastAccountNameChangedAt as Date).getTime()) / (1000 * 60 * 60 * 24);
           if (daysSince < COOLDOWN_DAYS) {
             const daysLeft = Math.ceil(COOLDOWN_DAYS - daysSince);
@@ -315,7 +359,7 @@ export const userResolvers = {
         const normalised = accountName.toLowerCase().trim();
         if (!/^[a-z0-9_-]{3,30}$/.test(normalised)) throw new Error('accountName_invalid');
         const existing = await User.findOne({ accountName: normalised });
-        if (existing) throw new Error('Account name already taken');
+        if (existing) throw Object.assign(new Error('accountName_taken'), { extensions: { code: 'accountName_taken', status: 409 } });
         const previousAccountName = user.accountName;
         user.accountName = normalised;
         user.lastAccountNameChangedAt = new Date();
@@ -323,7 +367,7 @@ export const userResolvers = {
       }
 
       if (displayName !== undefined) {
-        user.displayName = displayName ? displayName.trim().slice(0, 50) : null;
+        user.displayName = displayName ? stripHtml(displayName.trim()).slice(0, 50) : null;
       }
 
       if (email && email.toLowerCase().trim() !== user.email && email.toLowerCase().trim() !== user.pendingEmail) {
@@ -335,67 +379,68 @@ export const userResolvers = {
       }
 
       if (bio !== undefined) {
-        user.bio = bio.trim().slice(0, 160);
+        user.bio = stripHtml(bio.trim()).slice(0, 160);
       }
 
       if (avatarUrl !== undefined) {
-        user.avatarUrl = avatarUrl;
+        user.avatarUrl = avatarUrl !== null ? sanitizeUrl(avatarUrl) : null;
       }
 
       if (input.showFollowers !== undefined) {
-        if (!(user as any).social) (user as any).social = {};
-        (user as any).social.showFollowers = input.showFollowers;
+        if (!user.social) user.social = {} as IUser['social'];
+        user.social!.showFollowers = input.showFollowers;
       }
 
       await user.save();
       return user.toPublic();
     },
 
-    sendVerificationEmail: async (_root: any, _args: any, context: Context) => {
+    sendVerificationEmail: async (_root: unknown, _args: Record<string, unknown>, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       await resendVerification(context.userId);
       return true;
     },
 
-    follow: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
+    follow: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
 
-      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
-      if (!target || (target as any).isDeleted || (target as any).ban?.active) throw new Error('User not found');
+      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
+      if (!target || target.isDeleted || target.ban?.active) throw new Error('User not found');
 
-      const targetId = (target as any)._id.toString();
+      const targetId = target._id.toString();
       if (targetId === context.userId) throw new Error('Cannot follow yourself');
 
       try {
         await Follow.create({
           followerId: new mongoose.Types.ObjectId(context.userId),
-          followingId: (target as any)._id,
+          followingId: target._id,
         });
         await Promise.all([
-          User.updateOne({ _id: (target as any)._id }, { $inc: { 'social.followerCount': 1 } }),
+          User.updateOne({ _id: target._id }, { $inc: { 'social.followerCount': 1 } }),
           User.updateOne({ _id: new mongoose.Types.ObjectId(context.userId) }, { $inc: { 'social.followingCount': 1 } }),
         ]);
-        const follower = await User.findById(context.userId).lean();
+        const follower = await User.findById(context.userId).lean<IUser>();
         if (follower) {
           upsertFollow({
             ownerId: targetId,
             actorId: context.userId,
-            actorAccountName: (follower as any).accountName,
-            actorAvatarUrl: (follower as any).avatarUrl ?? null,
+            actorAccountName: follower.accountName ?? '',
+            actorAvatarUrl: follower.avatarUrl ?? null,
           }).catch(() => {});
 
           // fan-out follow activity — fire and forget
           writeActivity({
             actorId: context.userId,
             type: 'user_followed',
-            projectId: '',
-            projectTitle: (target as any).displayName || (target as any).accountName,
-            coverImage: (target as any).avatarUrl ?? '',
-            targetPath: `/${(target as any).accountName}`,
+            publicId: '',
+            projectTitle: target.displayName || target.accountName || '',
+            coverImage: target.avatarUrl ?? '',
+            targetPath: `/${target.accountName ?? ''}`,
           }).catch(() => {});
         }
-      } catch (err: any) {
-        if (err.code === 11000) return true; // already following — idempotent
+      } catch (err: unknown) {
+        // MongoDB duplicate key — already following, treat as idempotent
+        if (typeof err === 'object' && err !== null && 'code' in err && (err as Record<string, unknown>).code === 11000) return true;
         throw err;
       }
       // Badge: follower_count for the target
@@ -403,21 +448,21 @@ export const userResolvers = {
       return true;
     },
 
-    unfollow: async (_root: any, { accountName }: { accountName: string }, context: Context) => {
+    unfollow: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
 
-      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean();
+      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!target) return true;
 
       const result = await Follow.deleteOne({
         followerId: new mongoose.Types.ObjectId(context.userId),
-        followingId: (target as any)._id,
+        followingId: target._id,
       });
 
       if (result.deletedCount > 0) {
         await Promise.all([
           User.updateOne(
-            { _id: (target as any)._id, 'social.followerCount': { $gt: 0 } },
+            { _id: target._id, 'social.followerCount': { $gt: 0 } },
             { $inc: { 'social.followerCount': -1 } }
           ),
           User.updateOne(
@@ -429,108 +474,118 @@ export const userResolvers = {
       return true;
     },
 
-    updateShowcase: async (_root: any, { badgeIds, showcasePublic }: { badgeIds: string[]; showcasePublic?: boolean }, context: Context) => {
+    updateShowcase: async (_root: unknown, { badgeIds, showcasePublic }: { badgeIds: string[]; showcasePublic?: boolean }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await updateShowcase(context.userId, badgeIds, showcasePublic);
-      const user = await User.findById(context.userId).select('level showcasePublic').lean();
-      const level = (user as any)?.level ?? 0;
+      const user = await User.findById(context.userId).select('progression showcasePublic').lean<IUser>();
+      const level = user?.progression?.level ?? 0;
       return {
         success: result.success,
         error: result.error ?? null,
         showcaseSlots: getShowcaseSlots(level),
         level,
-        showcasePublic: (user as any)?.showcasePublic ?? true,
+        showcasePublic: user?.showcasePublic ?? true,
       };
     },
 
-    adminGrantBadge: async (_root: any, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean();
-      if ((admin as any)?.role !== 'admin') throw new Error('Forbidden');
+    adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId }: { userIdentifier: string; badgeId: string }, context: Context) => {
+      const adminId = await requireAdmin(context);
+      // Accept accountName or MongoDB _id
+      let resolvedId = userIdentifier.trim();
+      if (!/^[a-f\d]{24}$/i.test(resolvedId)) {
+        const target = await User.findOne({ accountName: resolvedId }).select('_id').lean<IUser>();
+        if (!target) throw new Error(`User "${resolvedId}" not found`);
+        resolvedId = target._id.toString();
+      }
       const { grantBadge } = await import('../../modules/badges/badge.service.js');
-      return grantBadge(userId, badgeId, context.userId);
+      return grantBadge(resolvedId, badgeId, adminId);
     },
 
-    adminRevokeBadge: async (_root: any, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean();
-      if ((admin as any)?.role !== 'admin') throw new Error('Forbidden');
+    adminRevokeBadge: async (_root: unknown, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {
+      await requireAdmin(context);
       const { revokeBadge } = await import('../../modules/badges/badge.service.js');
       return revokeBadge(userId, badgeId);
     },
 
-    adminCreateBadge: async (_root: any, { input }: { input: any }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean();
-      if ((admin as any)?.role !== 'admin') throw new Error('Forbidden');
+    adminCreateBadge: async (_root: unknown, { input }: { input: BadgeInput }, context: Context) => {
+      await requireAdmin(context);
       const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy: context.userId });
       return { ...def.toObject(), holderCount: 0 };
     },
 
-    adminUpdateBadge: async (_root: any, { id, input }: { id: string; input: any }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean();
-      if ((admin as any)?.role !== 'admin') throw new Error('Forbidden');
+    adminUpdateBadge: async (_root: unknown, { id, input }: { id: string; input: BadgeInput }, context: Context) => {
+      await requireAdmin(context);
       const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { new: true });
       if (!def) throw new Error('Badge not found');
       const hc = await User.countDocuments({ 'badges.id': id, isDeleted: { $ne: true } });
       return { ...def.toObject(), holderCount: hc };
     },
 
-    adminDeleteBadge: async (_root: any, { id }: { id: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean();
-      if ((admin as any)?.role !== 'admin') throw new Error('Forbidden');
-      const def = await BadgeDefinition.findOne({ id }).lean();
+    adminDeleteBadge: async (_root: unknown, { id }: { id: string }, context: Context) => {
+      await requireAdmin(context);
+      const def = await BadgeDefinition.findOne({ id }).lean<IBadgeDefinition>();
       if (!def) throw new Error('Badge not found');
-      if ((def as any).isBuiltin) throw new Error('Cannot delete built-in badges');
+      if (def.isBuiltin) throw new Error('Cannot delete built-in badges');
       await BadgeDefinition.deleteOne({ id });
       return true;
     },
 
-    adminRetroactiveScan: async (_root: any, { badgeId }: { badgeId: string }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const admin = await User.findById(context.userId).select('role').lean();
-      if ((admin as any)?.role !== 'admin') throw new Error('Forbidden');
+    adminRetroactiveScan: async (_root: unknown, { badgeId }: { badgeId: string }, context: Context) => {
+      await requireAdmin(context);
       const { retroactiveGrant } = await import('../../modules/badges/badge.service.js');
       return retroactiveGrant(badgeId);
     },
   },
 
   User: {
-    id: (user: any) => user._id?.toString() ?? user.id,
-    createdAt: (user: any) => user.createdAt ? new Date(user.createdAt).toISOString() : null,
-    badges:          (user: any) => user.badges ?? [],
-    showcasedBadges: (user: any) => user.showcasedBadges ?? [],
-    minutesSynced:   (user: any) => user.minutesSynced ?? 0,
-    wordsSynced:     (user: any) => user.wordsSynced ?? 0,
-    karaokeLines:    (user: any) => user.karaokeLines ?? 0,
-    currentStreak:   (user: any) => user.currentStreak ?? 0,
-    longestStreak:   (user: any) => user.longestStreak ?? 0,
-    level:           (user: any) => user.level ?? 0,
-    xp:              (user: any) => user.xp ?? 0,
-    showcaseSlots:   (user: any) => getShowcaseSlots(user.level ?? 0),
-    projects: async (user: any) => Project.find({ userId: user._id ?? user.id }),
-    uploads: async (user: any) => Upload.find({ userId: user._id ?? user.id }),
-    settings: async (user: any) => Settings.findOne({ userId: user._id ?? user.id }),
+    id: (user: IUser) => user._id?.toString() ?? user.id,
+    createdAt: (user: IUser) => user.createdAt ? new Date(user.createdAt).toISOString() : null,
+    badges:          (user: IUser) => user.badges ?? [],
+    showcasedBadges: (user: IUser) => user.showcasedBadges ?? [],
+    stats:           (user: IUser) => ({ minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0 }),
+    streak:          (user: IUser) => ({ current: user.streak?.current ?? 0, longest: user.streak?.longest ?? 0, lastActiveDate: user.streak?.lastActiveDate ?? null }),
+    progression:     (user: IUser) => ({ xp: user.progression?.xp ?? 0, level: user.progression?.level ?? 0 }),
+    showcaseSlots:   (user: IUser) => getShowcaseSlots(user.progression?.level ?? 0),
 
-    previousAccountNames: (user: any) =>
-      AccountNameHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 }).then(
-        docs => docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }))
-      ),
+    // The `User` type is reachable through edges (Project.user, Upload.user) that
+    // resolve for ANY viewer, including unauthenticated ones. Field resolvers that
+    // expose private data must therefore re-check the viewer — never assume the
+    // parent object was authorized. See isSelfOrAdmin below.
+    projects: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      const ownerId = (user._id ?? user.id);
+      // Owner/admin see everything; everyone else only the owner's public projects.
+      if (await isSelfOrAdmin(user, context)) return Project.find({ userId: ownerId });
+      return Project.find({ userId: ownerId, public: true });
+    },
+    uploads: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return [];
+      return Upload.find({ userId: user._id ?? user.id });
+    },
+    settings: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return null;
+      return Settings.findOne({ userId: user._id ?? user.id });
+    },
 
-    accountNameChangeCount: (user: any) =>
-      AccountNameHistory.countDocuments({ userId: user._id ?? user.id }),
+    previousAccountNames: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return [];
+      const docs = await AccountNameHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 });
+      return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
+    },
 
-    emailHistory: async (user: any, _args: any, context: Context) => {
+    accountNameChangeCount: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
+      if (!(await isSelfOrAdmin(user, context))) return 0;
+      return AccountNameHistory.countDocuments({ userId: user._id ?? user.id });
+    },
+
+    emailHistory: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
       const selfId = (user._id ?? user.id)?.toString();
       if (context.userId === selfId) {
         const docs = await EmailHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 });
         return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
       }
       if (context.userId) {
-        const requester = await User.findById(context.userId).select('role').lean();
-        if ((requester as any)?.role === 'admin') {
+        const requester = await User.findById(context.userId).select('role').lean<IUser>();
+        if (requester?.role === 'admin') {
           const docs = await EmailHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 });
           return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
         }

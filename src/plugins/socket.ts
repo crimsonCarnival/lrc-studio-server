@@ -30,14 +30,14 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         }
       });
 
-      socket.on('join:project', (projectId: string) => {
-        if (typeof projectId === 'string' && projectId.length > 0) {
-          socket.join(`project:${projectId}`);
+      socket.on('join:project', (publicId: string) => {
+        if (typeof publicId === 'string' && publicId.length > 0) {
+          socket.join(`project:${publicId}`);
         }
       });
 
-      socket.on('leave:project', (projectId: string) => {
-        socket.leave(`project:${projectId}`);
+      socket.on('leave:project', (publicId: string) => {
+        socket.leave(`project:${publicId}`);
       });
 
       socket.on('disconnect', () => {

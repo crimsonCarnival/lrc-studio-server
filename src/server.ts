@@ -9,6 +9,8 @@ import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rateLimit.js';
 import auth from './plugins/auth.js';
 import mercurius from 'mercurius';
+import { NoSchemaIntrospectionCustomRule } from 'graphql';
+import { createDepthLimitRule } from './graphql/depth-limit.js';
 import { schema } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
@@ -19,7 +21,7 @@ import projectRoutes from './modules/projects/projects.routes.js';
 import lyricsRoutes from './modules/lyrics/lyrics.routes.js';
 import uploadRoutes from './modules/uploads/uploads.routes.js';
 import settingsRoutes from './modules/settings/settings.routes.js';
-import spotifyRoutes from './modules/spotify/spotify.routes.js';
+import songMetadataRoutes from './modules/song-metadata/song-metadata.routes.js';
 import { googleRoutes } from './modules/google/google.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import youtubeRoutes from './modules/youtube/youtube.routes.js';
@@ -45,12 +47,12 @@ const envToLogger: Record<string, Record<string, unknown>> = {
 
 async function build() {
   const app = Fastify({
-    logger: envToLogger[process.env.NODE_ENV as string] ?? envToLogger.development,
+    logger: envToLogger[process.env.NODE_ENV as string] ?? envToLogger.production,
     trustProxy: true,
   });
 
   await app.register(fastifyCookie, {
-    secret: process.env.COOKIE_SECRET || process.env.JWT_SECRET, // Use COOKIE_SECRET, fallback to JWT_SECRET
+    secret: process.env.COOKIE_SECRET,
   });
   await app.register(helmet);
   await app.register(cors);
@@ -66,10 +68,26 @@ async function build() {
     loaders,
     context: async (request: FastifyRequest) => {
       // Run optionalAuth so request.userId is populated for authenticated GraphQL requests.
-      await (app as any).optionalAuth(request);
-      return { userId: request.userId, ip: request.ip, tokenExpired: (request as any).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
+      await app.optionalAuth(request, {} as FastifyReply);
+      return { userId: request.userId, ip: request.ip, tokenExpired: (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
     },
     graphiql: process.env.NODE_ENV === 'development',
+    // Depth limiting applies in every environment; introspection stays disabled
+    // outside development. 12 comfortably covers legitimate nested queries while
+    // blocking abusive deep traversals (Project.user → User.projects → …).
+    validationRules: process.env.NODE_ENV !== 'development'
+      ? [NoSchemaIntrospectionCustomRule, createDepthLimitRule(12)]
+      : [createDepthLimitRule(12)],
+    errorFormatter: (result, ctx) => {
+      const formatted = mercurius.defaultErrorFormatter(result, ctx);
+      if (formatted.response.errors) {
+        formatted.response.errors = formatted.response.errors.map(err => ({
+          ...err,
+          message: err.message.replace(/\s*Did you mean.*?\?/gi, ''),
+        }));
+      }
+      return formatted;
+    },
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -108,7 +126,7 @@ async function build() {
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(projectRoutes, { prefix: '/projects' });
   await app.register(uploadRoutes, { prefix: '/uploads' });
-  await app.register(spotifyRoutes, { prefix: '/spotify' });
+  await app.register(songMetadataRoutes, { prefix: '/song-metadata' });
   await app.register(googleRoutes, { prefix: '/google' });
   await app.register(settingsRoutes, { prefix: '/settings' });
   await app.register(adminRoutes, { prefix: '/admin' });

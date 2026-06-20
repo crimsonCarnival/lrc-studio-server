@@ -3,9 +3,9 @@ import * as projectService from './projects.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { getIO } from '../../socket/socket.manager.js';
 
-export function emitProjectUpdated(projectId: string, patch: Record<string, unknown>): void {
+export function emitProjectUpdated(publicId: string, patch: Record<string, unknown>): void {
   try {
-    getIO().to(`project:${projectId}`).emit('project:updated', { projectId, ...patch });
+    getIO().to(`project:${publicId}`).emit('project:updated', { publicId, ...patch });
   } catch {
     // socket not initialized — safe to ignore
   }
@@ -17,7 +17,7 @@ export function emitProjectUpdated(projectId: string, patch: Record<string, unkn
 export async function create(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await projectService.createProject(req.body, req.userId, req.ip);
   if ('error' in result) {
-    return reply.code((result as any).status || 500).send(result);
+    return reply.code((result as { status?: number }).status || 500).send(result);
   }
   return reply.code(201).send(result);
 }
@@ -34,7 +34,7 @@ export async function list(req: FastifyRequest, reply: FastifyReply): Promise<vo
  * GET /projects/:id — get a single project.
  */
 export async function get(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const project = await projectService.getProject((req.params as Record<string, string>).id, (req as any).userId ?? null);
+  const project = await projectService.getProject((req.params as Record<string, string>).id, req.userId ?? null);
   if (!project) {
     return reply.code(404).send({ error: 'Project not found' });
   }
@@ -58,7 +58,7 @@ export async function update(req: FastifyRequest, reply: FastifyReply): Promise<
   try {
     const socketId = req.headers['x-socket-id'] as string | undefined;
     if (socketId) {
-      getIO().to(socketId).emit('autosave:ack', { projectId: (req.params as Record<string, string>).id, savedAt: Date.now() });
+      getIO().to(socketId).emit('autosave:ack', { publicId: (req.params as Record<string, string>).id, savedAt: Date.now() });
     }
   } catch { /* socket not ready */ }
   return reply.send(result);
@@ -81,7 +81,7 @@ export async function patch(req: FastifyRequest, reply: FastifyReply): Promise<v
   try {
     const socketId = req.headers['x-socket-id'] as string | undefined;
     if (socketId) {
-      getIO().to(socketId).emit('autosave:ack', { projectId: (req.params as Record<string, string>).id, savedAt: Date.now() });
+      getIO().to(socketId).emit('autosave:ack', { publicId: (req.params as Record<string, string>).id, savedAt: Date.now() });
     }
   } catch { /* socket not ready */ }
   return reply.send(result);
@@ -102,8 +102,8 @@ export async function remove(req: FastifyRequest, reply: FastifyReply): Promise<
  * GET /projects/share/:id — get a project for public sharing (read-only).
  */
 export async function getShare(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const projectId = (req.params as Record<string, string>).id;
-  const project = await projectService.getShareProject(projectId);
+  const publicId = (req.params as Record<string, string>).id;
+  const project = await projectService.getShareProject(publicId);
   if (!project) {
     return reply.code(404).send({ error: 'Project not found' });
   }
@@ -113,10 +113,10 @@ export async function getShare(req: FastifyRequest, reply: FastifyReply): Promis
     userId: req.userId || null,
     action: 'SHARED_PROJECT_VIEW',
     entityType: 'Project',
-    entityId: projectId,
+    entityId: publicId,
     ip: req.ip,
     deviceId: req.headers['x-device-id'] as string || 'unknown',
-    metadata: { ownerId: (project as any).userId },
+    metadata: { ownerId: (project as unknown as Record<string, unknown>).userId },
   });
 
   return reply.send({ project });
@@ -126,8 +126,8 @@ export async function getShare(req: FastifyRequest, reply: FastifyReply): Promis
  * POST /projects/clone/:id — clone a project (requires authentication).
  */
 export async function clone(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const sourceProjectId = (req.params as Record<string, string>).id;
-  const result = await projectService.cloneProject(sourceProjectId, req.userId!);
+  const sourcepublicId = (req.params as Record<string, string>).id;
+  const result = await projectService.cloneProject(sourcepublicId, req.userId!);
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error });
   }
@@ -136,10 +136,10 @@ export async function clone(req: FastifyRequest, reply: FastifyReply): Promise<v
     userId: req.userId!,
     action: 'PROJECT_CLONE',
     entityType: 'Project',
-    entityId: sourceProjectId,
+    entityId: sourcepublicId,
     ip: req.ip,
     deviceId: req.headers['x-device-id'] as string || 'unknown',
-    metadata: { newProjectId: (result as any).projectId },
+    metadata: { newpublicId: (result as Record<string, unknown>).publicId },
   });
 
   return reply.code(201).send(result);

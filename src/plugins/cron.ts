@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { archiveDeletedUsers } from '../jobs/archive-deleted-users.js';
 import { recomputeTrendingScores } from '../jobs/trending.job.js';
+import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
+import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
 
 /**
  * Lightweight cron-like scheduler using setInterval.
@@ -53,6 +55,22 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
   });
 
   let trendingTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Seed built-in badges and addiction levels on startup (idempotent — $set merges Spanish strings)
+  fastify.addHook('onReady', async () => {
+    try {
+      await seedBuiltinBadges();
+      fastify.log.info('[startup] Built-in badges seeded');
+    } catch (err) {
+      fastify.log.error({ err }, '[startup] Failed to seed built-in badges');
+    }
+    try {
+      await seedAddictionLevels();
+      fastify.log.info('[startup] Addiction levels seeded');
+    } catch (err) {
+      fastify.log.error({ err }, '[startup] Failed to seed addiction levels');
+    }
+  });
 
   fastify.addHook('onReady', async () => {
     const runTrending = async () => {

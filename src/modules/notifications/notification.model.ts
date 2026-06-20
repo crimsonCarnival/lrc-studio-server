@@ -28,7 +28,7 @@ const notificationSchema = new mongoose.Schema(
     type:         { type: String, enum: NOTIFICATION_TYPES, required: true },
     read:         { type: Boolean, default: false },
     sticky:       { type: Boolean, default: false },
-    projectId:    { type: String, default: null },
+    publicId:    { type: String, default: null },
     projectTitle: { type: String, default: null },
     actors:       { type: [actorSchema], default: [] },
     actorCount:   { type: Number, default: 0 },
@@ -41,9 +41,9 @@ const notificationSchema = new mongoose.Schema(
 notificationSchema.index({ userId: 1, read: 1, createdAt: -1 });
 notificationSchema.index({ userId: 1, createdAt: -1 });
 
-// One aggregated notification per {userId, type, projectId} for star/fork/reaction
+// One aggregated notification per {userId, type, publicId} for star/fork/reaction
 notificationSchema.index(
-  { userId: 1, type: 1, projectId: 1 },
+  { userId: 1, type: 1, publicId: 1 },
   { unique: true, partialFilterExpression: { type: { $in: ['star', 'fork', 'reaction'] } } }
 );
 
@@ -65,7 +65,7 @@ export interface INotification {
   type: NotificationType;
   read: boolean;
   sticky: boolean;
-  projectId: string | null;
+  publicId: string | null;
   projectTitle: string | null;
   actors: Array<{
     userId: mongoose.Types.ObjectId;

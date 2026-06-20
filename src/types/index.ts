@@ -12,20 +12,34 @@ export interface SecondaryWordEntry {
 }
 
 export interface LineEntry {
+  type?: string | null;
+  label?: string | null;
+  depth?: number | null;
+  id?: string | null;
   text: string;
   timestamp: number | null;
   endTime?: number | null;
   secondary?: string | null;
+  singers?: string[];
   translation?: string | null;
-  id?: string;
+  translations?: Array<{ text: string; language?: string | null }>;
   words?: WordEntry[];
   secondaryWords?: SecondaryWordEntry[];
+}
+
+export interface SectionEntry {
+  label?: string | null;
+  depth?: number | null;
+  id?: string | null;
+  singers?: string[];
+  timestamp?: number | null;
+  lines: LineEntry[];
 }
 
 export interface LyricsData {
   editorMode: 'lrc' | 'srt' | 'words';
   language?: string | null;
-  lines: LineEntry[];
+  sections: SectionEntry[];
 }
 
 export interface ProjectState {
@@ -34,25 +48,36 @@ export interface ProjectState {
   playbackPosition?: number;
   playbackSpeed?: number;
   saveTime?: string | null;
-  timezone?: string | null;
-  utcOffset?: string | null;
 }
+
+export type PrimaryGenre =
+  | 'pop' | 'rock' | 'hip_hop' | 'rnb' | 'electronic'
+  | 'jazz' | 'classical' | 'country' | 'folk' | 'metal'
+  | 'blues' | 'soul' | 'reggae' | 'latin' | 'alternative'
+  | 'soundtrack' | 'world' | 'other';
+
+export const PRIMARY_GENRES: PrimaryGenre[] = [
+  'pop','rock','hip_hop','rnb','electronic','jazz','classical',
+  'country','folk','metal','blues','soul','reggae','latin',
+  'alternative','soundtrack','world','other',
+];
 
 export interface ProjectMetadata {
   description?: string;
   tags?: string[];
+  genre?: PrimaryGenre | '';
+  songLanguage?: string;
+  trackNumber?: number | null;
+  trackCount?: number | null;
 }
 
 export interface UploadInfo {
   id: string;
   source?: string;
   fileName?: string;
-  youtubeUrl?: string;
-  cloudinaryUrl?: string;
+  uploadUrl?: string;
   duration?: number;
   title?: string;
-  spotifyTrackId?: string;
-  artist?: string;
 }
 
 // ─── API Response types ──────────────────────────────────────────────
@@ -76,17 +101,11 @@ export interface UserPublic {
   isVerified: boolean;
   ban: { active: boolean; reason?: string | null; until?: Date | null };
   appeal?: { text?: string | null; status: string; submittedAt?: Date | null; resolvedAt?: Date | null } | null;
-  showUnbanMessage?: boolean;
+  wasJustUnbanned?: boolean;
   role: string;
   createdAt?: Date;
   passwordChangedAt?: Date | null;
   hasPassword?: boolean;
-  spotify?: {
-    connected: boolean;
-    spotifyId?: string | null;
-    isPremium: boolean;
-    profilePictureUrl?: string | null;
-  } | null;
   google?: {
     connected: boolean;
     googleId?: string | null;
@@ -95,6 +114,9 @@ export interface UserPublic {
     pictureUrl?: string | null;
   } | null;
   showFollowers?: boolean;
+  stats?: { minutesSynced: number; wordsSynced: number; karaokeLines: number };
+  streak?: { current: number; longest: number; lastActiveDate?: Date | null };
+  progression?: { xp: number; level: number };
 }
 
 export interface AuthTokens {
@@ -109,7 +131,7 @@ export interface AuthResponse {
 }
 
 export interface ProjectPublic {
-  projectId: string;
+  publicId: string;
   title?: string;
   upload?: UploadInfo | null;
   lyrics?: LyricsData;
@@ -124,23 +146,27 @@ export interface ProjectPublic {
 
 export interface ProjectListItem {
   id: string;
-  projectId: string;
+  publicId: string;
   title?: string;
   metadata?: ProjectMetadata;
+  coverImage?: string;
   upload?: UploadInfo | null;
   editorMode: string;
   lineCount: number;
   syncedLineCount: number;
   readOnly: boolean;
+  public?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
+// T documents the expected success payload shape for callers.
+// Index signature uses unknown so named properties satisfy the constraint.
 export interface ServiceResult<T = unknown> {
   error?: string;
   code?: string;
   status?: number;
-  [key: string]: T | undefined | string | number;
+  [key: string]: unknown;
 }
 
 // ─── Mark / Editor action types ──────────────────────────────────────

@@ -7,7 +7,8 @@ import { settingsResolvers } from './settings.resolvers.js';
 import { playlistResolvers } from './playlist.resolvers.js';
 import { activityResolvers } from './activity.resolvers.js';
 import { exploreResolvers }  from './explore.resolvers.js';
-import { commentResolvers }  from './comment.resolvers.js';
+import { reactionResolvers } from './reaction.resolvers.js';
+import { statsResolvers }    from './stats.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -19,7 +20,8 @@ export const resolvers = {
     ...playlistResolvers.Query,
     ...activityResolvers.Query,
     ...exploreResolvers.Query,
-    ...commentResolvers.Query,
+    ...reactionResolvers.Query,
+    ...statsResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -28,7 +30,8 @@ export const resolvers = {
     ...uploadResolvers.Mutation,
     ...settingsResolvers.Mutation,
     ...playlistResolvers.Mutation,
-    ...commentResolvers.Mutation,
+    ...reactionResolvers.Mutation,
+    ...statsResolvers.Mutation,
   },
   User:     userResolvers.User,
   Project:  projectResolvers.Project,

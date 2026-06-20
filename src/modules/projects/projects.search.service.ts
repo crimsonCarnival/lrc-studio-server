@@ -12,11 +12,11 @@ const SEARCH_PATHS = [
   'metadata.tags',
 ];
 
-export async function searchProjects(
+async function searchWithAtlas(
   query: string,
-  sortBy: SearchSort = 'RELEVANCE',
-  offset: number = 0,
-  limit: number = 20
+  sortBy: SearchSort,
+  offset: number,
+  limit: number,
 ): Promise<{ projects: unknown[]; total: number }> {
   const searchStage = {
     $search: {
@@ -37,7 +37,7 @@ export async function searchProjects(
   const sortStage: Record<string, unknown> | null =
     sortBy === 'STARS'  ? { $sort: { starCount: -1 } } :
     sortBy === 'NEWEST' ? { $sort: { createdAt: -1 } } :
-    null; // RELEVANCE: preserve searchScore ordering — no $sort
+    null;
 
   const resultPipeline: PipelineStage[] = [searchStage as PipelineStage];
   if (sortStage) resultPipeline.push(sortStage as unknown as PipelineStage);
@@ -52,6 +52,53 @@ export async function searchProjects(
 
   return {
     projects,
-    total: (countResult[0] as any)?.total ?? 0,
+    total: (countResult[0] as { total?: number } | undefined)?.total ?? 0,
   };
+}
+
+async function searchWithRegex(
+  query: string,
+  sortBy: SearchSort,
+  offset: number,
+  limit: number,
+): Promise<{ projects: unknown[]; total: number }> {
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(escaped, 'i');
+
+  const filter = {
+    public: true,
+    $or: [
+      { title: regex },
+      { 'metadata.songName': regex },
+      { 'metadata.songArtist': regex },
+      { 'metadata.songAlbum': regex },
+      { 'metadata.description': regex },
+      { 'metadata.tags': regex },
+    ],
+  };
+
+  const sortField: Record<string, 1 | -1> =
+    sortBy === 'STARS'  ? { starCount: -1 } :
+    sortBy === 'NEWEST' ? { createdAt: -1 } :
+    { createdAt: -1 };
+
+  const [projects, total] = await Promise.all([
+    Project.find(filter).sort(sortField).skip(offset).limit(limit).lean(),
+    Project.countDocuments(filter),
+  ]);
+
+  return { projects, total };
+}
+
+export async function searchProjects(
+  query: string,
+  sortBy: SearchSort = 'RELEVANCE',
+  offset: number = 0,
+  limit: number = 20
+): Promise<{ projects: unknown[]; total: number }> {
+  try {
+    return await searchWithAtlas(query, sortBy, offset, limit);
+  } catch {
+    return searchWithRegex(query, sortBy, offset, limit);
+  }
 }

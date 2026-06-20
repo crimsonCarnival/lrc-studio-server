@@ -11,9 +11,9 @@ import { UserPublic } from '../types/index.js';
  */
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
-  memoryCost: 64 * 1024, // 64 MB
+  memoryCost: 19 * 1024, // 19 MB — OWASP minimum; 64 MB caused OOM in constrained envs
   timeCost: 3,           // 3 iterations
-  parallelism: 4,        // 4 threads
+  parallelism: 1,        // 1 thread — avoids CPU contention on multi-tenant servers
 };
 
 const BCRYPT_SALT_ROUNDS = 12; // kept only for migration verification
@@ -54,6 +54,24 @@ export interface IMusicLibraryEntry {
   updatedAt: Date;
 }
 
+export interface IUserStats {
+  minutesSynced: number;
+  secondsSynced: number;
+  wordsSynced: number;
+  karaokeLines: number;
+}
+
+export interface IUserStreak {
+  current: number;
+  longest: number;
+  lastActiveDate?: Date | null;
+}
+
+export interface IUserProgression {
+  xp: number;
+  level: number;
+}
+
 export interface IUser extends Document {
   accountName?: string;
   displayName?: string | null;
@@ -67,18 +85,9 @@ export interface IUser extends Document {
   isVerified: boolean;
   ban: IBan;
   appeal: IAppeal;
-  showUnbanMessage: boolean;
   deletedAt?: Date | null;
   isDeleted: boolean;
   role: 'user' | 'admin';
-  spotify?: {
-    spotifyId?: string | null;
-    accessToken?: string | null;
-    refreshToken?: string | null;
-    expiresAt?: Date | null;
-    isPremium?: boolean;
-    profilePictureUrl?: string | null;
-  };
   google?: {
     googleId?: string | null;
     email?: string | null;
@@ -91,23 +100,18 @@ export interface IUser extends Document {
   currentChallenge?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
-  // Sync stats (recomputed from lyrics)
-  minutesSynced: number;
-  wordsSynced: number;
-  karaokeLines: number;
-  // Streak
-  currentStreak: number;
-  longestStreak: number;
-  lastActiveDate?: Date | null;
+  // Stats subdoc
+  stats?: IUserStats;
+  // Streak subdoc
+  streak?: IUserStreak;
   // Badges
   badges: IUserBadge[];
   showcasedBadges: string[];
   showcasePublic: boolean;
   // Music library: previously used artists/albums for autofill
   musicLibrary: IMusicLibraryEntry[];
-  // Progression
-  xp: number;
-  level: number;
+  // Progression subdoc
+  progression?: IUserProgression;
 
   verifyPassword(plain: string): Promise<boolean>;
   toPublic(): Record<string, unknown>;
@@ -153,6 +157,33 @@ const userBadgeSchema = new mongoose.Schema<IUserBadge>(
     id:        { type: String, required: true },
     grantedAt: { type: Date,   default: Date.now },
     grantedBy: { type: String, default: 'system' },
+  },
+  { _id: false }
+);
+
+const statsSchema = new mongoose.Schema<IUserStats>(
+  {
+    minutesSynced: { type: Number, default: 0, min: 0 },
+    secondsSynced: { type: Number, default: 0, min: 0 },
+    wordsSynced:   { type: Number, default: 0, min: 0 },
+    karaokeLines:  { type: Number, default: 0, min: 0 },
+  },
+  { _id: false }
+);
+
+const streakSchema = new mongoose.Schema<IUserStreak>(
+  {
+    current:        { type: Number, default: 0, min: 0 },
+    longest:        { type: Number, default: 0, min: 0 },
+    lastActiveDate: { type: Date,   default: null },
+  },
+  { _id: false }
+);
+
+const progressionSchema = new mongoose.Schema<IUserProgression>(
+  {
+    xp:    { type: Number, default: 0, min: 0 },
+    level: { type: Number, default: 0, min: 0 },
   },
   { _id: false }
 );
@@ -217,10 +248,6 @@ const userSchema = new mongoose.Schema<IUser>(
     },
     ban: { type: banSchema, default: () => ({}) },
     appeal: { type: appealSchema, default: () => ({}) },
-    showUnbanMessage: {
-      type: Boolean,
-      default: false,
-    },
     deletedAt: {
       type: Date,
       default: null,
@@ -233,14 +260,6 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       enum: ['user', 'admin'],
       default: 'user',
-    },
-    spotify: {
-      spotifyId: { type: String, default: null },
-      accessToken: { type: String, default: null },
-      refreshToken: { type: String, default: null },
-      expiresAt: { type: Date, default: null },
-      isPremium: { type: Boolean, default: false },
-      profilePictureUrl: { type: String, default: null },
     },
     google: {
       googleId: { type: String, default: null },
@@ -262,17 +281,12 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       default: null,
     },
-    minutesSynced:   { type: Number, default: 0, min: 0 },
-    wordsSynced:     { type: Number, default: 0, min: 0 },
-    karaokeLines:    { type: Number, default: 0, min: 0 },
-    currentStreak:   { type: Number, default: 0, min: 0 },
-    longestStreak:   { type: Number, default: 0, min: 0 },
-    lastActiveDate:  { type: Date,   default: null },
+    stats:       { type: statsSchema,       default: () => ({}) },
+    streak:      { type: streakSchema,      default: () => ({}) },
     badges:          { type: [userBadgeSchema], default: [] },
     showcasedBadges: { type: [String], default: [] },
     showcasePublic:  { type: Boolean, default: true },
-    xp:              { type: Number, default: 0, min: 0 },
-    level:           { type: Number, default: 0, min: 0 },
+    progression: { type: progressionSchema, default: () => ({}) },
     musicLibrary: {
       type: [{
         artist:     { type: String, default: '', maxlength: 500 },
@@ -302,6 +316,9 @@ userSchema.index({ 'google.googleId': 1 }, { unique: true, sparse: true });
 
 // Enables $text search in admin user listing
 userSchema.index({ accountName: 'text', email: 'text' });
+
+// Soft-delete filter support
+userSchema.index({ isDeleted: 1 });
 
 /**
  * Verifies the provided plaintext password against the stored hash.
@@ -351,18 +368,11 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
       submittedAt: this.appeal?.submittedAt ?? null,
       resolvedAt: this.appeal?.resolvedAt ?? null,
     } : null,
-    showUnbanMessage: this.showUnbanMessage,
     role: this.role,
     createdAt: this.createdAt,
     passwordChangedAt: this.passwordChangedAt,
     lastAccountNameChangedAt: this.lastAccountNameChangedAt ?? null,
     hasPassword: this.passwordHash !== 'OAUTH_NO_PASSWORD',
-    spotify: this.spotify ? {
-      connected: !!this.spotify.spotifyId,
-      spotifyId: this.spotify.spotifyId || null,
-      isPremium: this.spotify.isPremium || false,
-      profilePictureUrl: this.spotify.profilePictureUrl || null,
-    } : null,
     google: this.google?.googleId ? {
       connected: true,
       googleId: this.google.googleId,
@@ -374,19 +384,28 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
     badges:         this.badges ?? [],
     showcasedBadges: this.showcasedBadges ?? [],
     showcasePublic:  this.showcasePublic ?? true,
-    minutesSynced:  this.minutesSynced ?? 0,
-    wordsSynced:    this.wordsSynced ?? 0,
-    karaokeLines:   this.karaokeLines ?? 0,
-    currentStreak:  this.currentStreak ?? 0,
-    longestStreak:  this.longestStreak ?? 0,
-    level:          this.level ?? 0,
-    xp:             this.xp ?? 0,
+    stats: {
+      minutesSynced: this.stats?.minutesSynced ?? 0,
+      secondsSynced: this.stats?.secondsSynced ?? 0,
+      wordsSynced:   this.stats?.wordsSynced ?? 0,
+      karaokeLines:  this.stats?.karaokeLines ?? 0,
+    },
+    streak: {
+      current:        this.streak?.current ?? 0,
+      longest:        this.streak?.longest ?? 0,
+      lastActiveDate: this.streak?.lastActiveDate ?? null,
+    },
+    progression: {
+      xp:    this.progression?.xp ?? 0,
+      level: this.progression?.level ?? 0,
+    },
   };
 };
 
 /**
  * Checks if the user's ban has expired.
- * If expired, clears the ban and appeal state and flags the unban message.
+ * If expired, clears the ban and appeal state.
+ * Returns true so the caller knows to surface a wasJustUnbanned signal.
  */
 userSchema.methods.checkBanStatus = async function (this: IUser): Promise<boolean> {
   if (!this.ban?.active) return false;
@@ -398,7 +417,6 @@ userSchema.methods.checkBanStatus = async function (this: IUser): Promise<boolea
     this.appeal.text = null;
     this.appeal.status = 'none';
     this.appeal.submittedAt = null;
-    this.showUnbanMessage = true;
     await this.save();
     return true;
   }

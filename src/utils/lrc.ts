@@ -2,6 +2,10 @@ import crypto from 'node:crypto';
 import { serializeToRubyMarkup, parseRubyMarkup } from './furigana.js';
 import type { RubySegment } from './furigana.js';
 
+// SRT utilities live in srt.ts; re-export SrtConfig so existing imports from lrc.ts still work.
+import type { SrtConfig } from './srt.js';
+export type { SrtConfig } from './srt.js';
+
 export interface WordEntry {
   word: string;
   time?: number | null;
@@ -19,15 +23,12 @@ export interface LineEntry {
   endTime?: number | null;
   secondary?: string | null;
   translation?: string | null;
+  translations?: Array<{ text: string; language?: string | null }>;
   id?: string;
   words?: WordEntry[];
   secondaryWords?: SecondaryWordEntry[];
 }
 
-export interface SrtConfig {
-  minSubtitleGap?: number;
-  defaultSubtitleDuration?: number;
-}
 
 function buildSecondaryText(line: LineEntry, wordPrecision?: string): string | null {
   if (line.secondaryWords?.length && line.secondaryWords.some(w => w.time != null)) {
@@ -152,7 +153,8 @@ export function compileLRC(
   metadata: Record<string, string | undefined> = {},
   lineEndings = 'lf',
   includeSecondary = false,
-  wordPrecision?: string
+  wordPrecision?: string,
+  exportTranslationIndex = 0
 ): string {
   const wp = wordPrecision || precision;
   let header = '';
@@ -173,8 +175,9 @@ export function compileLRC(
           const sec = buildSecondaryText(line, wp);
           if (sec) out += `\n[${formatTimestamp(ts, precision)}] ${sec}`;
         }
-        if (includeTranslations && line.translation) {
-          out += `\n[${formatTimestamp(ts, precision)}] ${line.translation}`;
+        if (includeTranslations) {
+          const translationText = line.translations?.[exportTranslationIndex]?.text ?? line.translation ?? null;
+          if (translationText) out += `\n[${formatTimestamp(ts, precision)}] ${translationText}`;
         }
         return out;
       }
@@ -182,51 +185,13 @@ export function compileLRC(
     })
     .join('\n');
 
-  let result = header + body;
+  const result = header + body;
   return lineEndings === 'crlf' ? result.replace(/\n/g, '\r\n') : result;
 }
 
-export function compileSRT(
-  lines: LineEntry[],
-  duration?: number | null,
-  includeTranslations = false,
-  lineEndings = 'lf',
-  srtConfig: SrtConfig = {},
-  includeSecondary = false
-): string {
-  const minGap = srtConfig.minSubtitleGap || 0.05;
-  const defaultDur = srtConfig.defaultSubtitleDuration || 5;
+// compileSRT has moved to srt.ts — import it from there.
 
-  const synced = lines.filter((l) => l.timestamp != null);
-  if (synced.length === 0) return '';
-
-  const body = synced.map((line, i) => {
-    const start = line.timestamp!;
-    let end: number;
-    if (line.endTime != null) {
-      end = line.endTime;
-    } else {
-      const nextLine = synced[i + 1];
-      if (nextLine && nextLine.timestamp != null) {
-        end = Math.max(start + minGap, nextLine.timestamp - minGap);
-      } else if (duration) {
-        end = Math.min(start + defaultDur, duration);
-      } else {
-        end = start + defaultDur;
-      }
-    }
-
-    return `${i + 1}\n${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(end)}\n${
-      (includeSecondary && buildSecondaryText(line)) ? buildSecondaryText(line) + '\n' : ''
-    }${line.text}${
-      (includeTranslations && line.translation) ? '\n' + line.translation : ''
-    }\n`;
-  }).join('\n');
-
-  return lineEndings === 'crlf' ? body.replace(/\n/g, '\r\n') : body;
-}
-
-export function parseLrcSrtFile(content: string, filename: string): LineEntry[] {
+export function parseLrcSrtFile(content: string, filename: string, options: { preserveEmptyLines?: boolean } = {}): LineEntry[] {
   const isSrt = filename.toLowerCase().endsWith('.srt');
   const parsedLines: LineEntry[] = [];
 
@@ -268,6 +233,8 @@ export function parseLrcSrtFile(content: string, filename: string): LineEntry[] 
         parsedLines.push(entry);
       } else if (remaining !== '' && !/^\[[^\]]*:[^\]]*\]/.test(remaining)) {
         parsedLines.push({ text: remaining.trim(), timestamp: null, id: crypto.randomUUID() });
+      } else if (remaining === '' && options.preserveEmptyLines) {
+        parsedLines.push({ text: '', timestamp: null, id: crypto.randomUUID() });
       }
     });
   }

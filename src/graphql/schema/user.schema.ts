@@ -1,4 +1,22 @@
 export const userSchema = `
+  type UserStats {
+    minutesSynced: Float
+    secondsSynced: Float
+    wordsSynced: Float
+    karaokeLines: Float
+  }
+
+  type UserStreak {
+    current: Int
+    longest: Int
+    lastActiveDate: String
+  }
+
+  type UserProgression {
+    xp: Float
+    level: Int
+  }
+
   type User {
     id: ID!
     accountName: String
@@ -9,7 +27,7 @@ export const userSchema = `
     isVerified: Boolean!
     ban: UserBan
     appeal: UserAppeal
-    showUnbanMessage: Boolean
+    wasJustUnbanned: Boolean
     role: String!
     createdAt: String
     passwordChangedAt: String
@@ -19,7 +37,6 @@ export const userSchema = `
     previousAccountNames: [NameChange!]!
     emailHistory: [EmailChange!]!
     hasPassword: Boolean!
-    spotify: SpotifyInfo
     google: GoogleInfo
     projects: [Project!]!
     uploads: [Upload!]!
@@ -27,13 +44,9 @@ export const userSchema = `
     showFollowers: Boolean!
     badges: [UserBadge!]!
     showcasedBadges: [String!]!
-    minutesSynced: Int!
-    wordsSynced: Int!
-    karaokeLines: Int!
-    currentStreak: Int!
-    longestStreak: Int!
-    level: Int!
-    xp: Int!
+    stats: UserStats
+    streak: UserStreak
+    progression: UserProgression
     showcaseSlots: Int!
   }
 
@@ -48,13 +61,6 @@ export const userSchema = `
     status: String
     submittedAt: String
     resolvedAt: String
-  }
-
-  type SpotifyInfo {
-    connected: Boolean!
-    spotifyId: String
-    isPremium: Boolean!
-    profilePictureUrl: String
   }
 
   type GoogleInfo {
@@ -97,10 +103,9 @@ export const userSchema = `
     badges: [UserBadge!]!
     showcasedBadges: [ShowcasedBadge!]!
     showcasePublic: Boolean!
-    level: Int!
-    xp: Int!
-    minutesSynced: Int!
-    currentStreak: Int!
+    stats: UserStats
+    streak: UserStreak
+    progression: UserProgression
   }
 
   type FollowUser {

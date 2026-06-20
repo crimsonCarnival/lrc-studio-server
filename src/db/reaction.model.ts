@@ -5,7 +5,7 @@ export type EmojiCode = typeof ALLOWED_EMOJIS[number];
 
 export interface IReaction {
   userId: mongoose.Types.ObjectId;
-  targetType: 'comment' | 'project';
+  targetType: 'project';
   targetId: string;
   emoji: EmojiCode;
   createdAt: Date;
@@ -14,7 +14,7 @@ export interface IReaction {
 const reactionSchema = new mongoose.Schema<IReaction>(
   {
     userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    targetType: { type: String, enum: ['comment', 'project'], required: true },
+    targetType: { type: String, enum: ['project'], required: true },
     targetId:   { type: String, required: true },
     emoji:      { type: String, enum: ALLOWED_EMOJIS, required: true },
   },

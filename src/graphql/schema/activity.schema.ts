@@ -3,7 +3,7 @@ export const activitySchema = `
     id: ID!
     actor: FollowUser!
     type: ActivityType!
-    projectId: String!
+    publicId: String!
     projectTitle: String!
     coverImage: String
     targetPath: String

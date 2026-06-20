@@ -31,7 +31,7 @@ export const playlistSchema = `
     tags: [String!]
     isPublic: Boolean
     sortMode: PlaylistSortMode
-    projectIds: [ID!]
+    publicIds: [ID!]
   }
 
   input UpdatePlaylistInput {

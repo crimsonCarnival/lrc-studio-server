@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Project from '../../modules/projects/project.model.js';
+import type { IProject } from '../../modules/projects/project.model.js';
 import Boost from '../../db/boost.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
@@ -16,53 +17,83 @@ import {
 import { getProject } from '../../modules/projects/projects.crud.service.js';
 import { Context } from './context.js';
 import User from '../../db/user.model.js';
+import type { IUser } from '../../db/user.model.js';
 import { upsertSocial } from '../../modules/notifications/notifications.service.js';
 import { emitProjectUpdated } from '../../modules/projects/projects.controller.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
+import type { SearchSort } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
 
 export const projectResolvers = {
   Query: {
-    // id is the projectId nanoid string, NOT the MongoDB _id
-    project: async (_root: any, { id }: { id: string }, context: Context) => {
+    // id is the publicId nanoid string, NOT the MongoDB _id
+    project: async (_root: unknown, { id }: { id: string }, context: Context) => {
       return getProject(id, context.userId ?? null);
     },
 
-    projects: async (_root: any, { limit = 20, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
+    projects: async (_root: unknown, { limit: _limit = 20, offset: _offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
       if (!context.userId) return [];
       // Use the service which includes line counts and proper mapping
       return listProjects(context.userId);
     },
 
-    getShare: async (_root: any, { id }: { id: string }) => {
+    myMusicLibrary: async (_root: unknown, _args: Record<string, unknown>, context: Context) => {
+      if (!context.userId) return [];
+      const rows = await Project.find(
+        { userId: context.userId, isDeleted: { $ne: true } },
+        { 'metadata.songArtist': 1, 'metadata.songAlbum': 1, 'metadata.genre': 1, 'metadata.songLanguage': 1, 'metadata.trackCount': 1 }
+      ).lean<IProject[]>();
+      const seen = new Set<string>();
+      const results: { artist: string; album: string; genre: string; language: string; trackCount: number | null }[] = [];
+      for (const row of rows) {
+        const m = (row.metadata ?? {}) as Record<string, unknown>;
+        const artist = (m['songArtist'] as string) || '';
+        const album = (m['songAlbum'] as string) || '';
+        if (!artist && !album) continue;
+        const key = `${artist}||${album}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push({ artist, album, genre: (m['genre'] as string) || '', language: (m['songLanguage'] as string) || '', trackCount: (m['trackCount'] as number | null) ?? null });
+      }
+      return results;
+    },
+
+    getShare: async (_root: unknown, { id }: { id: string }) => {
       return getShareProject(id);
     },
 
-    publicProject: async (_root: any, { projectId }: { projectId: string }) => {
-      const project = await Project.findOne({ projectId, public: true }).lean();
+    publicProject: async (_root: unknown, { publicId }: { publicId: string }) => {
+      const project = await Project.findOne({ publicId, public: true }).lean();
       return project ?? null;
     },
 
     searchProjects: async (
-      _root: any,
+      _root: unknown,
       { query, sortBy = 'RELEVANCE', offset = 0, limit = 20 }:
         { query: string; sortBy?: string; offset?: number; limit?: number }
     ) => {
       if (!query.trim()) return { projects: [], total: 0 };
-      return searchProjectsService(query, sortBy as any, offset, Math.min(limit, 50));
+      return searchProjectsService(query, sortBy as SearchSort, offset, Math.min(limit, 50));
     },
   },
 
   Mutation: {
     // Delegates to the full service: verifies reCAPTCHA, creates Lyrics doc, links lyricsId
-    createProject: async (_root: any, { input }: { input: any }, context: Context) => {
+    createProject: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {
       const result = await createProjectService(input, context.userId, context.ip || '');
-      if ('error' in result) throw new Error((result as any).error);
+      if ('error' in result) throw new Error(result.error ?? 'Unknown error');
+      const created = result as { publicId: string; url: string };
       if (context.userId) {
-        const meta = input.metadata;
+        const meta = input.metadata as {
+          songArtist?: string;
+          songAlbum?: string;
+          songGenre?: string;
+          songLanguage?: string;
+          trackCount?: number | null;
+        } | undefined;
         Promise.all([
           updateStreak(context.userId),
           triggerBadgeCheck(context.userId, 'project_create'),
@@ -72,31 +103,31 @@ export const projectResolvers = {
             : []),
         ]).catch(() => {});
       }
-      return Project.findOne({ projectId: (result as any).projectId });
+      return Project.findOne({ publicId: created.publicId });
     },
 
-    // id = projectId (nanoid string). Delegates to patchProject service for version locking,
+    // id = publicId (nanoid string). Delegates to patchProject service for version locking,
     // single-line atomic updates, and lyrics patching.
-    updateProject: async (_root: any, { id, input }: { id: string; input: any }, context: Context) => {
+    updateProject: async (_root: unknown, { id, input }: { id: string; input: Record<string, unknown> }, context: Context) => {
       // If a Bearer token was sent but was expired, surface a 401 so the client
       // can refresh — otherwise optionalAuth would silently drop the userId and
       // the ownership check would produce a confusing 403.
       if (context.tokenExpired) {
-        const expiredErr = new Error('Token expired') as any;
+        const expiredErr = new Error('Token expired') as Error & { status: number };
         expiredErr.status = 401;
         throw expiredErr;
       }
       const result = await patchProject(id, input, context.userId);
       if ('error' in result) {
-        const err = result as any;
-        const statusErr = new Error(err.error) as any;
-        statusErr.status = err.status;
+        const statusErr = new Error(result.error ?? 'Unknown error') as Error & { status?: number };
+        statusErr.status = result.status;
         throw statusErr;
       }
+      const patched = result as { project: unknown };
       emitProjectUpdated(id, input);
       try {
         if (context.socketId) {
-          getIO().to(context.socketId).emit('autosave:ack', { projectId: id, savedAt: Date.now() });
+          getIO().to(context.socketId).emit('autosave:ack', { publicId: id, savedAt: Date.now() });
         }
       } catch { /* socket not ready */ }
       // If project is being published for the first time, check public_project_count badge
@@ -104,45 +135,52 @@ export const projectResolvers = {
         triggerBadgeCheck(context.userId, 'project_publish').catch(() => {});
       }
       if (context.userId && input.metadata) {
-        const meta = input.metadata;
+        const meta = input.metadata as {
+          songArtist?: string;
+          songAlbum?: string;
+          songGenre?: string;
+          songLanguage?: string;
+          trackCount?: number | null;
+        };
         if (meta.songArtist || meta.songAlbum) {
           upsertMusicLibraryEntry(context.userId, { artist: meta.songArtist || '', album: meta.songAlbum || '', genre: meta.songGenre, language: meta.songLanguage, trackCount: meta.trackCount }).catch(() => {});
         }
       }
-      return (result as any).project;
+      return patched.project;
     },
 
-    // id = projectId (nanoid string)
-    deleteProject: async (_root: any, { id }: { id: string }, context: Context) => {
+    // id = publicId (nanoid string)
+    deleteProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await deleteProjectService(id, context.userId);
       return !('error' in result);
     },
 
-    cloneProject: async (_root: any, { id }: { id: string }, context: Context) => {
+    cloneProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
 
-      const alreadyForked = await ProjectFork.exists({ sourceProjectId: id, userId: context.userId });
+      const alreadyForked = await ProjectFork.exists({ sourcepublicId: id, userId: context.userId });
       if (alreadyForked) throw new Error('already_forked');
 
       // Fetch source metadata before cloning — needed for the activity payload
-      const sourceProject = await Project.findOne({ projectId: id })
-        .select('title coverImage')
-        .lean();
+      const sourceProject = await Project.findOne({ publicId: id })
+        .select('title coverImage userId')
+        .lean<IProject>();
 
       const result = await cloneProject(id, context.userId);
-      if ('error' in result) throw new Error((result as any).error);
+      if ('error' in result) throw new Error(result.error ?? 'Unknown error');
+      const cloned = result as { publicId: string; url: string };
 
       writeActivity({
         actorId:      context.userId,
         type:         'project_forked',
-        projectId:    id,
-        projectTitle: (sourceProject as any)?.title || '',
-        coverImage:   (sourceProject as any)?.coverImage || '',
+        publicId:    id,
+        projectTitle: sourceProject?.title || '',
+        coverImage:   sourceProject?.coverImage || '',
       }).catch(() => {});
 
       // Badge: fork_received for source project owner
-      const sourceOwnerId = (sourceProject as any)?.userId?.toString();
+      const sourceOwnerId = sourceProject?.userId?.toString();
       if (sourceOwnerId && sourceOwnerId !== context.userId) {
         User.updateOne({ _id: sourceOwnerId }, { $inc: { 'social.totalForksReceived': 1 } })
           .then(() => triggerBadgeCheck(sourceOwnerId, 'fork_received'))
@@ -151,40 +189,40 @@ export const projectResolvers = {
       // Badge: project_create for the forker
       Promise.all([updateStreak(context.userId), triggerBadgeCheck(context.userId, 'project_create')]).catch(() => {});
 
-      return Project.findOne({ projectId: (result as any).projectId });
+      return Project.findOne({ publicId: cloned.publicId });
     },
 
-    starProject: async (_root: any, { id }: { id: string }, context: Context) => {
+    starProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) {
-        const err = new Error('Unauthorized') as any;
+        const err = new Error('Unauthorized') as Error & { status: number };
         err.status = 401;
         throw err;
       }
-      const project = await Project.findOne({ projectId: id }).select('userId title coverImage').lean();
+      const project = await Project.findOne({ publicId: id }).select('userId title coverImage').lean<IProject>();
       if (!project) throw new Error('Project not found');
 
       let isNewStar = false;
       try {
         const existing = await ProjectStar.findOneAndUpdate(
-          { projectId: id, userId: context.userId },
-          { $setOnInsert: { projectId: id, userId: context.userId } },
+          { publicId: id, userId: context.userId },
+          { $setOnInsert: { publicId: id, userId: context.userId } },
           { upsert: true, new: false }
         );
         if (!existing) {
           isNewStar = true;
-          await Project.updateOne({ projectId: id }, { $inc: { starCount: 1 } });
+          await Project.updateOne({ publicId: id }, { $inc: { starCount: 1 } });
           const ownerId = project.userId?.toString();
           if (ownerId) {
-            User.findById(context.userId).select('accountName avatarUrl').lean().then(actor => {
+            User.findById(context.userId).select('accountName avatarUrl').lean<IUser>().then(actor => {
               if (actor) {
                 upsertSocial({
                   ownerId,
                   type: 'star',
-                  projectId: id,
-                  projectTitle: (project as any).title || '',
+                  publicId: id,
+                  projectTitle: project.title || '',
                   actorId: context.userId!,
-                  actorAccountName: (actor as any).accountName,
-                  actorAvatarUrl: (actor as any).avatarUrl || null,
+                  actorAccountName: actor.accountName ?? '',
+                  actorAvatarUrl: actor.avatarUrl || null,
                 }).catch(() => {});
               }
             }).catch(() => {});
@@ -194,8 +232,8 @@ export const projectResolvers = {
               .catch(() => {});
           }
         }
-      } catch (err: any) {
-        if (err.code !== 11000) throw err;
+      } catch (err: unknown) {
+        if ((err as { code?: number }).code !== 11000) throw err;
       }
       // writeActivity is outside the upsert try/catch so a duplicate-key swallow
       // doesn't silently suppress the activity error path
@@ -203,61 +241,61 @@ export const projectResolvers = {
         writeActivity({
           actorId:      context.userId!,
           type:         'project_starred',
-          projectId:    id,
-          projectTitle: (project as any).title || '',
-          coverImage:   (project as any).coverImage || '',
+          publicId:    id,
+          projectTitle: project.title || '',
+          coverImage:   project.coverImage || '',
         }).catch(() => {});
       }
-      return Project.findOne({ projectId: id });
+      return Project.findOne({ publicId: id });
     },
 
-    unstarProject: async (_root: any, { id }: { id: string }, context: Context) => {
+    unstarProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) {
-        const err = new Error('Unauthorized') as any;
+        const err = new Error('Unauthorized') as Error & { status: number };
         err.status = 401;
         throw err;
       }
       // deleteOne is atomic — only one concurrent request will get deletedCount: 1
-      const { deletedCount } = await ProjectStar.deleteOne({ projectId: id, userId: context.userId });
+      const { deletedCount } = await ProjectStar.deleteOne({ publicId: id, userId: context.userId });
       if (deletedCount > 0) {
         await Project.updateOne(
-          { projectId: id, starCount: { $gt: 0 } },
+          { publicId: id, starCount: { $gt: 0 } },
           { $inc: { starCount: -1 } }
         );
       }
-      return Project.findOne({ projectId: id });
+      return Project.findOne({ publicId: id });
     },
 
-    setForksEnabled: async (_root: any, { projectId, enabled }: { projectId: string; enabled: boolean }, context: Context) => {
+    setForksEnabled: async (_root: unknown, { publicId, enabled }: { publicId: string; enabled: boolean }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
-      const project = await Project.findOne({ projectId, userId: context.userId });
+      const project = await Project.findOne({ publicId, userId: context.userId });
       if (!project) throw new Error('Project not found or not yours');
       project.forksEnabled = enabled;
       await project.save();
       return project;
     },
 
-    boostProject: async (_: unknown, { projectId }: { projectId: string }, ctx: Context) => {
+    boostProject: async (_: unknown, { publicId }: { publicId: string }, ctx: Context) => {
       if (!ctx.userId) throw new Error('Unauthorized');
 
-      const project = await Project.findOne({ projectId, public: true }).lean() as any;
+      const project = await Project.findOne({ publicId, public: true }).lean<IProject>();
       if (!project) throw new Error('Project not found');
-      if (project.userId.toString() === ctx.userId) throw new Error('Cannot boost your own project');
+      if (project.userId?.toString() === ctx.userId) throw new Error('Cannot boost your own project');
 
       try {
-        await Boost.create({ userId: new mongoose.Types.ObjectId(ctx.userId), projectId });
-      } catch (err: any) {
-        if (err.code === 11000) return true;
+        await Boost.create({ userId: new mongoose.Types.ObjectId(ctx.userId), publicId });
+      } catch (err: unknown) {
+        if ((err as { code?: number }).code === 11000) return true;
         throw err;
       }
 
-      const actor = await User.findById(ctx.userId).select('accountName').lean() as any;
+      const actor = await User.findById(ctx.userId).select('accountName').lean<IUser>();
       if (actor) {
         writeActivity({
           actorId: ctx.userId,
           type: 'project_boosted',
-          projectId,
-          projectTitle: project.title || project.metadata?.songName || '',
+          publicId,
+          projectTitle: project.title || (project.metadata as Record<string, unknown> | undefined)?.['songName'] as string || '',
           coverImage: project.coverImage ?? '',
           targetPath: '',
         }).catch(() => {});
@@ -272,27 +310,27 @@ export const projectResolvers = {
   // the user/upload/lyrics lookups to avoid N+1 queries.
 
   Project: {
-    id: (project: any) => project._id?.toString() || project.id || null,
-    createdAt: (project: any) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
-    updatedAt: (project: any) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
-    isStarredByMe: async (project: any, _args: any, ctx: Context) => {
-      if (!ctx.userId || !project.projectId) return false;
-      return !!(await ProjectStar.exists({ projectId: project.projectId, userId: ctx.userId }));
+    id: (project: IProject) => project._id?.toString() || project.id || null,
+    createdAt: (project: IProject) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
+    updatedAt: (project: IProject) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
+    isStarredByMe: async (project: IProject, _args: Record<string, unknown>, ctx: Context) => {
+      if (!ctx.userId || !project.publicId) return false;
+      return !!(await ProjectStar.exists({ publicId: project.publicId, userId: ctx.userId }));
     },
-    isForkedByMe: async (project: any, _args: any, ctx: Context) => {
-      if (!ctx.userId || !project.projectId) return false;
-      return !!(await ProjectFork.exists({ sourceProjectId: project.projectId, userId: ctx.userId }));
+    isForkedByMe: async (project: IProject, _args: Record<string, unknown>, ctx: Context) => {
+      if (!ctx.userId || !project.publicId) return false;
+      return !!(await ProjectFork.exists({ sourcepublicId: project.publicId, userId: ctx.userId }));
     },
-    // lyrics is fetched by projectId (more reliable than lyricsId in plain objects)
-    lyrics: async (project: any) => {
-      if (project.lyrics) return project.lyrics;
-      if (project.projectId) return Lyrics.findOne({ projectId: project.projectId });
+    // lyrics is fetched by publicId (more reliable than lyricsId in plain objects)
+    lyrics: async (project: IProject) => {
+      if ((project as IProject & { lyrics?: unknown }).lyrics) return (project as IProject & { lyrics?: unknown }).lyrics;
+      if (project.publicId) return Lyrics.findOne({ publicId: project.publicId });
       if (project.lyricsId) return Lyrics.findById(project.lyricsId);
       return null;
     },
     // Ensure upload is populated if queried
-    upload: async (project: any) => {
-      if (project.upload) return project.upload;
+    upload: async (project: IProject) => {
+      if ((project as IProject & { upload?: unknown }).upload) return (project as IProject & { upload?: unknown }).upload;
       if (project.uploadId) return Upload.findById(project.uploadId);
       return null;
     },

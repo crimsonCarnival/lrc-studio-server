@@ -1,6 +1,31 @@
-import mongoose from 'mongoose';
+import mongoose, { type Document, type Model } from 'mongoose';
 import { nanoid } from 'nanoid';
 import { stripHtml } from '../../utils/sanitize.js';
+import { PRIMARY_GENRES, type ProjectMetadata, type ProjectState } from '../../types/index.js';
+
+export interface IProject extends Document {
+  publicId: string;
+  userId?: mongoose.Types.ObjectId | null;
+  title?: string;
+  uploadId?: mongoose.Types.ObjectId | null;
+  lyricsId?: mongoose.Types.ObjectId | null;
+  state?: ProjectState;
+  metadata?: ProjectMetadata;
+  coverImage?: string;
+  readOnly: boolean;
+  public: boolean;
+  forksEnabled: boolean;
+  trendingScore: number;
+  forkedFrom?: {
+    publicId?: string | null;
+    userId?: mongoose.Types.ObjectId | null;
+    accountName?: string | null;
+  };
+  forkCount: number;
+  starCount: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
 
 const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
 
@@ -12,8 +37,6 @@ const stateSchema = new mongoose.Schema(
     playbackPosition: { type: Number, default: 0 },
     playbackSpeed: { type: Number, default: 1 },
     saveTime: { type: String, default: null, maxlength: 64 },
-    timezone: { type: String, default: null, maxlength: 100 },
-    utcOffset: { type: String, default: null, maxlength: 6 },
   },
   { _id: false }
 );
@@ -22,12 +45,13 @@ const stateSchema = new mongoose.Schema(
 const metadataSchema = new mongoose.Schema(
   {
     description: { type: String, default: '', maxlength: 2000, set: textSetter },
+    genre: { type: String, enum: [...PRIMARY_GENRES, ''], default: '' },
     tags: {
       type: [String],
       default: [],
       validate: {
-      validator: (v: unknown[]) => v.length <= 20,
-        message: 'Maximum 20 tags allowed',
+        validator: (v: unknown[]) => v.length <= 10,
+        message: 'Maximum 10 tags allowed',
       },
       set: (v: unknown) => (Array.isArray(v) ? v.map((t: unknown) => (typeof t === 'string' ? stripHtml(t).slice(0, 50) : t)) : v),
     },
@@ -47,7 +71,7 @@ const metadataSchema = new mongoose.Schema(
 // --- Main: Project ---
 const projectSchema = new mongoose.Schema(
   {
-    projectId: {
+    publicId: {
       type: String,
       required: true,
       unique: true,
@@ -81,12 +105,15 @@ const projectSchema = new mongoose.Schema(
     metadata: { type: metadataSchema, default: () => ({}) },
     coverImage: { type: String, default: '', maxlength: 2000, set: textSetter },
     readOnly: { type: Boolean, default: true },
-    public: { type: Boolean, default: true },
+    // Private by default: a project is only discoverable/shareable once the owner
+    // explicitly publishes it. Guarding the public surface (search, public profile,
+    // OG, the Project.user edge) starts here — see F8.
+    public: { type: Boolean, default: false },
     forksEnabled: { type: Boolean, default: true },
     trendingScore: { type: Number, default: 0 },
 
     forkedFrom: {
-      projectId: { type: String, default: null },
+      publicId: { type: String, default: null },
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
       accountName: { type: String, default: null },
     },
@@ -99,11 +126,16 @@ const projectSchema = new mongoose.Schema(
 
 // Supports list query: by owner, sorted by recent updates
 projectSchema.index({ userId: 1, updatedAt: -1 });
+// Supports genre and tag filtering
+projectSchema.index({ 'metadata.genre': 1 });
+projectSchema.index({ 'metadata.tags': 1 });
 // Supports public project discovery and trending sorts
 projectSchema.index({ public: 1, starCount: -1 });
 projectSchema.index({ public: 1, createdAt: -1 });
 projectSchema.index({ public: 1, trendingScore: -1 });
 projectSchema.index({ forksEnabled: 1 });
+
+export interface IProjectModel extends Model<IProject & IProjectMethods> {}
 
 // Methods
 export interface IProjectMethods {
@@ -124,4 +156,4 @@ projectSchema.methods.toPublic = function (this: mongoose.Document) {
   return obj;
 };
 
-export default mongoose.model('Project', projectSchema);
+export default mongoose.model<IProject & IProjectMethods, IProjectModel>('Project', projectSchema);

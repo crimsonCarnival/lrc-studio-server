@@ -46,7 +46,8 @@ export async function sendVerification(userId: string, email: string, type: 'ini
     User.findById(userId).select('displayName accountName'),
     Settings.findOne({ userId }).select('interface').lean(),
   ]);
-  const prefs = { lang: (settings as any)?.interface?.defaultLanguage, theme: (settings as any)?.interface?.theme };
+  const settingsLean = settings as { interface?: { defaultLanguage?: string; theme?: string } } | null;
+  const prefs = { lang: settingsLean?.interface?.defaultLanguage, theme: settingsLean?.interface?.theme };
   await sendVerificationEmail(email, verifyLink, user?.displayName || user?.accountName, prefs);
 }
 
