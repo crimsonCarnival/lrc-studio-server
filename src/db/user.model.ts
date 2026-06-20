@@ -45,6 +45,15 @@ export interface IUserBadge {
   grantedBy: string;
 }
 
+export interface IMusicLibraryEntry {
+  artist: string;
+  album: string;
+  genre?: string;
+  language?: string;
+  trackCount?: number | null;
+  updatedAt: Date;
+}
+
 export interface IUserStats {
   minutesSynced: number;
   secondsSynced: number;
@@ -99,6 +108,8 @@ export interface IUser extends Document {
   badges: IUserBadge[];
   showcasedBadges: string[];
   showcasePublic: boolean;
+  // Music library: previously used artists/albums for autofill
+  musicLibrary: IMusicLibraryEntry[];
   // Progression subdoc
   progression?: IUserProgression;
 
@@ -276,6 +287,18 @@ const userSchema = new mongoose.Schema<IUser>(
     showcasedBadges: { type: [String], default: [] },
     showcasePublic:  { type: Boolean, default: true },
     progression: { type: progressionSchema, default: () => ({}) },
+    musicLibrary: {
+      type: [{
+        artist:     { type: String, default: '', maxlength: 500 },
+        album:      { type: String, default: '', maxlength: 500 },
+        genre:      { type: String, default: '', maxlength: 100 },
+        language:   { type: String, default: '', maxlength: 100 },
+        trackCount: { type: Number, default: null, min: 0, max: 999 },
+        updatedAt:  { type: Date, default: Date.now },
+      }],
+      default: [],
+      _id: false,
+    },
   },
   { timestamps: true, collection: 'users' }
 );

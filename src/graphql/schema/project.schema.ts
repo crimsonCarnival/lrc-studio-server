@@ -51,9 +51,11 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
+    songGenre: String
     songLanguage: String
     trackNumber: Int
     trackCount: Int
+    albumArt: String
   }
 
   input WordInput {
@@ -101,9 +103,11 @@ export const projectSchema = `
     songArtist: String
     songAlbum: String
     songYear: String
+    songGenre: String
     songLanguage: String
     trackNumber: Int
     trackCount: Int
+    albumArt: String
   }
 
   input ProjectLyricsInput {

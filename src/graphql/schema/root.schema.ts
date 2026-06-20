@@ -38,6 +38,15 @@ export const rootSchema = `
     adminAddictionLevels: [AddictionLevel!]!
   }
 
+  type MusicLibraryEntry {
+    artist: String!
+    album: String!
+    genre: String
+    language: String
+    trackCount: Int
+    updatedAt: String
+  }
+
   type Mutation {
     createProject(input: CreateProjectInput!): Project!
     updateProject(id: ID!, input: UpdateProjectInput!): Project!

@@ -25,6 +25,7 @@ import { writeActivity } from '../../modules/activity/activity.service.js';
 import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
 import type { SearchSort } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
+import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
 
 export const projectResolvers = {
   Query: {
@@ -86,10 +87,20 @@ export const projectResolvers = {
       if ('error' in result) throw new Error(result.error ?? 'Unknown error');
       const created = result as { publicId: string; url: string };
       if (context.userId) {
+        const meta = input.metadata as {
+          songArtist?: string;
+          songAlbum?: string;
+          songGenre?: string;
+          songLanguage?: string;
+          trackCount?: number | null;
+        } | undefined;
         Promise.all([
           updateStreak(context.userId),
           triggerBadgeCheck(context.userId, 'project_create'),
           ...(input.public ? [triggerBadgeCheck(context.userId, 'project_publish')] : []),
+          ...(meta?.songArtist || meta?.songAlbum
+            ? [upsertMusicLibraryEntry(context.userId, { artist: meta.songArtist || '', album: meta.songAlbum || '', genre: meta.songGenre, language: meta.songLanguage, trackCount: meta.trackCount })]
+            : []),
         ]).catch(() => {});
       }
       return Project.findOne({ publicId: created.publicId });
@@ -122,6 +133,18 @@ export const projectResolvers = {
       // If project is being published for the first time, check public_project_count badge
       if (context.userId && input.public === true) {
         triggerBadgeCheck(context.userId, 'project_publish').catch(() => {});
+      }
+      if (context.userId && input.metadata) {
+        const meta = input.metadata as {
+          songArtist?: string;
+          songAlbum?: string;
+          songGenre?: string;
+          songLanguage?: string;
+          trackCount?: number | null;
+        };
+        if (meta.songArtist || meta.songAlbum) {
+          upsertMusicLibraryEntry(context.userId, { artist: meta.songArtist || '', album: meta.songAlbum || '', genre: meta.songGenre, language: meta.songLanguage, trackCount: meta.trackCount }).catch(() => {});
+        }
       }
       return patched.project;
     },
