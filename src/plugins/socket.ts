@@ -40,8 +40,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         socket.leave(`project:${publicId}`);
       });
 
-      socket.on('disconnect', () => {
-        fastify.log.info({ socketId: socket.id }, 'socket disconnected');
+      socket.on('disconnect', (reason) => {
+        fastify.log.info({ socketId: socket.id, reason }, 'socket disconnected');
       });
     });
   });
