@@ -67,12 +67,16 @@ const scrollSchema = sub({
 
 const editorSchema = sub({
   autoPauseOnMark: Boolean,
+  preserveEmptyLines: Boolean,
   nudge: { type: nudgeSchema },
   autoAdvance: { type: autoAdvanceSchema },
   showShiftAll: Boolean,
   shiftAllAmount: { type: Number, min: 0 },
   showLineNumbers: Boolean,
   timestampPrecision: { type: String, enum: ['hundredths', 'thousandths', 'milliseconds', 'seconds'] },
+  syncFlashDuration: { type: String, enum: ['short', 'normal', 'long'] },
+  lyricsSearchSpeed: { type: String, enum: ['fast', 'normal', 'slow'] },
+  overlapThreshold: { type: Number, min: 0 },
   srt: { type: srtSchema },
   history: { type: historySchema },
   display: { type: displaySchema },
@@ -96,6 +100,7 @@ const interfaceSchema = sub({
   fontSize: { type: String, enum: ['small', 'normal', 'large', 'xlarge'] },
   spacing: { type: String, enum: ['compact', 'normal', 'relaxed'] },
   previewAlignment: { type: String, enum: ['left', 'center', 'right'] },
+  focusContrast: { type: String, enum: ['off', 'low', 'medium', 'high'] },
   focusMode: { type: String, enum: ['default', 'sync', 'playback'] },
   layoutSwap: { type: Boolean, default: false },
   playerTop: { type: Boolean, default: false },
@@ -146,6 +151,7 @@ const autoSaveSchema = sub({
 
 const advancedSchema = sub({
   autoSave: { type: autoSaveSchema },
+  autoSaveIndicator: { type: String, enum: ['short', 'normal', 'long'] },
   confirmDestructive: Boolean,
   timezone: { type: String, maxlength: 50, match: /^(auto|[A-Za-z_]+\/[A-Za-z_/]+)$/ },
 });
