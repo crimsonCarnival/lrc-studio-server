@@ -16,6 +16,7 @@ export const rootSchema = `
     getShare(id: ID!): Project
     publicProfile(accountName: String!): PublicUser
     followList(accountName: String!, type: FollowListType!, offset: Int): FollowListResult!
+    blockedUsers: [BlockedUser!]!
     playlist(id: ID!): Playlist
     playlists(accountName: String!): [Playlist!]!
     savedPlaylists: [Playlist!]!
@@ -63,6 +64,8 @@ export const rootSchema = `
     sendVerificationEmail: Boolean!
     follow(accountName: String!): Boolean!
     unfollow(accountName: String!): Boolean!
+    blockUser(accountName: String!): Boolean!
+    unblockUser(accountName: String!): Boolean!
     createPlaylist(input: CreatePlaylistInput!): Playlist!
     updatePlaylist(id: ID!, input: UpdatePlaylistInput!): Playlist!
     deletePlaylist(id: ID!): Boolean!

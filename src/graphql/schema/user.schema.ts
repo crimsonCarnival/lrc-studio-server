@@ -100,6 +100,7 @@ export const userSchema = `
     followerCount: Int!
     followingCount: Int!
     isFollowedByMe: Boolean!
+    isBlockedByMe: Boolean!
     showFollowers: Boolean!
     badges: [UserBadge!]!
     showcasedBadges: [ShowcasedBadge!]!
@@ -120,6 +121,14 @@ export const userSchema = `
   type FollowListResult {
     users: [FollowUser!]!
     total: Int!
+  }
+
+  type BlockedUser {
+    id: ID!
+    accountName: String!
+    displayName: String
+    avatarUrl: String
+    blockedAt: String
   }
 
   enum FollowListType {

@@ -23,6 +23,7 @@ import { emitProjectUpdated } from '../../modules/projects/projects.controller.j
 import { getIO } from '../../socket/socket.manager.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
+import { getBlockedSet } from '../../modules/blocks/block.service.js';
 import type { SearchSort } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
@@ -73,10 +74,17 @@ export const projectResolvers = {
     searchProjects: async (
       _root: unknown,
       { query, sortBy = 'RELEVANCE', offset = 0, limit = 20 }:
-        { query: string; sortBy?: string; offset?: number; limit?: number }
+        { query: string; sortBy?: string; offset?: number; limit?: number },
+      context: Context
     ) => {
       if (!query.trim()) return { projects: [], total: 0 };
-      return searchProjectsService(query, sortBy as SearchSort, offset, Math.min(limit, 50));
+      const result = await searchProjectsService(query, sortBy as SearchSort, offset, Math.min(limit, 50));
+      if (!context.userId) return result;
+      const blockedSet = await getBlockedSet(context.userId);
+      if (blockedSet.size === 0) return result;
+      const projects = (result.projects as { userId?: { toString(): string } }[])
+        .filter((p) => !p.userId || !blockedSet.has(p.userId.toString()));
+      return { ...result, projects };
     },
   },
 
