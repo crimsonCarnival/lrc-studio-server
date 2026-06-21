@@ -81,7 +81,8 @@ export async function banUser(req: FastifyRequest, reply: FastifyReply): Promise
     bannedUntil as string | null,
     banIp as boolean,
     banDevice as boolean,
-    req.userId!
+    req.userId!,
+    req.ip
   );
   if ((result as Record<string, unknown>).error) {
     return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
@@ -93,31 +94,31 @@ export async function banUser(req: FastifyRequest, reply: FastifyReply): Promise
 }
 
 export async function unbanUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await adminService.toggleBan((req.params as Record<string, string>).id, false);
+  const result = await adminService.toggleBan((req.params as Record<string, string>).id, false, null, null, false, false, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }
 
 export async function rejectAppeal(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await adminService.rejectAppeal((req.params as Record<string, string>).id);
+  const result = await adminService.rejectAppeal((req.params as Record<string, string>).id, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }
 
 export async function changeRole(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await adminService.changeUserRole((req.params as Record<string, string>).id, (req.body as Record<string, string>).role);
+  const result = await adminService.changeUserRole((req.params as Record<string, string>).id, (req.body as Record<string, string>).role, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }
 
 export async function deleteUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await adminService.deleteUser((req.params as Record<string, string>).id);
+  const result = await adminService.deleteUser((req.params as Record<string, string>).id, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }
 
 export async function reactivateUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await adminService.reactivateUser((req.params as Record<string, string>).id);
+  const result = await adminService.reactivateUser((req.params as Record<string, string>).id, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }
@@ -134,13 +135,13 @@ export async function getBannedIps(_req: FastifyRequest, reply: FastifyReply): P
 
 export async function blockIp(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { ip, reason } = req.body as Record<string, string>;
-  const result = await adminService.blockIp(ip, reason, req.userId!);
+  const result = await adminService.blockIp(ip, reason, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }
 
 export async function unblockIp(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await adminService.unblockIp((req.params as Record<string, string>).id);
+  const result = await adminService.unblockIp((req.params as Record<string, string>).id, req.userId!, req.ip);
   return reply.send(result);
 }
 
@@ -156,19 +157,20 @@ export async function getBannedDevices(_req: FastifyRequest, reply: FastifyReply
 
 export async function blockDevice(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { deviceId, reason } = req.body as Record<string, string>;
-  const result = await adminService.blockDevice(deviceId, reason, req.userId!);
+  const result = await adminService.blockDevice(deviceId, reason, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }
 
 export async function unblockDevice(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await adminService.unblockDevice((req.params as Record<string, string>).id);
+  const result = await adminService.unblockDevice((req.params as Record<string, string>).id, req.userId!, req.ip);
   return reply.send(result);
 }
 export async function adjustXP(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { action, amount, target, userId, userIds } = req.body as Record<string, unknown>;
   if (!['grant', 'revoke'].includes(action as string)) return reply.code(400).send({ error: 'action must be grant or revoke' });
   if (!amount || typeof amount !== 'number' || amount <= 0) return reply.code(400).send({ error: 'amount must be a positive number' });
+  if (amount > adminService.MAX_XP_GRANT) return reply.code(400).send({ error: `amount exceeds the per-grant limit of ${adminService.MAX_XP_GRANT}` });
   if (!['all', 'user', 'users'].includes(target as string)) return reply.code(400).send({ error: 'target must be all, user, or users' });
   const result = await adminService.adjustXP(
     action as 'grant' | 'revoke',
@@ -176,7 +178,8 @@ export async function adjustXP(req: FastifyRequest, reply: FastifyReply): Promis
     target as 'all' | 'user' | 'users',
     req.userId!,
     userId as string | undefined,
-    userIds as string[] | undefined
+    userIds as string[] | undefined,
+    req.ip
   );
   return reply.send(result);
 }

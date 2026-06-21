@@ -6,7 +6,8 @@ import {
   deleteLevel,
 } from '../../modules/stats/addiction-level.service.js';
 import { Context } from './context.js';
-import { requireAdmin } from './auth-guards.js';
+import { requirePermission } from './auth-guards.js';
+import { logAdminAction } from '../../modules/admin/admin.service.js';
 
 export const statsResolvers = {
   Query: {
@@ -16,7 +17,7 @@ export const statsResolvers = {
     },
 
     adminAddictionLevels: async (_root: unknown, _args: unknown, context: Context) => {
-      await requireAdmin(context);
+      await requirePermission(context, 'levels.manage');
       return getAllLevels();
     },
   },
@@ -27,8 +28,10 @@ export const statsResolvers = {
       { input }: { input: Parameters<typeof createLevel>[0] },
       context: Context
     ) => {
-      await requireAdmin(context);
-      return createLevel(input);
+      const { userId: adminId } = await requirePermission(context, 'levels.manage');
+      const level = await createLevel(input);
+      logAdminAction({ adminId, action: 'create_level', targetName: level?.id ?? null, ip: context.ip }).catch(() => {});
+      return level;
     },
 
     adminUpdateAddictionLevel: async (
@@ -36,9 +39,10 @@ export const statsResolvers = {
       { id, input }: { id: string; input: Parameters<typeof updateLevel>[1] },
       context: Context
     ) => {
-      await requireAdmin(context);
+      const { userId: adminId } = await requirePermission(context, 'levels.manage');
       const level = await updateLevel(id, input);
       if (!level) throw new Error('Level not found');
+      logAdminAction({ adminId, action: 'update_level', targetName: id, ip: context.ip }).catch(() => {});
       return level;
     },
 
@@ -47,8 +51,10 @@ export const statsResolvers = {
       { id }: { id: string },
       context: Context
     ) => {
-      await requireAdmin(context);
-      return deleteLevel(id);
+      const { userId: adminId } = await requirePermission(context, 'levels.manage');
+      const result = await deleteLevel(id);
+      logAdminAction({ adminId, action: 'delete_level', targetName: id, ip: context.ip }).catch(() => {});
+      return result;
     },
   },
 };

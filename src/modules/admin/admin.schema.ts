@@ -22,7 +22,7 @@ export const changeRoleSchema = {
   body: {
     type: 'object',
     properties: {
-      role: { type: 'string', enum: ['user', 'admin'] },
+      role: { type: 'string', enum: ['user', 'mod', 'admin', 'superadmin'] },
     },
     required: ['role'],
     additionalProperties: false,

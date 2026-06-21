@@ -29,6 +29,7 @@ export const userSchema = `
     appeal: UserAppeal
     wasJustUnbanned: Boolean
     role: String!
+    permissions: [String!]!
     createdAt: String
     passwordChangedAt: String
     lastAccountNameChangedAt: String
