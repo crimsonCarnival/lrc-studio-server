@@ -11,6 +11,19 @@ import { createOnce, notifyAdminGranted } from '../notifications/notifications.s
 import { sendBanEmail } from '../email/email.service.js';
 import Settings from '../settings/settings.model.js';
 import { getIO } from '../../socket/socket.manager.js';
+import type { IUser } from '../../db/user.model.js';
+import { ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole } from '../../shared/permissions.js';
+
+// Staff-protection: resolve the acting admin's rank. A null actor (system call)
+// is treated as top rank so internal automation isn't blocked.
+async function actorRank(adminId: string | null): Promise<number> {
+  if (!adminId) return Number.MAX_SAFE_INTEGER;
+  const actor = await User.findById(adminId).select('role').lean<IUser>();
+  return rankOf(actor?.role);
+}
+
+// Maximum XP an admin can grant or revoke in a single action. Adjust as needed.
+export const MAX_XP_GRANT = 1_000_000;
 
 export async function listUsers(query: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const { limit = 50, cursor = null, search = '', role = '', status = '' } = query as Record<string, string | number | null>;
@@ -110,10 +123,13 @@ export async function getStats(): Promise<Record<string, unknown>> {
   };
 }
 
-export async function toggleBan(userId: string, banStatus: boolean, reason: string | null = null, bannedUntil: string | null = null, banIp = false, banDevice = false, adminId: string | null = null): Promise<Record<string, unknown>> {
+export async function toggleBan(userId: string, banStatus: boolean, reason: string | null = null, bannedUntil: string | null = null, banIp = false, banDevice = false, adminId: string | null = null, actorIp?: string): Promise<Record<string, unknown>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 };
-  if (user.role === 'admin') return { error: 'Cannot ban an admin', status: 403 };
+  // Can't act on a peer or superior — only on someone strictly below your rank.
+  if (rankOf(user.role) >= await actorRank(adminId)) {
+    return { error: 'Cannot act on a user of equal or higher rank', status: 403 };
+  }
 
   if (banStatus) {
     user.ban = { active: true, reason, until: bannedUntil ? new Date(bannedUntil) : null };
@@ -174,6 +190,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     await logAdminAction({
       adminId,
       adminName: admin?.accountName || 'System',
+      ip: actorIp,
       action: banStatus ? 'ban_user' : 'unban_user',
       targetId: user._id.toString(),
       targetName: user.accountName,
@@ -184,7 +201,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   return { success: true, user: user.toPublic() };
 }
 
-export async function rejectAppeal(userId: string, adminId: string | null = null): Promise<Record<string, unknown>> {
+export async function rejectAppeal(userId: string, adminId: string | null = null, actorIp?: string): Promise<Record<string, unknown>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 };
 
@@ -199,6 +216,7 @@ export async function rejectAppeal(userId: string, adminId: string | null = null
     await logAdminAction({
       adminId,
       adminName: admin?.accountName || 'System',
+      ip: actorIp,
       action: 'reject_appeal',
       targetId: user._id.toString(),
       targetName: user.accountName,
@@ -209,16 +227,32 @@ export async function rejectAppeal(userId: string, adminId: string | null = null
   return { success: true, user: user.toPublic() };
 }
 
-export async function changeUserRole(userId: string, newRole: string, adminId: string | null = null): Promise<Record<string, unknown>> {
+export async function changeUserRole(userId: string, newRole: string, adminId: string | null = null, actorIp?: string): Promise<Record<string, unknown>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 };
-  if (!['user', 'admin'].includes(newRole)) return { error: 'Invalid role', status: 400 };
+  if (!isValidRole(newRole)) return { error: 'Invalid role', status: 400 };
+
+  // Escalation guards (the heart of the system):
+  //  - you can only modify a target strictly below your rank (blocks editing
+  //    peers/superiors and, since self has equal rank, self-modification);
+  //  - you can only assign a role strictly below your rank (blocks minting
+  //    peers/superiors, e.g. a superadmin cannot create another superadmin —
+  //    that is reserved for the grant-role CLI script, gated by DB access).
+  const myRank = await actorRank(adminId);
+  if (rankOf(user.role) >= myRank) {
+    return { error: 'Cannot modify a user of equal or higher rank', status: 403 };
+  }
+  if (rankOf(newRole) >= myRank) {
+    return { error: 'Cannot assign a role at or above your own', status: 403 };
+  }
 
   const previousRole = user.role;
-  user.role = newRole as 'user' | 'admin';
+  user.role = newRole;
+  // Role is descriptive; permissions are the authority — reseed them on change.
+  user.permissions = [...ROLE_PRESETS[newRole]];
   await user.save();
 
-  if (previousRole !== 'admin' && newRole === 'admin') {
+  if (rankOf(previousRole) < ROLE_RANK.admin && rankOf(newRole) >= ROLE_RANK.admin) {
     notifyAdminGranted(user._id.toString()).catch(() => {});
     import('../../modules/badges/badge.service.js')
       .then(({ triggerBadgeCheck }) => triggerBadgeCheck(user._id.toString(), 'role_change'))
@@ -230,6 +264,7 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
     await logAdminAction({
       adminId,
       adminName: admin?.accountName || 'System',
+      ip: actorIp,
       action: 'change_role',
       targetId: user._id.toString(),
       targetName: user.accountName,
@@ -240,10 +275,12 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
   return { success: true, user: user.toPublic() };
 }
 
-export async function deleteUser(userId: string, adminId: string | null = null): Promise<Record<string, unknown>> {
+export async function deleteUser(userId: string, adminId: string | null = null, actorIp?: string): Promise<Record<string, unknown>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 };
-  if (user.role === 'admin') return { error: 'Cannot delete an admin', status: 403 };
+  if (rankOf(user.role) >= await actorRank(adminId)) {
+    return { error: 'Cannot act on a user of equal or higher rank', status: 403 };
+  }
 
   user.deletedAt = new Date();
   user.isDeleted = true;
@@ -260,6 +297,7 @@ export async function deleteUser(userId: string, adminId: string | null = null):
     await logAdminAction({
       adminId,
       adminName: admin?.accountName || 'System',
+      ip: actorIp,
       action: 'delete_user',
       targetId: user._id.toString(),
       targetName: user.accountName,
@@ -270,7 +308,7 @@ export async function deleteUser(userId: string, adminId: string | null = null):
   return { success: true };
 }
 
-export async function reactivateUser(userId: string, adminId: string | null = null): Promise<Record<string, unknown>> {
+export async function reactivateUser(userId: string, adminId: string | null = null, actorIp?: string): Promise<Record<string, unknown>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 };
 
@@ -284,6 +322,7 @@ export async function reactivateUser(userId: string, adminId: string | null = nu
     await logAdminAction({
       adminId,
       adminName: admin?.accountName || 'System',
+      ip: actorIp,
       action: 'reactivate_user',
       targetId: user._id.toString(),
       targetName: user.accountName,
@@ -299,7 +338,7 @@ export async function listBannedIps(): Promise<Record<string, unknown>[]> {
   return ips.map((ip: Record<string, unknown>) => ({ ...ip, id: (ip._id as Record<string, unknown>).toString() }));
 }
 
-export async function blockIp(ip: string, reason: string, adminId: string): Promise<Record<string, unknown>> {
+export async function blockIp(ip: string, reason: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {
   const existing = await BannedIp.findOne({ ip });
   if (existing) return { error: 'IP already banned', status: 409 };
 
@@ -308,11 +347,13 @@ export async function blockIp(ip: string, reason: string, adminId: string): Prom
     reason,
     bannedBy: adminId,
   });
+  await logAdminAction({ adminId, action: 'block_ip', targetName: ip, details: reason || null, ip: actorIp });
   return { success: true, bannedIp };
 }
 
-export async function unblockIp(ipId: string): Promise<Record<string, unknown>> {
-  await BannedIp.findByIdAndDelete(ipId);
+export async function unblockIp(ipId: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {
+  const doc = await BannedIp.findByIdAndDelete(ipId).lean<{ ip?: string }>();
+  await logAdminAction({ adminId, action: 'unblock_ip', targetName: doc?.ip ?? null, ip: actorIp });
   return { success: true };
 }
 
@@ -321,7 +362,7 @@ export async function listBannedDevices(): Promise<Record<string, unknown>[]> {
   return devices.map((d: Record<string, unknown>) => ({ ...d, id: (d._id as Record<string, unknown>).toString() }));
 }
 
-export async function blockDevice(deviceId: string, reason: string, adminId: string): Promise<Record<string, unknown>> {
+export async function blockDevice(deviceId: string, reason: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {
   const existing = await BannedDevice.findOne({ deviceId });
   if (existing) return { error: 'Device already banned', status: 409 };
 
@@ -330,11 +371,13 @@ export async function blockDevice(deviceId: string, reason: string, adminId: str
     reason,
     bannedBy: adminId,
   });
+  await logAdminAction({ adminId, action: 'block_device', targetName: deviceId, details: reason || null, ip: actorIp });
   return { success: true, bannedDevice };
 }
 
-export async function unblockDevice(deviceIdId: string): Promise<Record<string, unknown>> {
-  await BannedDevice.findByIdAndDelete(deviceIdId);
+export async function unblockDevice(deviceIdId: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {
+  const doc = await BannedDevice.findByIdAndDelete(deviceIdId).lean<{ deviceId?: string }>();
+  await logAdminAction({ adminId, action: 'unblock_device', targetName: doc?.deviceId ?? null, ip: actorIp });
   return { success: true };
 }
 
@@ -357,10 +400,14 @@ export async function adjustXP(
   target: XPTarget,
   adminId: string,
   userId?: string,
-  userIds?: string[]
+  userIds?: string[],
+  actorIp?: string
 ): Promise<{ affected: number }> {
   const { computeLevel } = await import('../../modules/badges/badge.service.js');
-  const delta = action === 'grant' ? Math.abs(amount) : -Math.abs(amount);
+  // Clamp the per-action grant/revoke magnitude so a single admin action can't
+  // apply an arbitrarily large XP swing.
+  const capped = Math.min(Math.abs(amount), MAX_XP_GRANT);
+  const delta = action === 'grant' ? capped : -capped;
   let affected = 0;
 
   // Manual admin grants/revokes are applied directly to progression.xp and
@@ -409,6 +456,7 @@ export async function adjustXP(
     adminName: admin?.accountName || 'System',
     action: `xp_${action}`,
     details: `${action === 'grant' ? '+' : '-'}${amount} XP → ${target === 'all' ? 'all users' : target === 'user' ? `user ${userId}` : `${userIds?.length} users`}`,
+    ip: actorIp,
   });
 
   return { affected };
@@ -416,20 +464,30 @@ export async function adjustXP(
 
 export async function logAdminAction({ adminId, adminName, action, targetId, targetName, details, ip }: {
   adminId: string;
-  adminName: string;
+  adminName?: string;
   action: string;
-  targetId?: string;
-  targetName?: string;
-  details?: string;
-  ip?: string;
+  targetId?: string | null;
+  targetName?: string | null;
+  details?: string | null;
+  ip?: string | null;
 }): Promise<void> {
+  // Resolve the admin's display name if the caller didn't supply it, so call
+  // sites (especially GraphQL resolvers) can just pass adminId.
+  let name = adminName;
+  if (!name) {
+    const admin = await User.findById(adminId).select('accountName').lean<{ accountName?: string }>();
+    name = admin?.accountName || 'System';
+  }
+  // targetId is an ObjectId ref — only set it for real user targets. Non-user
+  // targets (IPs, badge/level ids) live in targetName/details instead.
+  const targetUserId = targetId && mongoose.Types.ObjectId.isValid(targetId) ? targetId : null;
   await AdminLog.create({
     adminId,
-    adminName,
+    adminName: name,
     action,
-    targetId,
-    targetName,
-    details,
-    ip,
+    targetId: targetUserId,
+    targetName: targetName ?? null,
+    details: details ?? null,
+    ip: ip ?? null,
   });
 }

@@ -6,7 +6,9 @@ import type { IProject } from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
-import { requireAdmin } from './auth-guards.js';
+import { requirePermission } from './auth-guards.js';
+import { hasPermission, rankOf, ROLE_RANK } from '../../shared/permissions.js';
+import { logAdminAction } from '../../modules/admin/admin.service.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
@@ -52,8 +54,8 @@ async function isSelfOrAdmin(user: IUser, context: Context): Promise<boolean> {
   if (!context.userId) return false;
   const selfId = (user._id ?? user.id)?.toString();
   if (selfId && context.userId === selfId) return true;
-  const requester = await User.findById(context.userId).select('role').lean<IUser>();
-  return requester?.role === 'admin';
+  const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
+  return hasPermission(requester?.permissions, 'users.view');
 }
 
 export const userResolvers = {
@@ -146,7 +148,7 @@ export const userResolvers = {
         avatarUrl: user.avatarUrl ?? null,
         bio: user.bio ?? null,
         isVerified: user.isVerified ?? false,
-        isAdmin: user.role === 'admin',
+        isAdmin: rankOf(user.role) >= ROLE_RANK.admin,
         createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : null,
         projects,
         projectCount,
@@ -349,7 +351,7 @@ export const userResolvers = {
 
       if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
         const COOLDOWN_DAYS = 7;
-        if (user.lastAccountNameChangedAt && user.role !== 'admin') {
+        if (user.lastAccountNameChangedAt && rankOf(user.role) < ROLE_RANK.admin) {
           const daysSince = (Date.now() - (user.lastAccountNameChangedAt as Date).getTime()) / (1000 * 60 * 60 * 24);
           if (daysSince < COOLDOWN_DAYS) {
             const daysLeft = Math.ceil(COOLDOWN_DAYS - daysSince);
@@ -489,7 +491,7 @@ export const userResolvers = {
     },
 
     adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId }: { userIdentifier: string; badgeId: string }, context: Context) => {
-      const adminId = await requireAdmin(context);
+      const { userId: adminId } = await requirePermission(context, 'badges.manage');
       // Accept accountName or MongoDB _id
       let resolvedId = userIdentifier.trim();
       if (!/^[a-f\d]{24}$/i.test(resolvedId)) {
@@ -498,47 +500,63 @@ export const userResolvers = {
         resolvedId = target._id.toString();
       }
       const { grantBadge } = await import('../../modules/badges/badge.service.js');
-      return grantBadge(resolvedId, badgeId, adminId);
+      const result = await grantBadge(resolvedId, badgeId, adminId);
+      logAdminAction({ adminId, action: 'grant_badge', targetId: resolvedId, targetName: badgeId, ip: context.ip }).catch(() => {});
+      return result;
     },
 
     adminRevokeBadge: async (_root: unknown, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {
-      await requireAdmin(context);
+      const { userId: adminId } = await requirePermission(context, 'badges.manage');
       const { revokeBadge } = await import('../../modules/badges/badge.service.js');
-      return revokeBadge(userId, badgeId);
+      const result = await revokeBadge(userId, badgeId);
+      logAdminAction({ adminId, action: 'revoke_badge', targetId: userId, targetName: badgeId, ip: context.ip }).catch(() => {});
+      return result;
     },
 
     adminCreateBadge: async (_root: unknown, { input }: { input: BadgeInput }, context: Context) => {
-      await requireAdmin(context);
-      const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy: context.userId });
-      return { ...def.toObject(), holderCount: 0 };
+      const { userId: adminId } = await requirePermission(context, 'badges.manage');
+      const { createBadgeDef } = await import('../../modules/badges/badge.service.js');
+      const def = await createBadgeDef(input, context.userId ?? undefined);
+      logAdminAction({ adminId, action: 'create_badge', targetName: String(def.id ?? ''), details: input.label?.en ?? null, ip: context.ip }).catch(() => {});
+      return def;
     },
 
     adminUpdateBadge: async (_root: unknown, { id, input }: { id: string; input: BadgeInput }, context: Context) => {
-      await requireAdmin(context);
-      const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { new: true });
-      if (!def) throw new Error('Badge not found');
-      const hc = await User.countDocuments({ 'badges.id': id, isDeleted: { $ne: true } });
-      return { ...def.toObject(), holderCount: hc };
+      const { userId: adminId } = await requirePermission(context, 'badges.manage');
+      const { updateBadgeDef } = await import('../../modules/badges/badge.service.js');
+      const def = await updateBadgeDef(id, input);
+      logAdminAction({ adminId, action: 'update_badge', targetName: id, ip: context.ip }).catch(() => {});
+      return def;
     },
 
     adminDeleteBadge: async (_root: unknown, { id }: { id: string }, context: Context) => {
-      await requireAdmin(context);
-      const def = await BadgeDefinition.findOne({ id }).lean<IBadgeDefinition>();
-      if (!def) throw new Error('Badge not found');
-      if (def.isBuiltin) throw new Error('Cannot delete built-in badges');
-      await BadgeDefinition.deleteOne({ id });
-      return true;
+      const { userId: adminId } = await requirePermission(context, 'badges.manage');
+      const { deleteBadgeDef } = await import('../../modules/badges/badge.service.js');
+      const result = await deleteBadgeDef(id);
+      logAdminAction({ adminId, action: 'delete_badge', targetName: id, ip: context.ip }).catch(() => {});
+      return result;
     },
 
     adminRetroactiveScan: async (_root: unknown, { badgeId }: { badgeId: string }, context: Context) => {
-      await requireAdmin(context);
+      const { userId: adminId } = await requirePermission(context, 'badges.manage');
       const { retroactiveGrant } = await import('../../modules/badges/badge.service.js');
-      return retroactiveGrant(badgeId);
+      const result = await retroactiveGrant(badgeId);
+      logAdminAction({ adminId, action: 'retroactive_scan', targetName: badgeId, details: `granted ${result?.granted ?? 0}/${result?.scanned ?? 0}`, ip: context.ip }).catch(() => {});
+      return result;
     },
   },
 
   User: {
     id: (user: IUser) => user._id?.toString() ?? user.id,
+    // Owner-only: a user's permission set is returned solely to themselves.
+    // For every other viewer (public User edges like Project.user, Upload.user,
+    // or staff browsing) this resolves to [] regardless of what the query
+    // projected — confidentiality is enforced here, not by projection discipline
+    // at each call site.
+    permissions: (user: IUser, _args: unknown, context: Context) => {
+      const selfId = (user._id ?? user.id)?.toString();
+      return context?.userId && selfId === context.userId ? (user.permissions ?? []) : [];
+    },
     createdAt: (user: IUser) => user.createdAt ? new Date(user.createdAt).toISOString() : null,
     badges:          (user: IUser) => user.badges ?? [],
     showcasedBadges: (user: IUser) => user.showcasedBadges ?? [],
@@ -584,8 +602,8 @@ export const userResolvers = {
         return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
       }
       if (context.userId) {
-        const requester = await User.findById(context.userId).select('role').lean<IUser>();
-        if (requester?.role === 'admin') {
+        const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
+        if (hasPermission(requester?.permissions, 'users.view')) {
           const docs = await EmailHistory.find({ userId: user._id ?? user.id }).sort({ createdAt: -1 });
           return docs.map(d => ({ from: d.from, to: d.to, changedAt: d.createdAt?.toISOString() ?? '' }));
         }

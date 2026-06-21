@@ -9,6 +9,7 @@ const NOTIFICATION_TYPES = [
   'verify_email', 'set_password',
   'ban', 'password_changed',
   'badge_awarded',
+  'request_submitted', 'request_reviewed',
 ] as const;
 
 export type NotificationType = typeof NOTIFICATION_TYPES[number];

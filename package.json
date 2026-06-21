@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "grant-role": "tsx src/scripts/grant-role.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "eslint .",

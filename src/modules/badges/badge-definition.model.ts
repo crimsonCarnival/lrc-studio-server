@@ -59,7 +59,7 @@ const badgeDefSchema = new mongoose.Schema<IBadgeDefinition>(
       en: { type: String, default: '', maxlength: 200 },
       es: { type: String, default: '', maxlength: 200 }
     },
-    icon: { type: String, required: true, maxlength: 10 },
+    icon: { type: String, default: '', maxlength: 10 },
     color: {
       type: String,
       enum: ['amber', 'teal', 'green', 'primary', 'rose', 'shimmer', 'blue', 'orange'],
