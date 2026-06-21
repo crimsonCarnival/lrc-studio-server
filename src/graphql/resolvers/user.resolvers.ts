@@ -13,6 +13,14 @@ import AccountNameHistory from '../../db/account-name-history.model.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
 import Follow from '../../db/follow.model.js';
+import {
+  blockUser as svcBlockUser,
+  unblockUser as svcUnblockUser,
+  listBlocked,
+  getBlockedSet,
+  hasBlocked,
+  isBlockedEitherWay,
+} from '../../modules/blocks/block.service.js';
 import { upsertFollow } from '../../modules/notifications/notifications.service.js';
 import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
@@ -86,9 +94,20 @@ export const userResolvers = {
         }));
     },
 
+    blockedUsers: async (_root: unknown, _args: unknown, context: Context) => {
+      if (!context.userId) return [];
+      return listBlocked(context.userId);
+    },
+
     publicProfile: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!user || user.isDeleted || user.ban?.active) return null;
+
+      // A user blocked by the profile owner cannot view that profile.
+      if (context.userId && context.userId !== user._id.toString()
+          && await hasBlocked(user._id.toString(), context.userId)) {
+        return null;
+      }
 
       const isOwner = context.userId && context.userId === user._id.toString();
       const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true };
@@ -107,6 +126,10 @@ export const userResolvers = {
       const isFollowedByMe = context.userId
         ? !!(await Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }))
         : false as boolean;
+
+      const isBlockedByMe = context.userId && !isOwner
+        ? await hasBlocked(context.userId, user._id.toString())
+        : false;
 
       // Resolve showcasedBadges with rarity data — hidden if owner disabled visibility
       const showcaseVisible = user.showcasePublic !== false || isOwner;
@@ -157,6 +180,7 @@ export const userResolvers = {
         followerCount: user.social?.followerCount ?? 0,
         followingCount: user.social?.followingCount ?? 0,
         isFollowedByMe,
+        isBlockedByMe,
         showFollowers: user.social?.showFollowers ?? true,
         badges: user.badges ?? [],
         showcasedBadges,
@@ -167,8 +191,13 @@ export const userResolvers = {
       };
     },
 
-    searchUsers: async (_root: unknown, { query, limit = 10 }: { query: string; limit?: number }) => {
-      return searchUsersService(query, limit);
+    searchUsers: async (_root: unknown, { query, limit = 10 }: { query: string; limit?: number }, context: Context) => {
+      const results = await searchUsersService(query, limit);
+      if (!context.userId) return results;
+      const blockedSet = await getBlockedSet(context.userId);
+      return blockedSet.size > 0
+        ? (results as { id: string }[]).filter((u) => !blockedSet.has(u.id))
+        : results;
     },
 
     leaderboard: async (_root: unknown, { limit = 25, offset = 0 }: { limit?: number; offset?: number }) => {
@@ -273,6 +302,9 @@ export const userResolvers = {
       const isOwner = context.userId && context.userId === user._id.toString();
       if (!user.social?.showFollowers && !isOwner) return { users: [], total: 0 };
 
+      // Hide users in a block relationship with the viewer (either direction).
+      const blockedSet = await getBlockedSet(context.userId);
+
       const LIMIT = 50;
 
       if (type === 'FOLLOWERS') {
@@ -297,7 +329,7 @@ export const userResolvers = {
         }
 
         return {
-          users: users.map(u => ({
+          users: users.filter(u => !blockedSet.has(u._id.toString())).map(u => ({
             id: u._id.toString(),
             accountName: u.accountName,
             displayName: u.displayName ?? null,
@@ -328,7 +360,7 @@ export const userResolvers = {
         }
 
         return {
-          users: users.map(u => ({
+          users: users.filter(u => !blockedSet.has(u._id.toString())).map(u => ({
             id: u._id.toString(),
             accountName: u.accountName,
             displayName: u.displayName ?? null,
@@ -412,6 +444,8 @@ export const userResolvers = {
       const targetId = target._id.toString();
       if (targetId === context.userId) throw new Error('Cannot follow yourself');
 
+      if (await isBlockedEitherWay(context.userId, targetId)) throw new Error('Cannot follow this user');
+
       try {
         await Follow.create({
           followerId: new mongoose.Types.ObjectId(context.userId),
@@ -473,6 +507,24 @@ export const userResolvers = {
           ),
         ]);
       }
+      return true;
+    },
+
+    blockUser: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
+      if (!target) throw new Error('User not found');
+      const targetId = target._id.toString();
+      if (targetId === context.userId) throw new Error('Cannot block yourself');
+      await svcBlockUser(context.userId, targetId);
+      return true;
+    },
+
+    unblockUser: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
+      if (!target) return true;
+      await svcUnblockUser(context.userId, target._id.toString());
       return true;
     },
 
