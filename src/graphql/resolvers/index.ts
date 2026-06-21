@@ -9,6 +9,7 @@ import { activityResolvers } from './activity.resolvers.js';
 import { exploreResolvers }  from './explore.resolvers.js';
 import { reactionResolvers } from './reaction.resolvers.js';
 import { statsResolvers }    from './stats.resolvers.js';
+import { requestResolvers }  from './request.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -22,6 +23,7 @@ export const resolvers = {
     ...exploreResolvers.Query,
     ...reactionResolvers.Query,
     ...statsResolvers.Query,
+    ...requestResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -32,6 +34,7 @@ export const resolvers = {
     ...playlistResolvers.Mutation,
     ...reactionResolvers.Mutation,
     ...statsResolvers.Mutation,
+    ...requestResolvers.Mutation,
   },
   User:     userResolvers.User,
   Project:  projectResolvers.Project,

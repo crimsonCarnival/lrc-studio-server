@@ -168,7 +168,7 @@ export const rootSchema = `
     id: String
     label: LocalizedStringInput!
     description: LocalizedStringInput
-    icon: String!
+    icon: String
     color: String!
     conditionType: String!
     conditionValue: Int
@@ -180,14 +180,6 @@ export const rootSchema = `
     granted: Int!
     scanned: Int!
     error: String
-  }
-
-  type MusicLibraryEntry {
-    artist: String
-    album: String
-    genre: String
-    language: String
-    trackCount: Int
   }
 
   type ActivityHeatmapDay {

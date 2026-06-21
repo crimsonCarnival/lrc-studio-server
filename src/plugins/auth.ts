@@ -4,12 +4,14 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import type { JwtPayload, SignOptions } from 'jsonwebtoken';
 import { getEnv } from '../config/env.js';
+import { hasPermission, type Permission } from '../shared/permissions.js';
 
 interface CachedAuthUser {
   deletedAt?: Date | null;
   ban?: { active?: boolean };
   checkBanStatus(): Promise<void>;
   role?: string;
+  permissions?: string[];
   lastIp?: string;
   accountName?: string;
 }
@@ -76,7 +78,7 @@ function verifyToken(token: string): JwtPayload {
 export const jwtTools = { signAccess, signRefresh, verifyToken };
 
 // Only the fields needed for auth checks — avoids loading passwordHash, etc.
-const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role accountName lastIp';
+const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role permissions accountName lastIp';
 
 async function lookupUser(userId: string | undefined): Promise<CachedAuthUser | null> {
   if (!userId) return null;
@@ -233,12 +235,28 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     if (!result) return;
   });
 
-  fastify.decorate('requireAdmin', async function (request: FastifyRequest, reply: FastifyReply) {
+  // Blanket gate for the /admin surface: authenticated, not banned, and holding
+  // at least one permission (i.e. any staff member). Per-route requirePermission
+  // hooks then enforce the specific capability.
+  fastify.decorate('requireStaff', async function (request: FastifyRequest, reply: FastifyReply) {
     const result = await resolveAndCheckBan(request, reply);
     if (!result) return;
-    if (result.role !== 'admin') {
-      return reply.code(403).send({ error: 'Admin access required' });
+    if (!result.permissions || result.permissions.length === 0) {
+      return reply.code(403).send({ error: 'Staff access required' });
     }
+  });
+
+  // Factory: returns a preHandler that requires a specific permission. Runs
+  // resolveAndCheckBan itself (sets request.userId), so it works standalone or
+  // after requireStaff (the cached auth user makes the second call free).
+  fastify.decorate('requirePermission', function (permission: Permission) {
+    return async function (request: FastifyRequest, reply: FastifyReply) {
+      const result = await resolveAndCheckBan(request, reply);
+      if (!result) return;
+      if (!hasPermission(result.permissions, permission)) {
+        return reply.code(403).send({ error: 'Insufficient permissions' });
+      }
+    };
   });
 
   fastify.decorate('signAdminSudo', signAdminSudo);
