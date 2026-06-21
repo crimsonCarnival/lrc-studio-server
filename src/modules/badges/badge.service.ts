@@ -172,6 +172,40 @@ export async function revokeBadge(userId: string, badgeId: string): Promise<bool
   return false;
 }
 
+// ─── Badge definition CRUD (shared by GraphQL resolvers + request executor) ──
+
+export interface BadgeDefInput {
+  id?: string;
+  label?: { en: string; es?: string };
+  description?: { en: string; es?: string };
+  icon?: string;
+  color?: string;
+  conditionType?: string;
+  conditionValue?: number | null;
+  autoGrant?: boolean;
+  xpReward?: number;
+}
+
+export async function createBadgeDef(input: BadgeDefInput, createdBy?: string): Promise<Record<string, unknown>> {
+  const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy });
+  return { ...def.toObject(), holderCount: 0 };
+}
+
+export async function updateBadgeDef(id: string, input: BadgeDefInput): Promise<Record<string, unknown>> {
+  const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { new: true });
+  if (!def) throw new Error('Badge not found');
+  const holderCount = await User.countDocuments({ 'badges.id': id, isDeleted: { $ne: true } });
+  return { ...def.toObject(), holderCount };
+}
+
+export async function deleteBadgeDef(id: string): Promise<boolean> {
+  const def = await BadgeDefinition.findOne({ id }).lean<IBadgeDefinition>();
+  if (!def) throw new Error('Badge not found');
+  if (def.isBuiltin) throw new Error('Cannot delete built-in badges');
+  await BadgeDefinition.deleteOne({ id });
+  return true;
+}
+
 // ─── Badge trigger (called after events) ─────────────────────────────────────
 
 export async function triggerBadgeCheck(userId: string, event: BadgeEvent): Promise<string[]> {

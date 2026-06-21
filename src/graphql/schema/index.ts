@@ -8,8 +8,10 @@ import { playlistSchema } from './playlist.schema.js';
 import { activitySchema } from './activity.schema.js';
 import { exploreSchema } from './explore.schema.js';
 import { reactionSchema } from './reaction.schema.js';
+import { requestSchema } from './request.schema.js';
 
 export const schemaString = [
   userSchema, projectSchema, lyricsSchema, uploadSchema,
   settingsSchema, playlistSchema, activitySchema, exploreSchema, reactionSchema, rootSchema,
+  requestSchema,
 ].join('\n');

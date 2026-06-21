@@ -1,7 +1,7 @@
-import mongoose, { type Document, type Model } from 'mongoose';
-import argon2 from 'argon2';
-import bcrypt from 'bcrypt';
-import { UserPublic } from '../types/index.js';
+import mongoose, { type Document, type Model } from "mongoose";
+import argon2 from "argon2";
+import bcrypt from "bcrypt";
+import { ROLES, type Role } from "../shared/permissions.js";
 
 /**
  * Argon2id parameters — OWASP recommended minimums for interactive logins.
@@ -12,11 +12,9 @@ import { UserPublic } from '../types/index.js';
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
   memoryCost: 19 * 1024, // 19 MB — OWASP minimum; 64 MB caused OOM in constrained envs
-  timeCost: 3,           // 3 iterations
-  parallelism: 1,        // 1 thread — avoids CPU contention on multi-tenant servers
+  timeCost: 3, // 3 iterations
+  parallelism: 1, // 1 thread — avoids CPU contention on multi-tenant servers
 };
-
-const BCRYPT_SALT_ROUNDS = 12; // kept only for migration verification
 
 export interface IBan {
   active: boolean;
@@ -26,7 +24,7 @@ export interface IBan {
 
 export interface IAppeal {
   text?: string | null;
-  status: 'none' | 'pending' | 'rejected';
+  status: "none" | "pending" | "rejected";
   submittedAt?: Date | null;
   resolvedAt?: Date | null;
 }
@@ -87,7 +85,8 @@ export interface IUser extends Document {
   appeal: IAppeal;
   deletedAt?: Date | null;
   isDeleted: boolean;
-  role: 'user' | 'admin';
+  role: Role;
+  permissions: string[];
   google?: {
     googleId?: string | null;
     email?: string | null;
@@ -128,66 +127,81 @@ const banSchema = new mongoose.Schema<IBan>(
     reason: { type: String, default: null, maxlength: 500 },
     until: { type: Date, default: null },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const appealSchema = new mongoose.Schema<IAppeal>(
   {
     text: { type: String, default: null, maxlength: 1000 },
-    status: { type: String, enum: ['none', 'pending', 'rejected'], default: 'none' },
+    status: {
+      type: String,
+      enum: ["none", "pending", "rejected"],
+      default: "none",
+    },
     submittedAt: { type: Date, default: null },
     resolvedAt: { type: Date, default: null },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const socialSchema = new mongoose.Schema<ISocial>(
   {
-    followerCount:      { type: Number, default: 0, min: 0 },
-    followingCount:     { type: Number, default: 0, min: 0 },
-    showFollowers:      { type: Boolean, default: true },
+    followerCount: { type: Number, default: 0, min: 0 },
+    followingCount: { type: Number, default: 0, min: 0 },
+    showFollowers: { type: Boolean, default: true },
     totalStarsReceived: { type: Number, default: 0, min: 0 },
     totalForksReceived: { type: Number, default: 0, min: 0 },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const userBadgeSchema = new mongoose.Schema<IUserBadge>(
   {
-    id:        { type: String, required: true },
-    grantedAt: { type: Date,   default: Date.now },
-    grantedBy: { type: String, default: 'system' },
+    id: { type: String, required: true },
+    grantedAt: { type: Date, default: Date.now },
+    grantedBy: { type: String, default: "system" },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const statsSchema = new mongoose.Schema<IUserStats>(
   {
     minutesSynced: { type: Number, default: 0, min: 0 },
     secondsSynced: { type: Number, default: 0, min: 0 },
-    wordsSynced:   { type: Number, default: 0, min: 0 },
-    karaokeLines:  { type: Number, default: 0, min: 0 },
+    wordsSynced: { type: Number, default: 0, min: 0 },
+    karaokeLines: { type: Number, default: 0, min: 0 },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const streakSchema = new mongoose.Schema<IUserStreak>(
   {
-    current:        { type: Number, default: 0, min: 0 },
-    longest:        { type: Number, default: 0, min: 0 },
-    lastActiveDate: { type: Date,   default: null },
+    current: { type: Number, default: 0, min: 0 },
+    longest: { type: Number, default: 0, min: 0 },
+    lastActiveDate: { type: Date, default: null },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const progressionSchema = new mongoose.Schema<IUserProgression>(
   {
-    xp:    { type: Number, default: 0, min: 0 },
+    xp: { type: Number, default: 0, min: 0 },
     level: { type: Number, default: 0, min: 0 },
   },
-  { _id: false }
+  { _id: false },
 );
 
+const musicLibraryEntrySchema = new mongoose.Schema<IMusicLibraryEntry>(
+  {
+    artist: { type: String, default: "", maxlength: 500 },
+    album: { type: String, default: "", maxlength: 500 },
+    genre: { type: String, default: "", maxlength: 100 },
+    language: { type: String, default: "", maxlength: 100 },
+    trackCount: { type: Number, default: null, min: 0, max: 999 },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
 const userSchema = new mongoose.Schema<IUser>(
   {
     accountName: {
@@ -258,8 +272,14 @@ const userSchema = new mongoose.Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user',
+      enum: ROLES,
+      default: "user",
+    },
+    // Authoritative authorization set. Seeded from ROLE_PRESETS when a role is
+    // assigned; checked directly by guards. Role itself grants nothing.
+    permissions: {
+      type: [String],
+      default: [],
     },
     google: {
       googleId: { type: String, default: null },
@@ -273,7 +293,7 @@ const userSchema = new mongoose.Schema<IUser>(
     },
     bio: {
       type: String,
-      default: '',
+      default: "",
       maxlength: 160,
     },
     social: { type: socialSchema, default: () => ({}) },
@@ -281,41 +301,37 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       default: null,
     },
-    stats:       { type: statsSchema,       default: () => ({}) },
-    streak:      { type: streakSchema,      default: () => ({}) },
-    badges:          { type: [userBadgeSchema], default: [] },
+    stats: { type: statsSchema, default: () => ({}) },
+    streak: { type: streakSchema, default: () => ({}) },
+    badges: { type: [userBadgeSchema], default: [] },
     showcasedBadges: { type: [String], default: [] },
-    showcasePublic:  { type: Boolean, default: true },
+    showcasePublic: { type: Boolean, default: true },
     progression: { type: progressionSchema, default: () => ({}) },
     musicLibrary: {
-      type: [{
-        artist:     { type: String, default: '', maxlength: 500 },
-        album:      { type: String, default: '', maxlength: 500 },
-        genre:      { type: String, default: '', maxlength: 100 },
-        language:   { type: String, default: '', maxlength: 100 },
-        trackCount: { type: Number, default: null, min: 0, max: 999 },
-        updatedAt:  { type: Date, default: Date.now },
-      }],
+      type: [musicLibraryEntrySchema],
       default: [],
       _id: false,
     },
   },
-  { timestamps: true, collection: 'users' }
+  { timestamps: true, collection: "users" },
 );
 
 // At least one identifier required
-userSchema.pre('validate', function (this: IUser, next: mongoose.CallbackWithoutResultAndOptionalError) {
-  if (!this.accountName && !this.email) {
-    return next(new Error('Either accountName or email is required'));
-  }
-  next();
-});
+userSchema.pre(
+  "validate",
+  function (this: IUser, next: mongoose.CallbackWithoutResultAndOptionalError) {
+    if (!this.accountName && !this.email) {
+      return next(new Error("Either accountName or email is required"));
+    }
+    next();
+  },
+);
 
 // Prevent duplicate Google account links
-userSchema.index({ 'google.googleId': 1 }, { unique: true, sparse: true });
+userSchema.index({ "google.googleId": 1 }, { unique: true, sparse: true });
 
 // Enables $text search in admin user listing
-userSchema.index({ accountName: 'text', email: 'text' });
+userSchema.index({ accountName: "text", email: "text" });
 
 // Soft-delete filter support
 userSchema.index({ isDeleted: 1 });
@@ -326,12 +342,18 @@ userSchema.index({ isDeleted: 1 });
  * if a bcrypt hash is detected ($2b$ / $2a$), it verifies with bcrypt
  * and rehashes to Argon2id in the background to migrate on next login.
  */
-userSchema.methods.verifyPassword = async function (this: IUser, plain: string): Promise<boolean> {
+userSchema.methods.verifyPassword = async function (
+  this: IUser,
+  plain: string,
+): Promise<boolean> {
   // Sentinel value for OAuth-only users (no password set)
-  if (this.passwordHash === 'OAUTH_NO_PASSWORD') return false;
+  if (this.passwordHash === "OAUTH_NO_PASSWORD") return false;
 
   // Detect legacy bcrypt hash
-  if (this.passwordHash.startsWith('$2b$') || this.passwordHash.startsWith('$2a$')) {
+  if (
+    this.passwordHash.startsWith("$2b$") ||
+    this.passwordHash.startsWith("$2a$")
+  ) {
     const match = await bcrypt.compare(plain, this.passwordHash);
     if (match) {
       // Silently migrate to Argon2id
@@ -356,47 +378,54 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
     email: this.email,
     pendingEmail: this.pendingEmail ?? null,
     avatarUrl: this.avatarUrl,
-    bio: this.bio || '',
+    bio: this.bio || "",
     isVerified: this.isVerified,
     ban: {
       active: this.ban?.active ?? false,
-      ...(this.ban?.active ? { reason: this.ban.reason, until: this.ban.until } : {}),
+      ...(this.ban?.active
+        ? { reason: this.ban.reason, until: this.ban.until }
+        : {}),
     },
-    appeal: this.ban?.active ? {
-      text: this.appeal?.text ?? null,
-      status: this.appeal?.status ?? 'none',
-      submittedAt: this.appeal?.submittedAt ?? null,
-      resolvedAt: this.appeal?.resolvedAt ?? null,
-    } : null,
+    appeal: this.ban?.active
+      ? {
+          text: this.appeal?.text ?? null,
+          status: this.appeal?.status ?? "none",
+          submittedAt: this.appeal?.submittedAt ?? null,
+          resolvedAt: this.appeal?.resolvedAt ?? null,
+        }
+      : null,
     role: this.role,
+    permissions: this.permissions ?? [],
     createdAt: this.createdAt,
     passwordChangedAt: this.passwordChangedAt,
     lastAccountNameChangedAt: this.lastAccountNameChangedAt ?? null,
-    hasPassword: this.passwordHash !== 'OAUTH_NO_PASSWORD',
-    google: this.google?.googleId ? {
-      connected: true,
-      googleId: this.google.googleId,
-      email: this.google.email,
-      name: this.google.name,
-      pictureUrl: this.google.pictureUrl,
-    } : { connected: false },
+    hasPassword: this.passwordHash !== "OAUTH_NO_PASSWORD",
+    google: this.google?.googleId
+      ? {
+          connected: true,
+          googleId: this.google.googleId,
+          email: this.google.email,
+          name: this.google.name,
+          pictureUrl: this.google.pictureUrl,
+        }
+      : { connected: false },
     showFollowers: this.social?.showFollowers ?? true,
-    badges:         this.badges ?? [],
+    badges: this.badges ?? [],
     showcasedBadges: this.showcasedBadges ?? [],
-    showcasePublic:  this.showcasePublic ?? true,
+    showcasePublic: this.showcasePublic ?? true,
     stats: {
       minutesSynced: this.stats?.minutesSynced ?? 0,
       secondsSynced: this.stats?.secondsSynced ?? 0,
-      wordsSynced:   this.stats?.wordsSynced ?? 0,
-      karaokeLines:  this.stats?.karaokeLines ?? 0,
+      wordsSynced: this.stats?.wordsSynced ?? 0,
+      karaokeLines: this.stats?.karaokeLines ?? 0,
     },
     streak: {
-      current:        this.streak?.current ?? 0,
-      longest:        this.streak?.longest ?? 0,
+      current: this.streak?.current ?? 0,
+      longest: this.streak?.longest ?? 0,
       lastActiveDate: this.streak?.lastActiveDate ?? null,
     },
     progression: {
-      xp:    this.progression?.xp ?? 0,
+      xp: this.progression?.xp ?? 0,
       level: this.progression?.level ?? 0,
     },
   };
@@ -407,7 +436,9 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
  * If expired, clears the ban and appeal state.
  * Returns true so the caller knows to surface a wasJustUnbanned signal.
  */
-userSchema.methods.checkBanStatus = async function (this: IUser): Promise<boolean> {
+userSchema.methods.checkBanStatus = async function (
+  this: IUser,
+): Promise<boolean> {
   if (!this.ban?.active) return false;
 
   if (this.ban.until && this.ban.until <= new Date()) {
@@ -415,7 +446,7 @@ userSchema.methods.checkBanStatus = async function (this: IUser): Promise<boolea
     this.ban.reason = null;
     this.ban.until = null;
     this.appeal.text = null;
-    this.appeal.status = 'none';
+    this.appeal.status = "none";
     this.appeal.submittedAt = null;
     await this.save();
     return true;
@@ -424,4 +455,4 @@ userSchema.methods.checkBanStatus = async function (this: IUser): Promise<boolea
   return false;
 };
 
-export default mongoose.model<IUser, IUserModel>('User', userSchema);
+export default mongoose.model<IUser, IUserModel>("User", userSchema);

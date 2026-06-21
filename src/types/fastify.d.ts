@@ -1,5 +1,6 @@
 import 'fastify';
 import type { JwtPayload } from 'jsonwebtoken';
+import type { Permission } from '../shared/permissions.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -11,7 +12,10 @@ declare module 'fastify' {
     optionalAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireActiveUser: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
-    requireAdmin: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    // Blanket gate: authenticated staff (holds at least one permission).
+    requireStaff: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    // Factory: preHandler enforcing a specific permission.
+    requirePermission: (permission: Permission) => (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAuthForAppeal: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAuthLax: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     // Admin "sudo mode": destructive admin actions require a fresh password

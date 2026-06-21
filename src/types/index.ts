@@ -103,6 +103,7 @@ export interface UserPublic {
   appeal?: { text?: string | null; status: string; submittedAt?: Date | null; resolvedAt?: Date | null } | null;
   wasJustUnbanned?: boolean;
   role: string;
+  permissions?: string[];
   createdAt?: Date;
   passwordChangedAt?: Date | null;
   hasPassword?: boolean;

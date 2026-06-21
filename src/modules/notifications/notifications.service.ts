@@ -114,6 +114,28 @@ export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
   emitToUser(ownerId, 'notification:push', notification.toObject());
 }
 
+// Staff request workflow notifications. `body` carries the human-readable
+// summary; `projectTitle` is reused to carry the request id for deep-linking.
+export async function notifyRequestSubmitted(reviewerId: string, requestId: string, summary: string): Promise<void> {
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(reviewerId),
+    type: 'request_submitted',
+    sticky: false, body: summary, publicId: requestId, projectTitle: null,
+    actors: [], actorCount: 0, read: false,
+  });
+  emitToUser(reviewerId, 'notification:push', notification.toObject());
+}
+
+export async function notifyRequestReviewed(requesterId: string, requestId: string, summary: string, approved: boolean): Promise<void> {
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(requesterId),
+    type: 'request_reviewed',
+    sticky: false, body: `${approved ? '✓' : '✗'} ${summary}`, publicId: requestId, projectTitle: null,
+    actors: [], actorCount: 0, read: false,
+  });
+  emitToUser(requesterId, 'notification:push', notification.toObject());
+}
+
 export async function notifyAdminGranted(userId: string): Promise<void> {
   const notification = await Notification.create({
     userId: new mongoose.Types.ObjectId(userId),
