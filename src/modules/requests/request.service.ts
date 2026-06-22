@@ -149,6 +149,30 @@ export async function listPendingForReviewer(permissions: string[]): Promise<ISt
     .sort({ createdAt: 1 }).limit(200).lean<IStaffRequest[]>();
 }
 
+/** Requests this reviewer has already approved/rejected — their decision history. */
+export async function listReviewedByMe(userId: string): Promise<IStaffRequest[]> {
+  return StaffRequest.find({
+    'reviewer.id': new mongoose.Types.ObjectId(userId),
+    status: { $in: ['approved', 'rejected'] },
+  }).sort({ resolvedAt: -1 }).limit(100).lean<IStaffRequest[]>();
+}
+
+/** Counts for the menu badge: requests awaiting this user's review + their own pending. */
+export async function getRequestCounts(
+  userId: string,
+  permissions: string[]
+): Promise<{ pendingReview: number; myPending: number }> {
+  const types = reviewableTypes(permissions);
+  const userObjId = new mongoose.Types.ObjectId(userId);
+  const [pendingReview, myPending] = await Promise.all([
+    types.length === 0
+      ? Promise.resolve(0)
+      : StaffRequest.countDocuments({ status: 'pending', type: { $in: types }, 'issuer.id': { $ne: userObjId } }),
+    StaffRequest.countDocuments({ status: 'pending', 'issuer.id': userObjId }),
+  ]);
+  return { pendingReview, myPending };
+}
+
 export async function reviewRequest(
   reviewer: { userId: string; permissions: string[]; ip?: string },
   requestId: string,

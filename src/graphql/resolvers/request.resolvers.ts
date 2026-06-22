@@ -6,6 +6,8 @@ import {
   createRequest,
   listMyRequests,
   listPendingForReviewer,
+  listReviewedByMe,
+  getRequestCounts,
   reviewRequest,
   submittableTypes,
   reviewableTypes,
@@ -51,10 +53,21 @@ export const requestResolvers = {
       return (await listPendingForReviewer(permissions)).map(toGql);
     },
 
+    reviewedRequests: async (_root: unknown, _args: unknown, context: Context) => {
+      const userId = requireUser(context);
+      return (await listReviewedByMe(userId)).map(toGql);
+    },
+
     requestCapabilities: async (_root: unknown, _args: unknown, context: Context) => {
       const userId = requireUser(context);
       const { role, permissions } = await loadStaff(userId);
       return { submittable: submittableTypes(role), reviewable: reviewableTypes(permissions) };
+    },
+
+    requestCounts: async (_root: unknown, _args: unknown, context: Context) => {
+      const userId = requireUser(context);
+      const { permissions } = await loadStaff(userId);
+      return getRequestCounts(userId, permissions);
     },
   },
 
