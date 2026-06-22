@@ -151,6 +151,44 @@ export async function notifyAdminGranted(userId: string): Promise<void> {
   emitToUser(userId, 'notification:push', notification.toObject());
 }
 
+// Admin XP grant/revoke applied to a user. `meta` carries before -> after so
+// the client can render the change without a reload.
+export async function notifyXpChanged(userId: string, delta: number, before: number, after: number): Promise<void> {
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(userId),
+    type: 'xp_changed',
+    sticky: false,
+    body: `${delta >= 0 ? '+' : ''}${delta} XP`,
+    publicId: null, projectTitle: null, actors: [], actorCount: 0, read: false,
+    meta: { delta, before, after },
+  });
+  emitToUser(userId, 'notification:push', notification.toObject());
+}
+
+// Admin role change. `meta.from`/`meta.to` drive the before -> after display.
+export async function notifyRoleChanged(userId: string, from: string, to: string): Promise<void> {
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(userId),
+    type: 'role_changed',
+    sticky: false,
+    body: null,
+    publicId: null, projectTitle: null, actors: [], actorCount: 0, read: false,
+    meta: { from, to },
+  });
+  emitToUser(userId, 'notification:push', notification.toObject());
+}
+
+export async function notifyUnban(userId: string): Promise<void> {
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(userId),
+    type: 'unban',
+    sticky: false,
+    body: null,
+    publicId: null, projectTitle: null, actors: [], actorCount: 0, read: false,
+  });
+  emitToUser(userId, 'notification:push', notification.toObject());
+}
+
 export async function createOnce(params: {
   userId: string;
   type: NotificationType;

@@ -7,7 +7,7 @@ import Project from '../projects/project.model.js';
 import Upload from '../uploads/upload.model.js';
 import AdminLog from './adminLog.model.js';
 import type { AdminLogEntry } from '../../types/index.js';
-import { createOnce, notifyAdminGranted } from '../notifications/notifications.service.js';
+import { createOnce, notifyRoleChanged, notifyXpChanged, notifyUnban } from '../notifications/notifications.service.js';
 import { sendBanEmail } from '../email/email.service.js';
 import Settings from '../settings/settings.model.js';
 import { getIO } from '../../socket/socket.manager.js';
@@ -173,6 +173,10 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
 
   await user.save();
 
+  if (!banStatus) {
+    notifyUnban(userId).catch(() => {});
+  }
+
   if (banStatus) {
     createOnce({ userId, type: 'ban', sticky: false, body: reason || null }).catch(() => {});
     const userEmail = user.email;
@@ -252,8 +256,11 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
   user.permissions = [...ROLE_PRESETS[newRole]];
   await user.save();
 
+  // Notify the affected user of the role change with before -> after.
+  if (previousRole !== newRole) {
+    notifyRoleChanged(user._id.toString(), previousRole, newRole).catch(() => {});
+  }
   if (rankOf(previousRole) < ROLE_RANK.admin && rankOf(newRole) >= ROLE_RANK.admin) {
-    notifyAdminGranted(user._id.toString()).catch(() => {});
     import('../../modules/badges/badge.service.js')
       .then(({ triggerBadgeCheck }) => triggerBadgeCheck(user._id.toString(), 'role_change'))
       .catch(() => {});
@@ -413,13 +420,20 @@ export async function adjustXP(
   // Manual admin grants/revokes are applied directly to progression.xp and
   // must NOT be followed by recomputeXP() — that function derives xp purely
   // from stats/badges and would silently overwrite (discard) this delta.
-  const applyDelta = async (ids: string[]) => {
+  // `notify` is set for targeted grants (user/users) so each affected user gets
+  // a real-time before -> after notification. Skipped for target 'all' to avoid
+  // a write storm of one notification per user across the whole user base.
+  const applyDelta = async (ids: string[], notify = false) => {
     if (!ids.length) return;
     await User.updateMany({ _id: { $in: ids } }, { $inc: { 'progression.xp': delta } });
     const updated = await User.find({ _id: { $in: ids } }).select('_id progression.xp').lean<{ _id: mongoose.Types.ObjectId; progression?: { xp?: number } }[]>();
     await Promise.all(updated.map((u) => {
-      const xp = Math.max(0, u.progression?.xp ?? 0);
-      return User.updateOne({ _id: u._id }, { 'progression.xp': xp, 'progression.level': computeLevel(xp) });
+      // Post-$inc value; recover the pre-action value to report before -> after.
+      const rawAfter = u.progression?.xp ?? 0;
+      const before = rawAfter - delta;
+      const after = Math.max(0, rawAfter);
+      if (notify) notifyXpChanged(u._id.toString(), delta, before, after).catch(() => {});
+      return User.updateOne({ _id: u._id }, { 'progression.xp': after, 'progression.level': computeLevel(after) });
     }));
   };
 
@@ -432,7 +446,7 @@ export async function adjustXP(
     }
     affected = ids.length;
   } else if (target === 'user' && userId) {
-    await applyDelta([userId]);
+    await applyDelta([userId], true);
     affected = 1;
   } else if (target === 'users' && userIds?.length) {
     // Resolve each entry: if it looks like a valid ObjectId use it directly,
@@ -446,7 +460,7 @@ export async function adjustXP(
         if (found) resolvedIds.push(found._id.toString());
       }
     }
-    await applyDelta(resolvedIds);
+    await applyDelta(resolvedIds, true);
     affected = resolvedIds.length;
   }
 

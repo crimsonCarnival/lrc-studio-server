@@ -19,10 +19,17 @@ export const requestSchema = `
     reviewable: [String!]!
   }
 
+  type RequestCounts {
+    pendingReview: Int!
+    myPending: Int!
+  }
+
   extend type Query {
     myRequests: [StaffRequest!]!
     pendingRequests: [StaffRequest!]!
+    reviewedRequests: [StaffRequest!]!
     requestCapabilities: RequestCapabilities!
+    requestCounts: RequestCounts!
   }
 
   extend type Mutation {
