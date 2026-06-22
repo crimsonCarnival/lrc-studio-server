@@ -7,9 +7,10 @@ const NOTIFICATION_TYPES = [
   'admin_granted',
   'system', 'admin',
   'verify_email', 'set_password',
-  'ban', 'password_changed',
+  'ban', 'unban', 'password_changed',
   'badge_awarded',
   'request_submitted', 'request_reviewed',
+  'xp_changed', 'role_changed',
 ] as const;
 
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
@@ -34,6 +35,9 @@ const notificationSchema = new mongoose.Schema(
     actors:       { type: [actorSchema], default: [] },
     actorCount:   { type: Number, default: 0 },
     body:         { type: String, default: null },
+    // Structured payload for notifications that render before -> after changes
+    // (xp_changed: { delta, before, after }; role_changed: { from, to }).
+    meta:         { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true, collection: 'notifications' }
 );
@@ -75,6 +79,7 @@ export interface INotification {
   }>;
   actorCount: number;
   body: string | null;
+  meta: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 }
