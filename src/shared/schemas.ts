@@ -20,6 +20,7 @@ export const lineItemSchema = {
       items: { type: 'string', maxLength: 100 },
       maxItems: 4
     },
+    mode: { type: ['string', 'null'], enum: ['solo', 'duet', 'split', null] },
     translation: { type: ['string', 'null'], maxLength: 2000 },
     translations: {
       type: ['array', 'null'],
@@ -39,6 +40,7 @@ export const lineItemSchema = {
           word: { type: 'string', maxLength: 500 },
           time: { type: ['number', 'null'] },
           reading: { type: 'string', maxLength: 500 },
+          singerIndex: { type: ['number', 'null'], minimum: 0 },
         },
       },
     },
@@ -49,6 +51,7 @@ export const lineItemSchema = {
         properties: {
           word: { type: 'string', maxLength: 500 },
           time: { type: ['number', 'null'] },
+          singerIndex: { type: ['number', 'null'], minimum: 0 },
         },
       },
     },
