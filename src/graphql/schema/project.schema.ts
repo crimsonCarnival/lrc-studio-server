@@ -81,6 +81,7 @@ export const projectSchema = `
     endTime: Float
     secondary: String
     singers: [String!]
+    mode: String
     translation: String
     translations: [TranslationInput!]
     words: [WordInput!]

@@ -4,11 +4,7 @@ export interface WordEntry {
   word: string;
   time: number | null;
   reading?: string;
-}
-
-export interface SecondaryWordEntry {
-  word: string;
-  time: number | null;
+  singerIndex?: number;
 }
 
 export interface LineEntry {
@@ -21,10 +17,11 @@ export interface LineEntry {
   endTime?: number | null;
   secondary?: string | null;
   singers?: string[];
+  mode?: 'solo' | 'duet' | 'split';
   translation?: string | null;
   translations?: Array<{ text: string; language?: string | null }>;
   words?: WordEntry[];
-  secondaryWords?: SecondaryWordEntry[];
+  secondaryWords?: WordEntry[];
 }
 
 export interface SectionEntry {

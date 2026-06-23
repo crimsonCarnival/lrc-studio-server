@@ -31,10 +31,11 @@ export const lyricsSchema = `
     endTime: Float
     secondary: String
     singers: [String!]
+    mode: String
     translation: String
     translations: [Translation!]
     words: [Word!]
-    secondaryWords: [SecondaryWord!]
+    secondaryWords: [Word!]
   }
 
   type Word {
@@ -44,10 +45,7 @@ export const lyricsSchema = `
     singerIndex: Int
   }
 
-  type SecondaryWord {
-    word: String!
-    time: Float
-  }
+
 
   input SectionInput {
     label: String

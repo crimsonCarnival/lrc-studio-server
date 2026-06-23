@@ -33,19 +33,11 @@ const lineSchema = new mongoose.Schema(
     endTime: { type: Number, default: null },
     secondary: { type: String, default: null, maxlength: 2000, set: textSetter },
     singers: { type: [String], default: undefined },
+    mode: { type: String, enum: ['solo', 'duet', 'split'], default: null },
     translation: { type: String, default: null, maxlength: 2000, set: textSetter },
     translations: { type: [translationSchema], default: undefined },
     words: { type: [wordSchema], default: undefined },
-    secondaryWords: {
-      type: [
-        {
-          word: { type: String, default: '', maxlength: 500, set: textSetter },
-          time: { type: Number, default: null },
-          _id: false,
-        },
-      ],
-      default: undefined,
-    },
+    secondaryWords: { type: [wordSchema], default: undefined },
   },
   { _id: false }
 );
