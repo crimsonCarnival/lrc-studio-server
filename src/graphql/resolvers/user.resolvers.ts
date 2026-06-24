@@ -37,6 +37,7 @@ export interface UpdateProfileInput {
   bio?: string;
   avatarUrl?: string | null;
   showFollowers?: boolean;
+  onlineVisibility?: 'friends' | 'nobody';
 }
 
 export interface BadgeInput {
@@ -423,6 +424,11 @@ export const userResolvers = {
       if (input.showFollowers !== undefined) {
         if (!user.social) user.social = {} as IUser['social'];
         user.social!.showFollowers = input.showFollowers;
+      }
+
+      if (input.onlineVisibility !== undefined) {
+        if (!user.social) user.social = {} as IUser['social'];
+        user.social!.onlineVisibility = input.onlineVisibility;
       }
 
       await user.save();

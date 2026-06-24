@@ -43,6 +43,7 @@ export const userSchema = `
     uploads: [Upload!]!
     settings: Settings
     showFollowers: Boolean!
+    onlineVisibility: String!
     badges: [UserBadge!]!
     showcasedBadges: [String!]!
     stats: UserStats
