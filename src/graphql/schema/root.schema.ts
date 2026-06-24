@@ -97,6 +97,8 @@ export const rootSchema = `
     avatarUrl: String
     showFollowers: Boolean
     onlineVisibility: String
+    miniProfileBadgesEnabled: Boolean
+    miniProfileBadgeIds: [String!]
   }
 
   type LeaderboardUser {
@@ -160,11 +162,13 @@ export const rootSchema = `
     description: LocalizedString!
     icon: String!
     color: String!
+    rarity: String!
     conditionType: String!
     conditionValue: Int
     autoGrant: Boolean!
     isBuiltin: Boolean!
     holderCount: Int!
+    holderPct: Float!
     xpReward: Int!
   }
 
@@ -174,6 +178,7 @@ export const rootSchema = `
     description: LocalizedStringInput
     icon: String
     color: String!
+    rarity: String
     conditionType: String!
     conditionValue: Int
     autoGrant: Boolean

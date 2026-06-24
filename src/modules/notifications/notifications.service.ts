@@ -93,18 +93,18 @@ export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
     avatarUrl: actorAvatarUrl,
   };
 
-  // Count total followers for accurate actorCount
-  const totalFollowers = await Follow.countDocuments({ followingId: new mongoose.Types.ObjectId(ownerId) });
-
+  // actorCount tracks how many people have followed since the notification was created/reset.
+  // actors[] keeps the 5 most recent actors for avatar display.
   const notification = await Notification.findOneAndUpdate(
     { userId: new mongoose.Types.ObjectId(ownerId), type: 'follow' },
     {
-      $setOnInsert: { sticky: false, body: null, publicId: null, projectTitle: null },
-      $set: { read: false, actorCount: totalFollowers },
+      $setOnInsert: { sticky: false, body: null, publicId: null, projectTitle: null, actorCount: 0 },
+      $set: { read: false },
+      $inc: { actorCount: 1 },
       $push: {
         actors: {
           $each: [actor],
-          $slice: -5,  // keep 5 most recent actors
+          $slice: -5,
         },
       },
     },

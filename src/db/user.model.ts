@@ -34,6 +34,8 @@ export interface ISocial {
   followingCount: number;
   showFollowers: boolean;
   onlineVisibility: 'friends' | 'nobody';
+  miniProfileBadgesEnabled: boolean;
+  miniProfileBadgeIds: string[];
   totalStarsReceived: number;
   totalForksReceived: number;
 }
@@ -151,6 +153,8 @@ const socialSchema = new mongoose.Schema<ISocial>(
     followingCount: { type: Number, default: 0, min: 0 },
     showFollowers: { type: Boolean, default: true },
     onlineVisibility: { type: String, enum: ['friends', 'nobody'], default: 'friends' },
+    miniProfileBadgesEnabled: { type: Boolean, default: true },
+    miniProfileBadgeIds: { type: [String], default: [] },
     totalStarsReceived: { type: Number, default: 0, min: 0 },
     totalForksReceived: { type: Number, default: 0, min: 0 },
   },
@@ -413,6 +417,8 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
       : { connected: false },
     showFollowers: this.social?.showFollowers ?? true,
     onlineVisibility: this.social?.onlineVisibility ?? 'friends',
+    miniProfileBadgesEnabled: this.social?.miniProfileBadgesEnabled ?? true,
+    miniProfileBadgeIds: this.social?.miniProfileBadgeIds ?? [],
     badges: this.badges ?? [],
     showcasedBadges: this.showcasedBadges ?? [],
     showcasePublic: this.showcasePublic ?? true,

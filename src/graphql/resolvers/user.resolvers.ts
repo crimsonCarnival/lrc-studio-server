@@ -38,6 +38,8 @@ export interface UpdateProfileInput {
   avatarUrl?: string | null;
   showFollowers?: boolean;
   onlineVisibility?: 'friends' | 'nobody';
+  miniProfileBadgesEnabled?: boolean;
+  miniProfileBadgeIds?: string[];
 }
 
 export interface BadgeInput {
@@ -124,9 +126,14 @@ export const userResolvers = {
       const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
       const totalForksReceived = projects.reduce((sum, p) => sum + (p.forkCount ?? 0), 0);
 
-      const isFollowedByMe = context.userId
-        ? !!(await Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }))
-        : false as boolean;
+      const [isFollowedByMe, isFollowingMe] = await Promise.all([
+        context.userId
+          ? Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }).then(Boolean)
+          : Promise.resolve(false),
+        context.userId
+          ? Follow.exists({ followerId: user._id, followingId: new mongoose.Types.ObjectId(context.userId) }).then(Boolean)
+          : Promise.resolve(false),
+      ]);
 
       const isBlockedByMe = context.userId && !isOwner
         ? await hasBlocked(context.userId, user._id.toString())
@@ -181,7 +188,11 @@ export const userResolvers = {
         followerCount: user.social?.followerCount ?? 0,
         followingCount: user.social?.followingCount ?? 0,
         isFollowedByMe,
+        isFollowingMe,
         isBlockedByMe,
+        miniProfileBadgeIds: (user.social?.miniProfileBadgesEnabled ?? true)
+          ? (user.social?.miniProfileBadgeIds ?? [])
+          : [],
         showFollowers: user.social?.showFollowers ?? true,
         badges: user.badges ?? [],
         showcasedBadges,
@@ -243,16 +254,19 @@ export const userResolvers = {
 
     badgeDefinitions: async () => {
       const defs = await BadgeDefinition.find().lean<IBadgeDefinition[]>();
-      const _totalUsers = await User.countDocuments({ isDeleted: { $ne: true } });
-      const holderCounts = await User.aggregate<{ _id: string; count: number }>([
-        { $unwind: '$badges' },
-        { $group: { _id: '$badges.id', count: { $sum: 1 } } },
+      const [totalUsers, holderCounts] = await Promise.all([
+        User.countDocuments({ isDeleted: { $ne: true } }),
+        User.aggregate<{ _id: string; count: number }>([
+          { $unwind: '$badges' },
+          { $group: { _id: '$badges.id', count: { $sum: 1 } } },
+        ]),
       ]);
       const hcMap = new Map<string, number>(holderCounts.map(r => [r._id, r.count]));
-      return defs.map(d => ({
-        ...d,
-        holderCount: hcMap.get(d.id) ?? 0,
-      }));
+      return defs.map(d => {
+        const holderCount = hcMap.get(d.id) ?? 0;
+        const holderPct = totalUsers > 0 ? parseFloat(((holderCount / totalUsers) * 100).toFixed(1)) : 0;
+        return { ...d, holderCount, holderPct };
+      });
     },
 
     userShowcase: async (_root: unknown, { accountName }: { accountName: string }, _context: Context) => {
@@ -295,7 +309,7 @@ export const userResolvers = {
 
     followList: async (
       _root: unknown,
-      { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING'; offset?: number },
+      { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING' | 'FRIENDS'; offset?: number },
       context: Context
     ) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
@@ -339,7 +353,7 @@ export const userResolvers = {
           })),
           total: user.social?.followerCount ?? 0,
         };
-      } else {
+      } else if (type === 'FOLLOWING') {
         const follows = await Follow.find({ followerId: user._id })
           .sort({ createdAt: -1 })
           .skip(offset)
@@ -369,6 +383,47 @@ export const userResolvers = {
             isFollowedByMe: myFollowedSet.has(u._id.toString()),
           })),
           total: user.social?.followingCount ?? 0,
+        };
+      } else {
+        // FRIENDS: mutual follows — people user follows who also follow back
+        const following = await Follow.find({ followerId: user._id })
+          .select('followingId').lean();
+        const followingIds = following.map(f => f.followingId);
+        if (followingIds.length === 0) return { users: [], total: 0 };
+
+        const mutualFollows = await Follow.find({
+          followerId: { $in: followingIds },
+          followingId: user._id,
+        }).select('followerId').lean();
+
+        const mutualIds = mutualFollows.map(f => f.followerId);
+        const pagedMutualIds = mutualIds.slice(offset, offset + 50);
+
+        const users = await User.find({
+          _id: { $in: pagedMutualIds },
+          isDeleted: { $ne: true },
+        })
+          .select('accountName displayName avatarUrl')
+          .lean<IUser[]>();
+
+        const myFollowedSet = new Set<string>();
+        if (context.userId && pagedMutualIds.length > 0) {
+          const myFollows = await Follow.find({
+            followerId: new mongoose.Types.ObjectId(context.userId),
+            followingId: { $in: pagedMutualIds },
+          }).select('followingId').lean();
+          myFollows.forEach(f => myFollowedSet.add(f.followingId.toString()));
+        }
+
+        return {
+          users: users.filter(u => !blockedSet.has(u._id.toString())).map(u => ({
+            id: u._id.toString(),
+            accountName: u.accountName,
+            displayName: u.displayName ?? null,
+            avatarUrl: u.avatarUrl ?? null,
+            isFollowedByMe: myFollowedSet.has(u._id.toString()),
+          })),
+          total: mutualIds.length,
         };
       }
     },
@@ -429,6 +484,20 @@ export const userResolvers = {
       if (input.onlineVisibility !== undefined) {
         if (!user.social) user.social = {} as IUser['social'];
         user.social!.onlineVisibility = input.onlineVisibility;
+      }
+
+      if (input.miniProfileBadgesEnabled !== undefined) {
+        if (!user.social) user.social = {} as IUser['social'];
+        user.social!.miniProfileBadgesEnabled = input.miniProfileBadgesEnabled;
+      }
+
+      if (input.miniProfileBadgeIds !== undefined) {
+        if (!user.social) user.social = {} as IUser['social'];
+        // cap at 3, only allow owned badge IDs
+        const ownedIds = new Set((user.badges ?? []).map((b: IUserBadge) => b.id));
+        user.social!.miniProfileBadgeIds = input.miniProfileBadgeIds
+          .filter(id => ownedIds.has(id))
+          .slice(0, 3);
       }
 
       await user.save();

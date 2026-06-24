@@ -18,6 +18,7 @@ export type ConditionType =
   | 'manual';
 
 export type BadgeColor = 'amber' | 'teal' | 'green' | 'primary' | 'rose' | 'shimmer' | 'blue' | 'orange';
+export type BadgeRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 
 export interface LocalizedString {
   en: string;
@@ -30,6 +31,7 @@ export interface IBadgeDefinition {
   description: LocalizedString;
   icon: string;
   color: BadgeColor;
+  rarity: BadgeRarity;
   conditionType: ConditionType;
   conditionValue: number | null;
   autoGrant: boolean;
@@ -64,6 +66,11 @@ const badgeDefSchema = new mongoose.Schema<IBadgeDefinition>(
       type: String,
       enum: ['amber', 'teal', 'green', 'primary', 'rose', 'shimmer', 'blue', 'orange'],
       default: 'primary',
+    },
+    rarity: {
+      type: String,
+      enum: ['common', 'uncommon', 'rare', 'epic', 'legendary'],
+      default: 'common',
     },
     conditionType: {
       type: String,

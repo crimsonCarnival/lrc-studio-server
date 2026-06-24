@@ -44,6 +44,8 @@ export const userSchema = `
     settings: Settings
     showFollowers: Boolean!
     onlineVisibility: String!
+    miniProfileBadgesEnabled: Boolean!
+    miniProfileBadgeIds: [String!]!
     badges: [UserBadge!]!
     showcasedBadges: [String!]!
     stats: UserStats
@@ -101,8 +103,10 @@ export const userSchema = `
     followerCount: Int!
     followingCount: Int!
     isFollowedByMe: Boolean!
+    isFollowingMe: Boolean!
     isBlockedByMe: Boolean!
     showFollowers: Boolean!
+    miniProfileBadgeIds: [String!]!
     badges: [UserBadge!]!
     showcasedBadges: [ShowcasedBadge!]!
     showcasePublic: Boolean!
@@ -135,5 +139,6 @@ export const userSchema = `
   enum FollowListType {
     FOLLOWERS
     FOLLOWING
+    FRIENDS
   }
 `;

@@ -180,6 +180,7 @@ export interface BadgeDefInput {
   description?: { en: string; es?: string };
   icon?: string;
   color?: string;
+  rarity?: string;
   conditionType?: string;
   conditionValue?: number | null;
   autoGrant?: boolean;
@@ -188,14 +189,18 @@ export interface BadgeDefInput {
 
 export async function createBadgeDef(input: BadgeDefInput, createdBy?: string): Promise<Record<string, unknown>> {
   const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy });
-  return { ...def.toObject(), holderCount: 0 };
+  return { ...def.toObject(), holderCount: 0, holderPct: 0 };
 }
 
 export async function updateBadgeDef(id: string, input: BadgeDefInput): Promise<Record<string, unknown>> {
   const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { new: true });
   if (!def) throw new Error('Badge not found');
-  const holderCount = await User.countDocuments({ 'badges.id': id, isDeleted: { $ne: true } });
-  return { ...def.toObject(), holderCount };
+  const [holderCount, totalUsers] = await Promise.all([
+    User.countDocuments({ 'badges.id': id, isDeleted: { $ne: true } }),
+    User.countDocuments({ isDeleted: { $ne: true } }),
+  ]);
+  const holderPct = totalUsers > 0 ? parseFloat(((holderCount / totalUsers) * 100).toFixed(1)) : 0;
+  return { ...def.toObject(), holderCount, holderPct };
 }
 
 export async function deleteBadgeDef(id: string): Promise<boolean> {
@@ -592,18 +597,14 @@ export async function getBadgeRarity(badgeId: string): Promise<{
   holderCount: number;
   totalUsers: number;
 }> {
-  const [holderCount, totalUsers] = await Promise.all([
+  const [def, holderCount, totalUsers] = await Promise.all([
+    BadgeDefinition.findOne({ id: badgeId }).select('rarity').lean<IBadgeDefinition>(),
     User.countDocuments({ 'badges.id': badgeId, isDeleted: { $ne: true } }),
     User.countDocuments({ isDeleted: { $ne: true } }),
   ]);
 
   const pct = totalUsers > 0 ? (holderCount / totalUsers) * 100 : 0;
-  const rarity =
-    pct > 50   ? 'common'    :
-    pct > 10   ? 'uncommon'  :
-    pct > 2    ? 'rare'      :
-    pct > 0.5  ? 'epic'      :
-                 'legendary';
+  const rarity = def?.rarity ?? 'common';
 
   return { rarity, pct, holderCount, totalUsers };
 }
