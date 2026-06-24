@@ -47,14 +47,18 @@ const MOD_PERMS: Permission[] = ['users.view', 'users.ban', 'audit.view', 'stats
 const ADMIN_PERMS: Permission[] = [...MOD_PERMS, 'network.block', 'users.role'];
 
 // Default permission set granted when a role is assigned.
+// Superadmin receives all permissions explicitly — no wildcard, so any new
+// permission added to PERMISSIONS must be consciously included here.
 export const ROLE_PRESETS: Record<Role, string[]> = {
   user: [],
   mod: MOD_PERMS,
   admin: ADMIN_PERMS,
-  superadmin: [WILDCARD],
+  superadmin: [...PERMISSIONS],
 };
 
-// Authoritative check. A wildcard holder passes every permission.
+// Authoritative check. WILDCARD is kept for backward-compat with DB records
+// that were seeded before the explicit-list change; new role assignments no
+// longer produce it.
 export function hasPermission(permissions: string[] | undefined | null, required: Permission): boolean {
   if (!permissions || permissions.length === 0) return false;
   return permissions.includes(WILDCARD) || permissions.includes(required);
