@@ -20,11 +20,6 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number];
 
-// Superadmin holds this wildcard instead of an enumerated list, so any
-// permission added later is automatically covered — no risk of forgetting to
-// extend the superadmin preset.
-export const WILDCARD = '*';
-
 export const ROLES = ['user', 'mod', 'admin', 'superadmin'] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -47,8 +42,7 @@ const MOD_PERMS: Permission[] = ['users.view', 'users.ban', 'audit.view', 'stats
 const ADMIN_PERMS: Permission[] = [...MOD_PERMS, 'network.block', 'users.role'];
 
 // Default permission set granted when a role is assigned.
-// Superadmin receives all permissions explicitly — no wildcard, so any new
-// permission added to PERMISSIONS must be consciously included here.
+// Adding a new permission to PERMISSIONS requires explicitly listing it here.
 export const ROLE_PRESETS: Record<Role, string[]> = {
   user: [],
   mod: MOD_PERMS,
@@ -56,12 +50,9 @@ export const ROLE_PRESETS: Record<Role, string[]> = {
   superadmin: [...PERMISSIONS],
 };
 
-// Authoritative check. WILDCARD is kept for backward-compat with DB records
-// that were seeded before the explicit-list change; new role assignments no
-// longer produce it.
 export function hasPermission(permissions: string[] | undefined | null, required: Permission): boolean {
   if (!permissions || permissions.length === 0) return false;
-  return permissions.includes(WILDCARD) || permissions.includes(required);
+  return permissions.includes(required);
 }
 
 export function isValidRole(role: string): role is Role {

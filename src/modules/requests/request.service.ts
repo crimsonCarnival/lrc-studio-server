@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import StaffRequest, { type IStaffRequest, type RequestType, REQUEST_TYPES } from './request.model.js';
 import User from '../../db/user.model.js';
 import type { IUser } from '../../db/user.model.js';
-import { hasPermission, WILDCARD, type Permission, type Role } from '../../shared/permissions.js';
+import { hasPermission, type Permission, type Role } from '../../shared/permissions.js';
 import * as adminService from '../admin/admin.service.js';
 import { createBadgeDef, updateBadgeDef, deleteBadgeDef } from '../badges/badge.service.js';
 import { createLevel, updateLevel, deleteLevel } from '../stats/addiction-level.service.js';
@@ -127,7 +127,7 @@ export async function createRequest(
   // Notify everyone who can review this type (holds the reviewer permission).
   const reviewers = await User.find({
     isDeleted: { $ne: true },
-    $or: [{ permissions: spec.reviewerPerm }, { permissions: WILDCARD }],
+    permissions: spec.reviewerPerm,
     _id: { $ne: doc.issuer.id },
   }).select('_id').lean<{ _id: mongoose.Types.ObjectId }[]>();
   for (const r of reviewers) {
