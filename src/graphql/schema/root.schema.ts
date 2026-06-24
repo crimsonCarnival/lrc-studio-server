@@ -96,6 +96,7 @@ export const rootSchema = `
     bio: String
     avatarUrl: String
     showFollowers: Boolean
+    onlineVisibility: String
   }
 
   type LeaderboardUser {

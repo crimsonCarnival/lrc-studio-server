@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
+import Session from '../../db/session.model.js';
 import BannedIp from './bannedIp.model.js';
 import BannedDevice from './bannedDevice.model.js';
 import UserDevice from '../auth/userDevice.model.js';
@@ -38,7 +39,10 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
     ];
   }
 
-  if (role) filter.role = role;
+  if (role) {
+    const roles = (role as string).split(',').map(r => r.trim()).filter(Boolean);
+    filter.role = roles.length === 1 ? roles[0] : { $in: roles };
+  }
   if (status) {
     if (status === 'banned') filter['ban.active'] = true;
     if (status === 'active') filter['ban.active'] = { $ne: true };
@@ -68,7 +72,7 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
 
   const userIds = page.map((u: Record<string, unknown>) => u._id);
 
-  const [projectCounts, uploadCounts] = await Promise.all([
+  const [projectCounts, uploadCounts, sessionData] = await Promise.all([
     Project.aggregate([
       { $match: { userId: { $in: userIds } } },
       { $group: { _id: '$userId', count: { $sum: 1 } } },
@@ -77,16 +81,23 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
       { $match: { userId: { $in: userIds } } },
       { $group: { _id: '$userId', count: { $sum: 1 } } },
     ]),
+    Session.aggregate([
+      { $match: { userId: { $in: userIds } } },
+      { $sort: { lastUsedAt: -1 } },
+      { $group: { _id: '$userId', deviceId: { $first: '$deviceId' }, deviceName: { $first: '$deviceName' } } },
+    ]),
   ]);
 
   const projectCountMap = new Map((projectCounts as { _id: string; count: number }[]).map(r => [r._id.toString(), r.count]));
   const uploadCountMap = new Map((uploadCounts as { _id: string; count: number }[]).map(r => [r._id.toString(), r.count]));
+  const sessionMap = new Map((sessionData as { _id: mongoose.Types.ObjectId; deviceId: string; deviceName: string }[]).map(s => [s._id.toString(), { lastDeviceId: s.deviceId, lastDeviceName: s.deviceName }]));
 
   const users = page.map((u: Record<string, unknown>) => ({
     ...u,
     id: (u._id as mongoose.Types.ObjectId).toString(),
     projectCount: projectCountMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? 0,
     uploadCount: uploadCountMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? 0,
+    ...(sessionMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? {}),
   }));
 
   return { users, nextCursor, hasMore, total };
