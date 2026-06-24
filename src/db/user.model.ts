@@ -32,12 +32,15 @@ export interface IAppeal {
 export interface ISocial {
   followerCount: number;
   followingCount: number;
+  totalStarsReceived: number;
+  totalForksReceived: number;
+}
+
+export interface IUserPrivacy {
   showFollowers: boolean;
   onlineVisibility: 'friends' | 'nobody';
   miniProfileBadgesEnabled: boolean;
   miniProfileBadgeIds: string[];
-  totalStarsReceived: number;
-  totalForksReceived: number;
 }
 
 export interface IUserBadge {
@@ -97,6 +100,7 @@ export interface IUser extends Document {
     pictureUrl?: string | null;
   };
   social?: ISocial;
+  privacy?: IUserPrivacy;
   lastIp?: string | null;
   bio: string;
   currentChallenge?: string | null;
@@ -151,12 +155,18 @@ const socialSchema = new mongoose.Schema<ISocial>(
   {
     followerCount: { type: Number, default: 0, min: 0 },
     followingCount: { type: Number, default: 0, min: 0 },
-    showFollowers: { type: Boolean, default: true },
-    onlineVisibility: { type: String, enum: ['friends', 'nobody'], default: 'friends' },
-    miniProfileBadgesEnabled: { type: Boolean, default: true },
-    miniProfileBadgeIds: { type: [String], default: [] },
     totalStarsReceived: { type: Number, default: 0, min: 0 },
     totalForksReceived: { type: Number, default: 0, min: 0 },
+  },
+  { _id: false },
+);
+
+const privacySchema = new mongoose.Schema<IUserPrivacy>(
+  {
+    showFollowers:           { type: Boolean, default: true },
+    onlineVisibility:        { type: String, enum: ['friends', 'nobody'], default: 'friends' },
+    miniProfileBadgesEnabled:{ type: Boolean, default: true },
+    miniProfileBadgeIds:     { type: [String], default: [] },
   },
   { _id: false },
 );
@@ -303,6 +313,7 @@ const userSchema = new mongoose.Schema<IUser>(
       maxlength: 160,
     },
     social: { type: socialSchema, default: () => ({}) },
+    privacy: { type: privacySchema, default: () => ({}) },
     currentChallenge: {
       type: String,
       default: null,
@@ -415,10 +426,10 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
           pictureUrl: this.google.pictureUrl,
         }
       : { connected: false },
-    showFollowers: this.social?.showFollowers ?? true,
-    onlineVisibility: this.social?.onlineVisibility ?? 'friends',
-    miniProfileBadgesEnabled: this.social?.miniProfileBadgesEnabled ?? true,
-    miniProfileBadgeIds: this.social?.miniProfileBadgeIds ?? [],
+    showFollowers: this.privacy?.showFollowers ?? true,
+    onlineVisibility: this.privacy?.onlineVisibility ?? 'friends',
+    miniProfileBadgesEnabled: this.privacy?.miniProfileBadgesEnabled ?? true,
+    miniProfileBadgeIds: this.privacy?.miniProfileBadgeIds ?? [],
     badges: this.badges ?? [],
     showcasedBadges: this.showcasedBadges ?? [],
     showcasePublic: this.showcasePublic ?? true,

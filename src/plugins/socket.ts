@@ -85,8 +85,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         const isNew = setOnline(userId, socket.id);
 
         // Load user's visibility setting
-        const user = await User.findById(userId).select('social permissions').lean<IUser>();
-        const visibility = user?.social?.onlineVisibility ?? 'friends';
+        const user = await User.findById(userId).select('privacy permissions').lean<IUser>();
+        const visibility = user?.privacy?.onlineVisibility ?? 'friends';
 
         const mutualIds = await getMutualFollowIds(userId);
 
@@ -104,11 +104,11 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         const onlineFriendIds = mutualIds.filter(fid => isOnline(fid));
         const friendDocs = onlineFriendIds.length > 0
           ? await User.find({ _id: { $in: onlineFriendIds.map(id => new mongoose.Types.ObjectId(id)) } })
-              .select('social')
+              .select('privacy')
               .lean<IUser[]>()
           : [];
         const visibleFriendIds = friendDocs
-          .filter(u => (u.social?.onlineVisibility ?? 'friends') !== 'nobody')
+          .filter(u => (u.privacy?.onlineVisibility ?? 'friends') !== 'nobody')
           .map(u => u._id.toString());
 
         const activities: Record<string, UserActivity> = {};
@@ -152,10 +152,10 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         setActivity(userId, activity);
 
         const [user, mutualIds] = await Promise.all([
-          User.findById(userId).select('social').lean<IUser>(),
+          User.findById(userId).select('privacy').lean<IUser>(),
           getMutualFollowIds(userId),
         ]);
-        const visibility = user?.social?.onlineVisibility ?? 'friends';
+        const visibility = user?.privacy?.onlineVisibility ?? 'friends';
         const event = { userId, activity };
         if (visibility !== 'nobody') {
           for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('activity:update', event);
@@ -170,10 +170,10 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         clearActivity(userId);
 
         const [user, mutualIds] = await Promise.all([
-          User.findById(userId).select('social').lean<IUser>(),
+          User.findById(userId).select('privacy').lean<IUser>(),
           getMutualFollowIds(userId),
         ]);
-        const visibility = user?.social?.onlineVisibility ?? 'friends';
+        const visibility = user?.privacy?.onlineVisibility ?? 'friends';
         const event = { userId };
         if (visibility !== 'nobody') {
           for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('activity:clear', event);
@@ -199,10 +199,10 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
 
         const { userId } = result;
         const [user, mutualIds] = await Promise.all([
-          User.findById(userId).select('social').lean<IUser>(),
+          User.findById(userId).select('privacy').lean<IUser>(),
           getMutualFollowIds(userId),
         ]);
-        const visibility = user?.social?.onlineVisibility ?? 'friends';
+        const visibility = user?.privacy?.onlineVisibility ?? 'friends';
         if (visibility !== 'nobody') {
           for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('presence:offline', { userId });
         }

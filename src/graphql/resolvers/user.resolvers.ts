@@ -190,10 +190,10 @@ export const userResolvers = {
         isFollowedByMe,
         isFollowingMe,
         isBlockedByMe,
-        miniProfileBadgeIds: (user.social?.miniProfileBadgesEnabled ?? true)
-          ? (user.social?.miniProfileBadgeIds ?? [])
+        miniProfileBadgeIds: (user.privacy?.miniProfileBadgesEnabled ?? true)
+          ? (user.privacy?.miniProfileBadgeIds ?? [])
           : [],
-        showFollowers: user.social?.showFollowers ?? true,
+        showFollowers: user.privacy?.showFollowers ?? true,
         badges: user.badges ?? [],
         showcasedBadges,
         showcasePublic: showcaseVisible,
@@ -315,7 +315,7 @@ export const userResolvers = {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!user || user.isDeleted || user.ban?.active) return { users: [], total: 0 };
       const isOwner = context.userId && context.userId === user._id.toString();
-      if (!user.social?.showFollowers && !isOwner) return { users: [], total: 0 };
+      if (!user.privacy?.showFollowers && !isOwner) return { users: [], total: 0 };
 
       // Hide users in a block relationship with the viewer (either direction).
       const blockedSet = await getBlockedSet(context.userId);
@@ -477,25 +477,25 @@ export const userResolvers = {
       }
 
       if (input.showFollowers !== undefined) {
-        if (!user.social) user.social = {} as IUser['social'];
-        user.social!.showFollowers = input.showFollowers;
+        if (!user.privacy) user.privacy = {} as IUser['privacy'];
+        user.privacy!.showFollowers = input.showFollowers;
       }
 
       if (input.onlineVisibility !== undefined) {
-        if (!user.social) user.social = {} as IUser['social'];
-        user.social!.onlineVisibility = input.onlineVisibility;
+        if (!user.privacy) user.privacy = {} as IUser['privacy'];
+        user.privacy!.onlineVisibility = input.onlineVisibility;
       }
 
       if (input.miniProfileBadgesEnabled !== undefined) {
-        if (!user.social) user.social = {} as IUser['social'];
-        user.social!.miniProfileBadgesEnabled = input.miniProfileBadgesEnabled;
+        if (!user.privacy) user.privacy = {} as IUser['privacy'];
+        user.privacy!.miniProfileBadgesEnabled = input.miniProfileBadgesEnabled;
       }
 
       if (input.miniProfileBadgeIds !== undefined) {
-        if (!user.social) user.social = {} as IUser['social'];
+        if (!user.privacy) user.privacy = {} as IUser['privacy'];
         // cap at 3, only allow owned badge IDs
         const ownedIds = new Set((user.badges ?? []).map((b: IUserBadge) => b.id));
-        user.social!.miniProfileBadgeIds = input.miniProfileBadgeIds
+        user.privacy!.miniProfileBadgeIds = input.miniProfileBadgeIds
           .filter(id => ownedIds.has(id))
           .slice(0, 3);
       }
