@@ -555,7 +555,8 @@ export const userResolvers = {
         if (typeof err === 'object' && err !== null && 'code' in err && (err as Record<string, unknown>).code === 11000) return true;
         throw err;
       }
-      socialGraph.addEdge(context.userId, targetId)
+      // Graph is updated only here — after successful DB insert (dup-key path returns inside catch above)
+      socialGraph.addEdge(context.userId, targetId);
       // Badge: follower_count for the target
       triggerBadgeCheck(targetId, 'follow_received').catch(() => {});
       return true;
@@ -583,7 +584,7 @@ export const userResolvers = {
             { $inc: { 'social.followingCount': -1 } }
           ),
         ]);
-        socialGraph.removeEdge(context.userId, target._id.toString())
+        socialGraph.removeEdge(context.userId, target._id.toString());
       }
       return true;
     },

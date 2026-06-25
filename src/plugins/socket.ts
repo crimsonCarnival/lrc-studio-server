@@ -73,8 +73,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.addHook('onListen', async () => {
-    await initSocialGraph()
-    fastify.log.info('Social graph initialized')
+    await initSocialGraph();
+    fastify.log.info('Social graph initialized');
     io.on('connection', (socket) => {
       fastify.log.info({ socketId: socket.id }, 'socket connected');
 
