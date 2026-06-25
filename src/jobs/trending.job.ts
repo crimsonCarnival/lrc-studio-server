@@ -1,3 +1,4 @@
+import { PriorityQueue } from '@crimson-carnival/ds-js';
 import ProjectStar from '../modules/projects/projectStar.model.js';
 import Project from '../modules/projects/project.model.js';
 import SavedPlaylist from '../db/saved-playlist.model.js';
@@ -76,7 +77,12 @@ export async function recomputeTrendingScores(): Promise<void> {
   const allpublicIds = new Set([...starMap.keys(), ...forkMap.keys()]);
 
   if (allpublicIds.size > 0) {
-    const projectWrites = Array.from(allpublicIds).map((pid) => {
+    const projectPQ = new PriorityQueue<{ publicId: string; score: number }>(
+      (a, b) => b.score - a.score  // max-heap: higher scores first
+    );
+
+    // Enqueue each project's score as it's computed
+    for (const pid of allpublicIds) {
       const s = starMap.get(pid);
       const f = forkMap.get(pid);
       const score =
@@ -86,13 +92,21 @@ export async function recomputeTrendingScores(): Promise<void> {
         14 * (f?.forks24h ?? 0) +
         6 * (f?.forks7d ?? 0) +
         2 * (f?.forks30d ?? 0);
-      return {
+      projectPQ.enqueue({ publicId: pid, score });
+    }
+
+    // Extract in sorted order (highest scores first) and prepare bulk writes
+    const projectWrites: Array<{ updateOne: { filter: { publicId: string; public: boolean }; update: { $set: { trendingScore: number } } } }> = [];
+    while (!projectPQ.isEmpty()) {
+      const item = projectPQ.dequeue()!;
+      projectWrites.push({
         updateOne: {
-          filter: { publicId: pid, public: true },
-          update: { $set: { trendingScore: score } },
+          filter: { publicId: item.publicId, public: true },
+          update: { $set: { trendingScore: item.score } },
         },
-      };
-    });
+      });
+    }
+
     await Project.bulkWrite(projectWrites, { ordered: false });
   }
 
@@ -130,15 +144,28 @@ export async function recomputeTrendingScores(): Promise<void> {
   ]);
 
   if (playlistStats.length > 0) {
-    const playlistWrites = playlistStats.map((p) => {
+    const playlistPQ = new PriorityQueue<{ _id: string; score: number }>(
+      (a, b) => b.score - a.score  // max-heap: higher scores first
+    );
+
+    // Enqueue each playlist's score as it's computed
+    for (const p of playlistStats) {
       const score = 10 * p.saves24h + 4 * p.saves7d + 1 * p.saves30d;
-      return {
+      playlistPQ.enqueue({ _id: p._id, score });
+    }
+
+    // Extract in sorted order (highest scores first) and prepare bulk writes
+    const playlistWrites: Array<{ updateOne: { filter: { _id: string; isPublic: boolean }; update: { $set: { trendingScore: number } } } }> = [];
+    while (!playlistPQ.isEmpty()) {
+      const item = playlistPQ.dequeue()!;
+      playlistWrites.push({
         updateOne: {
-          filter: { _id: p._id, isPublic: true },
-          update: { $set: { trendingScore: score } },
+          filter: { _id: item._id, isPublic: true },
+          update: { $set: { trendingScore: item.score } },
         },
-      };
-    });
+      });
+    }
+
     await Playlist.bulkWrite(playlistWrites, { ordered: false });
   }
 
