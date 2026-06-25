@@ -1,6 +1,7 @@
 import { getEnv } from '../../config/env.js';
 import { stripHtml } from '../../utils/sanitize.js';
 import { LRUCache } from '@crimson-carnival/ds-js';
+import { insertAutocompleteTerms } from './autocomplete.trie.js';
 
 const PROVIDER_TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const PROVIDER_API_BASE = 'https://api.spotify.com/v1';
@@ -170,17 +171,31 @@ async function fetchFallbackTrack(songName: string, artistName?: string): Promis
 }
 
 export async function lookupTrack(songName: string, artistName?: string): Promise<Record<string, unknown>> {
+  let result: Record<string, unknown>;
+
   if (isProviderConfigured()) {
     try {
       const trackId = await searchTrackId(songName, artistName);
       if (trackId) {
         const details = await fetchTrackDetails(trackId);
-        if (!details.error) return details;
+        if (!details.error) {
+          result = details;
+          insertAutocompleteTerms(
+            [result.name, result.artist].filter((v): v is string => typeof v === 'string' && v.length > 0)
+          );
+          return result;
+        }
       }
     } catch (err) {
       console.error('[song-metadata] Primary lookup failed, falling back', err);
     }
   }
 
-  return fetchFallbackTrack(songName, artistName);
+  result = await fetchFallbackTrack(songName, artistName);
+  if (!result.error) {
+    insertAutocompleteTerms(
+      [result.name, result.artist].filter((v): v is string => typeof v === 'string' && v.length > 0)
+    );
+  }
+  return result;
 }
