@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import Block from '../../db/block.model.js';
 import Follow from '../../db/follow.model.js';
 import User, { type IUser } from '../../db/user.model.js';
+import { getCachedBlockedSet, invalidateBlockCache } from './block-list.cache.js';
 
 const oid = (id: string) => new mongoose.Types.ObjectId(id);
 
@@ -37,6 +38,9 @@ export async function blockUser(blockerId: string, blockedId: string): Promise<v
     { upsert: true },
   );
 
+  invalidateBlockCache(blockerId);
+  invalidateBlockCache(blockedId);
+
   // Sever the relationship in both directions.
   await Promise.all([
     removeFollowEdge(blocker, blocked),
@@ -46,6 +50,8 @@ export async function blockUser(blockerId: string, blockedId: string): Promise<v
 
 export async function unblockUser(blockerId: string, blockedId: string): Promise<void> {
   await Block.deleteOne({ blockerId: oid(blockerId), blockedId: oid(blockedId) });
+  invalidateBlockCache(blockerId);
+  invalidateBlockCache(blockedId);
 }
 
 export interface BlockedUserView {
@@ -85,19 +91,10 @@ export async function listBlocked(blockerId: string): Promise<BlockedUserView[]>
 
 // All user ids in a block relationship with the viewer (either direction).
 // Used to filter discovery surfaces symmetrically (suggestions, search, feed).
+// Delegates to the LRU cache; falls through to DB on miss.
 export async function getBlockedSet(viewerId?: string | null): Promise<Set<string>> {
   if (!viewerId) return new Set();
-  const v = oid(viewerId);
-  const rows = await Block.find({ $or: [{ blockerId: v }, { blockedId: v }] })
-    .select('blockerId blockedId')
-    .lean();
-  const set = new Set<string>();
-  for (const r of rows) {
-    set.add(r.blockerId.toString());
-    set.add(r.blockedId.toString());
-  }
-  set.delete(viewerId);
-  return set;
+  return getCachedBlockedSet(viewerId);
 }
 
 // Directional check: did `blockerId` block `blockedId`?
