@@ -3,6 +3,7 @@ import Playlist from '../../db/playlist.model.js';
 import Follow from '../../db/follow.model.js';
 import User from '../../db/user.model.js';
 import { getBlockedSet } from '../blocks/block.service.js';
+import { socialGraph } from '../../lib/social-graph.js';
 import mongoose from 'mongoose';
 
 interface UserLean {
@@ -60,20 +61,16 @@ export async function getSuggestedUsers(viewerId: string, limit: number) {
   // Collect candidates from two sources: friends-of-friends AND music taste matches.
   const candidateScores = new Map<string, number>();
 
-  // Source 1: friends-of-friends
-  if (followingIds.length > 0) {
-    const secondDegree = await Follow.find({
-      followerId: { $in: followingIds },
-      followingId: { $nin: [...followingIds, viewerObjectId] },
-    })
-      .select('followingId')
-      .lean();
-
-    for (const f of secondDegree) {
-      const id = f.followingId.toString();
-      if (!blockedSet.has(id)) {
-        candidateScores.set(id, (candidateScores.get(id) ?? 0) + 2);
-      }
+  // Source 1: friends-of-friends via in-memory Graph BFS (replaces DB aggregation)
+  const myNeighbors = socialGraph.neighbors(viewerId);
+  for (const neighborId of myNeighbors) {
+    if (blockedSet.has(neighborId)) continue;
+    const theirNeighbors = socialGraph.neighbors(neighborId);
+    for (const candidateId of theirNeighbors) {
+      if (candidateId === viewerId) continue;
+      if (followingSet.has(candidateId)) continue; // already following
+      if (blockedSet.has(candidateId)) continue;
+      candidateScores.set(candidateId, (candidateScores.get(candidateId) ?? 0) + 2);
     }
   }
 
