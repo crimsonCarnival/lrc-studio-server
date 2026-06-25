@@ -252,6 +252,7 @@ export async function resolveSticky(
 export async function listNotifications(
   userId: string
 ): Promise<{ notifications: NotificationDoc[]; unreadCount: number }> {
+  // Returns unread notifications ordered by priority (heap). Previously returned all notifications by recency.
   const userObjId = new mongoose.Types.ObjectId(userId);
   const [prioritized, unreadCount] = await Promise.all([
     getPrioritizedUnread(userId, 50),
@@ -268,6 +269,7 @@ export async function markRead(userId: string, ids: string[]): Promise<void> {
     },
     { $set: { read: true } }
   );
+  clearHeap(userId);
 }
 
 export async function markAllRead(userId: string): Promise<void> {
