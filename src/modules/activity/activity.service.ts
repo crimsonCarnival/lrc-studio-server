@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import Activity, { type ActivityType } from '../../db/activity.model.js';
 import Follow from '../../db/follow.model.js';
-import { getIO } from '../../socket/socket.manager.js';
+import { enqueueFanOut } from './fan-out.queue.js';
 
 export interface WriteActivityParams {
   actorId: string;
@@ -10,10 +10,6 @@ export interface WriteActivityParams {
   projectTitle: string;
   coverImage: string;
   targetPath?: string;
-}
-
-function emitFeedNew(userId: string, activity: unknown): void {
-  try { getIO().to(`user:${userId}`).emit('feed:new', activity); } catch { /* socket not ready */ }
 }
 
 export async function writeActivity(params: WriteActivityParams): Promise<void> {
@@ -28,15 +24,17 @@ export async function writeActivity(params: WriteActivityParams): Promise<void> 
     targetPath: targetPath ?? '',
   });
 
-  // Fan-out to followers — fire-and-forget, never blocks the caller
+  // Fan-out to followers — fire-and-forget via queue, never blocks the caller
   Follow.find({ followingId: new mongoose.Types.ObjectId(actorId) })
     .select('followerId')
     .lean()
     .then(followers => {
-      const obj = activity.toObject();
-      for (const f of followers) {
-        emitFeedNew(f.followerId.toString(), obj);
-      }
+      if (followers.length === 0) return;
+      enqueueFanOut({
+        actorId,
+        followerIds: followers.map(f => f.followerId.toString()),
+        activity: activity.toObject(),
+      });
     })
     .catch(() => {});
 }
