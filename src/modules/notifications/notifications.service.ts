@@ -3,6 +3,7 @@ import type { FlattenMaps } from 'mongoose';
 import Notification, { type INotification, type NotificationType } from './notification.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import Follow from '../../db/follow.model.js';
+import { enqueueNotif, peekNotifs, loadHeap, clearHeap } from '../../lib/notification-heap.js';
 
 export type NotificationDoc = FlattenMaps<INotification> & { _id: mongoose.Types.ObjectId };
 
@@ -43,6 +44,7 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
     { upsert: true, new: true }
   );
 
+  enqueueNotif(ownerId, notification.toObject() as unknown as INotification);
   emitToUser(ownerId, 'notification:push', notification.toObject());
 }
 
@@ -73,6 +75,7 @@ export async function upsertReaction(params: UpsertReactionParams): Promise<void
     { upsert: true, new: true }
   );
 
+  enqueueNotif(ownerId, notification.toObject() as unknown as INotification);
   emitToUser(ownerId, 'notification:push', notification.toObject());
 }
 
@@ -111,6 +114,7 @@ export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
     { upsert: true, new: true }
   );
 
+  enqueueNotif(ownerId, notification.toObject() as unknown as INotification);
   emitToUser(ownerId, 'notification:push', notification.toObject());
 }
 
@@ -123,6 +127,7 @@ export async function notifyRequestSubmitted(reviewerId: string, requestId: stri
     sticky: false, body: summary, publicId: requestId, projectTitle: null,
     actors: [], actorCount: 0, read: false,
   });
+  enqueueNotif(reviewerId, notification.toObject() as unknown as INotification);
   emitToUser(reviewerId, 'notification:push', notification.toObject());
 }
 
@@ -133,6 +138,7 @@ export async function notifyRequestReviewed(requesterId: string, requestId: stri
     sticky: false, body: `${approved ? '✓' : '✗'} ${summary}`, publicId: requestId, projectTitle: null,
     actors: [], actorCount: 0, read: false,
   });
+  enqueueNotif(requesterId, notification.toObject() as unknown as INotification);
   emitToUser(requesterId, 'notification:push', notification.toObject());
 }
 
@@ -148,6 +154,7 @@ export async function notifyAdminGranted(userId: string): Promise<void> {
     actorCount: 0,
     read: false,
   });
+  enqueueNotif(userId, notification.toObject() as unknown as INotification);
   emitToUser(userId, 'notification:push', notification.toObject());
 }
 
@@ -162,6 +169,7 @@ export async function notifyXpChanged(userId: string, delta: number, before: num
     publicId: null, projectTitle: null, actors: [], actorCount: 0, read: false,
     meta: { delta, before, after },
   });
+  enqueueNotif(userId, notification.toObject() as unknown as INotification);
   emitToUser(userId, 'notification:push', notification.toObject());
 }
 
@@ -175,6 +183,7 @@ export async function notifyRoleChanged(userId: string, from: string, to: string
     publicId: null, projectTitle: null, actors: [], actorCount: 0, read: false,
     meta: { from, to },
   });
+  enqueueNotif(userId, notification.toObject() as unknown as INotification);
   emitToUser(userId, 'notification:push', notification.toObject());
 }
 
@@ -186,6 +195,7 @@ export async function notifyUnban(userId: string): Promise<void> {
     body: null,
     publicId: null, projectTitle: null, actors: [], actorCount: 0, read: false,
   });
+  enqueueNotif(userId, notification.toObject() as unknown as INotification);
   emitToUser(userId, 'notification:push', notification.toObject());
 }
 
@@ -220,6 +230,7 @@ export async function createOnce(params: {
   if (!existing) {
     const notification = await Notification.findOne({ userId: userObjId, type });
     if (notification) {
+      enqueueNotif(userId, notification.toObject() as unknown as INotification);
       emitToUser(userId, 'notification:push', notification.toObject());
     }
   }
@@ -242,11 +253,11 @@ export async function listNotifications(
   userId: string
 ): Promise<{ notifications: NotificationDoc[]; unreadCount: number }> {
   const userObjId = new mongoose.Types.ObjectId(userId);
-  const [notifications, unreadCount] = await Promise.all([
-    Notification.find({ userId: userObjId }).sort({ createdAt: -1 }).limit(50).lean<NotificationDoc[]>(),
+  const [prioritized, unreadCount] = await Promise.all([
+    getPrioritizedUnread(userId, 50),
     Notification.countDocuments({ userId: userObjId, read: false }),
   ]);
-  return { notifications, unreadCount };
+  return { notifications: prioritized as unknown as NotificationDoc[], unreadCount };
 }
 
 export async function markRead(userId: string, ids: string[]): Promise<void> {
@@ -264,6 +275,20 @@ export async function markAllRead(userId: string): Promise<void> {
     { userId: new mongoose.Types.ObjectId(userId), read: false },
     { $set: { read: true } }
   );
+  clearHeap(userId);
+}
+
+// Returns prioritized unread notifications for a user. Uses the in-memory heap
+// when available (user is connected); falls back to DB if heap not loaded.
+export async function getPrioritizedUnread(
+  userId: string,
+  limit: number
+): Promise<INotification[]> {
+  const cached = peekNotifs(userId, limit)
+  if (cached.length > 0) return cached
+  // Fallback: load from DB and populate heap (e.g. REST request without socket)
+  await loadHeap(userId)
+  return peekNotifs(userId, limit)
 }
 
 export async function dismiss(userId: string, id: string): Promise<void> {

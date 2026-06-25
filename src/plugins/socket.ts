@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { setIO } from '../socket/socket.manager.js';
 import { initSocialGraph } from '../lib/social-graph.js';
+import { loadHeap, scheduleEviction, cancelEviction } from '../lib/notification-heap.js';
 import { setOnline, setOffline, isOnline, getOnlineUserIds, setActivity, clearActivity, getActivity, getUserForSocket } from '../socket/presence.js';
 import type { UserActivity } from '../socket/presence.js';
 import Follow from '../db/follow.model.js';
@@ -84,6 +85,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         const userId = socket.data.userId as string | undefined;
         if (!userId) return;
         socket.join(`user:${userId}`);
+        await loadHeap(userId);
+        cancelEviction(userId);
 
         const isNew = setOnline(userId, socket.id);
 
@@ -210,6 +213,7 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
           for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('presence:offline', { userId });
         }
         io.to('admin').emit('presence:offline', { userId });
+        scheduleEviction(userId);
       });
     });
   });
