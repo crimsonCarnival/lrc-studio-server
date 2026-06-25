@@ -28,6 +28,7 @@ import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots } f
 import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
 import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
+import { socialGraph } from '../../lib/social-graph.js';
 
 /** Input shape for updateProfile mutation */
 export interface UpdateProfileInput {
@@ -554,6 +555,7 @@ export const userResolvers = {
         if (typeof err === 'object' && err !== null && 'code' in err && (err as Record<string, unknown>).code === 11000) return true;
         throw err;
       }
+      socialGraph.addEdge(context.userId, targetId)
       // Badge: follower_count for the target
       triggerBadgeCheck(targetId, 'follow_received').catch(() => {});
       return true;
@@ -581,6 +583,7 @@ export const userResolvers = {
             { $inc: { 'social.followingCount': -1 } }
           ),
         ]);
+        socialGraph.removeEdge(context.userId, target._id.toString())
       }
       return true;
     },

@@ -3,6 +3,7 @@ import fp from 'fastify-plugin';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { setIO } from '../socket/socket.manager.js';
+import { initSocialGraph } from '../lib/social-graph.js';
 import { setOnline, setOffline, isOnline, getOnlineUserIds, setActivity, clearActivity, getActivity, getUserForSocket } from '../socket/presence.js';
 import type { UserActivity } from '../socket/presence.js';
 import Follow from '../db/follow.model.js';
@@ -72,6 +73,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.addHook('onListen', async () => {
+    await initSocialGraph()
+    fastify.log.info('Social graph initialized')
     io.on('connection', (socket) => {
       fastify.log.info({ socketId: socket.id }, 'socket connected');
 
