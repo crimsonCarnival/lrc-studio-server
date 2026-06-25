@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { setIO } from '../socket/socket.manager.js';
 import { initSocialGraph } from '../lib/social-graph.js';
+import { initRequestQueue } from '../modules/requests/request.queue.js';
 import { loadHeap, scheduleEviction, cancelEviction } from '../lib/notification-heap.js';
 import { setOnline, setOffline, isOnline, getOnlineUserIds, setActivity, clearActivity, getActivity, getUserForSocket } from '../socket/presence.js';
 import type { UserActivity } from '../socket/presence.js';
@@ -76,6 +77,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.addHook('onListen', async () => {
     await initSocialGraph();
     fastify.log.info('Social graph initialized');
+    await initRequestQueue();
+    fastify.log.info('Request queue initialized');
     io.on('connection', (socket) => {
       fastify.log.info({ socketId: socket.id }, 'socket connected');
 

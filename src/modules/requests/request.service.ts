@@ -7,6 +7,7 @@ import * as adminService from '../admin/admin.service.js';
 import { createBadgeDef, updateBadgeDef, deleteBadgeDef } from '../badges/badge.service.js';
 import { createLevel, updateLevel, deleteLevel } from '../stats/addiction-level.service.js';
 import { notifyRequestSubmitted, notifyRequestReviewed } from '../notifications/notifications.service.js';
+import { enqueueRequest, removeRequest, getPendingRequests } from './request.queue.js';
 
 type Payload = Record<string, unknown>;
 interface Reviewer { userId: string; ip?: string }
@@ -124,6 +125,8 @@ export async function createRequest(
     status: 'pending',
   });
 
+  enqueueRequest(doc);
+
   // Notify everyone who can review this type (holds the reviewer permission).
   const reviewers = await User.find({
     isDeleted: { $ne: true },
@@ -145,8 +148,16 @@ export async function listMyRequests(userId: string): Promise<IStaffRequest[]> {
 export async function listPendingForReviewer(permissions: string[]): Promise<IStaffRequest[]> {
   const types = reviewableTypes(permissions);
   if (types.length === 0) return [];
-  return StaffRequest.find({ status: 'pending', type: { $in: types } })
-    .sort({ createdAt: 1 }).limit(200).lean<IStaffRequest[]>();
+  const typeSet = new Set<string>(types);
+  // Use the in-memory PQ for priority ordering; filter by reviewable types in-memory.
+  const ordered = getPendingRequests().filter(r => typeSet.has(r.type));
+  // Cap at 200 to match previous DB query behaviour.
+  return ordered.slice(0, 200);
+}
+
+/** Returns all pending requests in priority order for admin callers (no type filter). */
+export function getOrderedPendingRequests(): IStaffRequest[] {
+  return getPendingRequests();
 }
 
 /** Requests this reviewer has already approved/rejected — their decision history. */
@@ -212,6 +223,8 @@ export async function reviewRequest(
   req.decisionNote = note ?? null;
   req.resolvedAt = new Date();
   await req.save();
+
+  removeRequest(req._id.toString());
 
   notifyRequestReviewed(req.issuer.id.toString(), req._id.toString(), req.summary, decision === 'approve').catch(() => {});
   return req;
