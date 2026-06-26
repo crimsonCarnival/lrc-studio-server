@@ -3,6 +3,7 @@ import Block from '../../db/block.model.js';
 import Follow from '../../db/follow.model.js';
 import User, { type IUser } from '../../db/user.model.js';
 import { getCachedBlockedSet, invalidateBlockCache } from './block-list.cache.js';
+import { socialGraph } from '../../lib/social-graph.js';
 
 const oid = (id: string) => new mongoose.Types.ObjectId(id);
 
@@ -46,6 +47,8 @@ export async function blockUser(blockerId: string, blockedId: string): Promise<v
     removeFollowEdge(blocker, blocked),
     removeFollowEdge(blocked, blocker),
   ]);
+  socialGraph.removeEdge(blockerId, blockedId);
+  socialGraph.removeEdge(blockedId, blockerId);
 }
 
 export async function unblockUser(blockerId: string, blockedId: string): Promise<void> {

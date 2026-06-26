@@ -25,9 +25,15 @@ async function drain(): Promise<void> {
       console.warn(`[fan-out] queue size ${queue.size} exceeds ${OVERFLOW_WARN} — consider a job queue`);
     }
     const job = queue.dequeue()!;
-    const batch = job.followerIds.slice(0, BATCH_SIZE);
-    for (const followerId of batch) {
-      emit(followerId, job.activity);
+    const { followerIds, activity } = job;
+    for (let i = 0; i < followerIds.length; i += BATCH_SIZE) {
+      const chunk = followerIds.slice(i, i + BATCH_SIZE);
+      for (const followerId of chunk) {
+        emit(followerId, activity);
+      }
+      if (i + BATCH_SIZE < followerIds.length) {
+        await new Promise(r => setImmediate(r));
+      }
     }
     // yield to event loop between jobs
     await new Promise(r => setImmediate(r));
