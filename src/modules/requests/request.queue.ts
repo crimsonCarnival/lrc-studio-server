@@ -37,6 +37,7 @@ export function enqueueRequest(req: IStaffRequest): void {
 /**
  * Returns all pending requests in priority order (urgency asc, then insertion order).
  * Does NOT drain the queue — safe to call repeatedly.
+ * O(n log n) rebuild — acceptable at staff-request volume (typically <20 pending)
  */
 export function getPendingRequests(): IStaffRequest[] {
   // toArray() returns internal heap order (not priority order).
@@ -56,6 +57,7 @@ export function getPendingRequests(): IStaffRequest[] {
 /**
  * Removes the request with the given MongoDB _id from the in-memory queue.
  * Uses rebuild approach since PriorityQueue has no cancel method.
+ * O(n log n) rebuild — acceptable at staff-request volume (typically <20 pending)
  */
 export function removeRequest(id: string): void {
   const remaining = pq.toArray().filter(r => r._id?.toString() !== id)

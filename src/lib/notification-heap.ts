@@ -15,7 +15,11 @@ const PRIORITY: Record<string, number> = {
 const comparator = (a: INotification, b: INotification): number => {
   const pa = PRIORITY[a.type] ?? 5
   const pb = PRIORITY[b.type] ?? 5
-  return pa - pb
+  if (pa !== pb) return pa - pb
+  // same tier → most recent first
+  const ta = a.createdAt.getTime()
+  const tb = b.createdAt.getTime()
+  return tb - ta
 }
 
 const heaps = new Map<string, PriorityQueue<INotification>>()
