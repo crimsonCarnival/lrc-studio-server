@@ -668,6 +668,13 @@ export const userResolvers = {
         throw new Error('Maximum 3 mini profile badges allowed');
       }
 
+      if (input.miniProfileBadgeIds !== undefined) {
+        const user = await User.findById(context.userId).select('badges').lean<IUser>();
+        if (!user) throw new Error('User not found');
+        const ownedIds = new Set((user.badges ?? []).map((b: IUserBadge) => b.id));
+        input.miniProfileBadgeIds = (input.miniProfileBadgeIds as string[]).filter(id => ownedIds.has(id));
+      }
+
       return updatePreferences(context.userId, input as Partial<IUserPreferences>);
     },
   },
