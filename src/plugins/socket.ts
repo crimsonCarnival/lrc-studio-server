@@ -13,6 +13,7 @@ import User from '../db/user.model.js';
 import type { IUser } from '../db/user.model.js';
 import { hasPermission } from '../shared/permissions.js';
 import mongoose from 'mongoose';
+import { getPreferences } from '../modules/user-preferences/user-preferences.service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 
@@ -93,20 +94,23 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
 
         const isNew = setOnline(userId, socket.id);
 
+        // Load from LRU cache — near-zero cost on cache hit
+        const prefs = await getPreferences(userId);
+
         const mutualIds = await getMutualFollowIds(userId);
 
-        if (isNew) {
+        if (isNew && prefs.onlineVisibility !== 'nobody') {
           // Notify mutual friends + admin room that this user came online
-          // TODO Task 4: gate on UserPreferences.onlineVisibility
           for (const friendId of mutualIds) {
             io.to(`user:${friendId}`).emit('presence:online', { userId });
           }
           io.to('admin').emit('presence:online', { userId });
         }
 
-        // Send the connecting socket the list of online mutual friends visible to them
+        // Send the connecting socket the list of online mutual friends visible to them.
+        // The socket room model limits recipients to mutuals in all cases; 'nobody' only
+        // suppresses this user's own visibility, not what they can see of others.
         const onlineFriendIds = mutualIds.filter(fid => isOnline(fid));
-        // TODO Task 4: filter by UserPreferences.onlineVisibility per friend
         const visibleFriendIds = onlineFriendIds;
 
         const activities: Record<string, UserActivity> = {};
@@ -149,8 +153,10 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         };
         setActivity(userId, activity);
 
+        const actPrefs = await getPreferences(userId);
+        if (actPrefs.onlineVisibility === 'nobody') return;
+
         const mutualIds = await getMutualFollowIds(userId);
-        // TODO Task 4: gate on UserPreferences.onlineVisibility per user
         const event = { userId, activity };
         for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('activity:update', event);
         io.to('admin').emit('activity:update', event);
@@ -162,8 +168,10 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
 
         clearActivity(userId);
 
+        const clearPrefs = await getPreferences(userId);
+        if (clearPrefs.onlineVisibility === 'nobody') return;
+
         const mutualIds = await getMutualFollowIds(userId);
-        // TODO Task 4: gate on UserPreferences.onlineVisibility per user
         const event = { userId };
         for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('activity:clear', event);
         io.to('admin').emit('activity:clear', event);
@@ -186,10 +194,12 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         if (!result?.lastSocket) return;
 
         const { userId } = result;
-        const mutualIds = await getMutualFollowIds(userId);
-        // TODO Task 4: gate on UserPreferences.onlineVisibility per user
-        for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('presence:offline', { userId });
-        io.to('admin').emit('presence:offline', { userId });
+        const disconnectPrefs = await getPreferences(userId);
+        if (disconnectPrefs.onlineVisibility !== 'nobody') {
+          const mutualIds = await getMutualFollowIds(userId);
+          for (const friendId of mutualIds) io.to(`user:${friendId}`).emit('presence:offline', { userId });
+          io.to('admin').emit('presence:offline', { userId });
+        }
         scheduleEviction(userId);
       });
     });

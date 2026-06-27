@@ -9,6 +9,7 @@ import type { IBadgeDefinition } from './badge-definition.model.js';
 import Notification from '../notifications/notification.model.js';
 import XPEvent, { type IXPEvent } from '../progression/xp-event.model.js';
 import { getIO } from '../../socket/socket.manager.js';
+import { getPreferences } from '../user-preferences/user-preferences.service.js';
 
 // ─── Builtin seed data ────────────────────────────────────────────────────────
 
@@ -644,6 +645,9 @@ export async function updateShowcase(
 // ─── Notification helper ──────────────────────────────────────────────────────
 
 async function notifyBadgeAwarded(userId: string, badgeId: string): Promise<void> {
+  const prefs = await getPreferences(userId);
+  if (!prefs.notifications.badge_awarded) return;
+
   const notification = await Notification.create({
     userId: new mongoose.Types.ObjectId(userId),
     type: 'badge_awarded',

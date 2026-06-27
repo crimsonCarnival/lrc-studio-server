@@ -4,6 +4,7 @@ import Notification, { type INotification, type NotificationType } from './notif
 import { getIO } from '../../socket/socket.manager.js';
 import Follow from '../../db/follow.model.js';
 import { enqueueNotif, peekNotifs, loadHeap, clearHeap } from '../../lib/notification-heap.js';
+import { getPreferences } from '../user-preferences/user-preferences.service.js';
 
 export type NotificationDoc = FlattenMaps<INotification> & { _id: mongoose.Types.ObjectId };
 
@@ -24,6 +25,10 @@ export interface UpsertSocialParams {
 export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
   const { ownerId, type, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl } = params;
   if (ownerId === actorId) return;
+
+  const prefs = await getPreferences(ownerId);
+  const prefKey = type as keyof typeof prefs.notifications;
+  if (prefs.notifications[prefKey] === false) return;
 
   const actor = {
     userId: new mongoose.Types.ObjectId(actorId),
@@ -62,6 +67,9 @@ export async function upsertReaction(params: UpsertReactionParams): Promise<void
   const { ownerId, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl, emoji } = params;
   if (ownerId === actorId) return;
 
+  const prefs = await getPreferences(ownerId);
+  if (!prefs.notifications.reaction) return;
+
   const actor = { userId: new mongoose.Types.ObjectId(actorId), accountName: actorAccountName, avatarUrl: actorAvatarUrl };
 
   const notification = await Notification.findOneAndUpdate(
@@ -89,6 +97,9 @@ export interface UpsertFollowParams {
 export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
   const { ownerId, actorId, actorAccountName, actorAvatarUrl } = params;
   if (ownerId === actorId) return;
+
+  const prefs = await getPreferences(ownerId);
+  if (!prefs.notifications.follow) return;
 
   const actor = {
     userId: new mongoose.Types.ObjectId(actorId),
@@ -161,6 +172,9 @@ export async function notifyAdminGranted(userId: string): Promise<void> {
 // Admin XP grant/revoke applied to a user. `meta` carries before -> after so
 // the client can render the change without a reload.
 export async function notifyXpChanged(userId: string, delta: number, before: number, after: number): Promise<void> {
+  const prefs = await getPreferences(userId);
+  if (!prefs.notifications.xp_changed) return;
+
   const notification = await Notification.create({
     userId: new mongoose.Types.ObjectId(userId),
     type: 'xp_changed',
