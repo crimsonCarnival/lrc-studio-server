@@ -324,7 +324,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
   const publicIds: string[] = userProjects.map((p) => p.publicId);
 
   if (publicIds.length === 0) {
-    await User.updateOne({ _id: userId }, { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0 });
+    await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0 } });
     return { minutesSynced: 0, secondsSynced: 0, wordsSynced: 0, karaokeLines: 0 };
   }
 
@@ -395,7 +395,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
   const wordsSynced = wordAgg[0]?.total ?? 0;
   const karaokeLines = karaokeAgg[0]?.total ?? 0;
 
-  await User.updateOne({ _id: userId }, { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines });
+  await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines } });
   return { minutesSynced, secondsSynced, wordsSynced, karaokeLines };
 }
 

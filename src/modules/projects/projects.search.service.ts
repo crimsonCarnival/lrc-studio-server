@@ -1,5 +1,5 @@
 import Project from './project.model.js';
-import type { PipelineStage } from 'mongoose';
+import mongoose, { PipelineStage } from 'mongoose';
 
 export type SearchSort = 'RELEVANCE' | 'STARS' | 'NEWEST';
 
@@ -17,7 +17,18 @@ async function searchWithAtlas(
   sortBy: SearchSort,
   offset: number,
   limit: number,
+  userId?: string
 ): Promise<{ projects: unknown[]; total: number }> {
+  const filterClause: Record<string, unknown>[] = userId ? [
+    {
+      should: [
+        { equals: { path: 'public', value: true } },
+        { equals: { path: 'userId', value: new mongoose.Types.ObjectId(userId) } }
+      ],
+      minimumShouldMatch: 1
+    }
+  ] : [{ equals: { path: 'public', value: true } }];
+
   const searchStage = {
     $search: {
       index: 'projects_search',
@@ -29,7 +40,7 @@ async function searchWithAtlas(
             fuzzy: { maxEdits: 1 },
           },
         }],
-        filter: [{ equals: { path: 'public', value: true } }],
+        filter: filterClause,
       },
     },
   };
@@ -61,20 +72,30 @@ async function searchWithRegex(
   sortBy: SearchSort,
   offset: number,
   limit: number,
+  userId?: string
 ): Promise<{ projects: unknown[]; total: number }> {
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const regex = new RegExp(escaped, 'i');
 
   const filter = {
-    public: true,
-    $or: [
-      { title: regex },
-      { 'metadata.songName': regex },
-      { 'metadata.songArtist': regex },
-      { 'metadata.songAlbum': regex },
-      { 'metadata.description': regex },
-      { 'metadata.tags': regex },
-    ],
+    $and: [
+      {
+        $or: [
+          { public: true },
+          ...(userId ? [{ userId: new mongoose.Types.ObjectId(userId) }] : [])
+        ]
+      },
+      {
+        $or: [
+          { title: regex },
+          { 'metadata.songName': regex },
+          { 'metadata.songArtist': regex },
+          { 'metadata.songAlbum': regex },
+          { 'metadata.description': regex },
+          { 'metadata.tags': regex },
+        ]
+      }
+    ]
   };
 
   const sortField: Record<string, 1 | -1> =
@@ -94,11 +115,12 @@ export async function searchProjects(
   query: string,
   sortBy: SearchSort = 'RELEVANCE',
   offset: number = 0,
-  limit: number = 20
+  limit: number = 20,
+  userId?: string
 ): Promise<{ projects: unknown[]; total: number }> {
   try {
-    return await searchWithAtlas(query, sortBy, offset, limit);
+    return await searchWithAtlas(query, sortBy, offset, limit, userId);
   } catch {
-    return searchWithRegex(query, sortBy, offset, limit);
+    return searchWithRegex(query, sortBy, offset, limit, userId);
   }
 }

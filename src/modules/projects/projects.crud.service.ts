@@ -9,7 +9,7 @@ import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
 import { writeActivity } from '../activity/activity.service.js';
-
+import { recomputeSyncStats, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
   _id: mongoose.Types.ObjectId;
@@ -386,6 +386,13 @@ export async function updateProject(
     metadata: { publicId, fieldsUpdated: Object.keys(projectUpdate) },
   });
 
+  if (lyrics !== undefined && userId) {
+    Promise.all([
+      recomputeSyncStats(userId),
+      updateStreak(userId),
+    ]).then(() => triggerBadgeCheck(userId, 'sync_update')).catch(() => {});
+  }
+
   return { project: pub as unknown as ProjectPublic };
 }
 
@@ -482,6 +489,13 @@ export async function patchProject(
       projectTitle: updatedProject?.title || '',
       coverImage:   updatedProject?.coverImage || '',
     }).catch(() => {});
+  }
+
+  if (data.lyrics !== undefined && userId) {
+    Promise.all([
+      recomputeSyncStats(userId),
+      updateStreak(userId),
+    ]).then(() => triggerBadgeCheck(userId, 'sync_update')).catch(() => {});
   }
 
   return { project: pub as unknown as ProjectPublic };

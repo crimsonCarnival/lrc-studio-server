@@ -78,7 +78,7 @@ export const projectResolvers = {
       context: Context
     ) => {
       if (!query.trim()) return { projects: [], total: 0 };
-      const result = await searchProjectsService(query, sortBy as SearchSort, offset, Math.min(limit, 50));
+      const result = await searchProjectsService(query, sortBy as SearchSort, offset, Math.min(limit, 50), context.userId ?? undefined);
       if (!context.userId) return result;
       const blockedSet = await getBlockedSet(context.userId);
       if (blockedSet.size === 0) return result;
