@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CookieSerializeOptions } from '@fastify/cookie';
 import * as authService from './auth.service.js';
+import { consumeOtt } from './ott.service.js';
 import type { UpdateProfileData } from './auth.service.js';
 import { requestPasswordReset, validateResetToken, resetPassword, changePassword as changePasswordService, PasswordResetError } from '../password-reset/password-reset.service.js';
 import { resendVerification, verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
@@ -512,4 +513,28 @@ export async function deactivate(req: FastifyRequest, reply: FastifyReply): Prom
   }
   clearAuthCookies(reply);
   return reply.send({ success: true });
+}
+
+/**
+ * POST /auth/exchange-ott
+ *
+ * Consumes a one-time token minted by the Google OAuth callback and sets the
+ * auth cookies on this response. Because the client calls this through the
+ * Vercel /api proxy (same origin as the frontend), the browser correctly scopes
+ * the cookies to lrc-studio.vercel.app, solving the cross-domain cookie
+ * isolation problem.
+ *
+ * The OTT is single-use and expires after 60 seconds.
+ */
+export async function exchangeOtt(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { ott } = req.body as { ott?: string };
+  if (!ott || typeof ott !== 'string' || ott.trim().length === 0) {
+    return reply.code(400).send({ error: 'ott_required' });
+  }
+  const tokens = consumeOtt(ott.trim());
+  if (!tokens) {
+    return reply.code(400).send({ error: 'ott_invalid_or_expired' });
+  }
+  setAuthCookies(reply, tokens);
+  return reply.send({ ok: true });
 }

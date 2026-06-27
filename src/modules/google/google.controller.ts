@@ -3,16 +3,17 @@ import * as googleService from './google.service.js';
 import * as authService from '../auth/auth.service.js';
 import { getEnv } from '../../config/env.js';
 import { jwtTools } from '../../plugins/auth.js';
+import { createOtt } from '../auth/ott.service.js';
 
-function callbackHtml(success: boolean, error?: string | null, appOrigin?: string | null): string {
-  const payload = { type: 'google-callback', success, error: error || null };
+function callbackHtml(success: boolean, error?: string | null, appOrigin?: string | null, ott?: string | null): string {
+  const payload = { type: 'google-callback', success, error: error || null, ott: ott || null };
   const payloadStr = JSON.stringify(payload).replace(/</g, '\\u003c');
   // Use the origin the client passed in state; fall back to primary APP_URL.
   // Avoids '*' wildcard while supporting both dev and prod origins in the same deployment.
   const target = JSON.stringify(appOrigin || getEnv().APP_URL);
   const redirectBase = appOrigin || getEnv().APP_URL;
   const redirectUrl = success
-    ? `${redirectBase}/auth/signin?gcb=success`
+    ? `${redirectBase}/auth/signin?gcb=success${ott ? `&ott=${encodeURIComponent(ott)}` : ''}`
     : `${redirectBase}/auth/signin?gcb=error&gcb_msg=${encodeURIComponent(error || 'OAuth failed')}`;
   return `<!DOCTYPE html><html><head><title>Google</title></head><body>
 <script>
@@ -103,7 +104,9 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
       return reply.code(400).type('text/html').send(callbackHtml(false, 'wrong_account', appOrigin));
     }
 
-    // Get tokens and set cookies
+    // Get tokens and create an OTT instead of setting cookies directly.
+    // The client will exchange the OTT via POST /auth/exchange-ott, which goes
+    // through the Vercel proxy — ensuring cookies are scoped to the frontend domain.
     const userId = (result as Record<string, unknown>).userId as string;
     const deviceId = (statePayload.deviceId as string | undefined) || 'unknown';
     const userAgent = (req.headers['user-agent'] as string) || '';
@@ -116,18 +119,12 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
       return reply.code(500).type('text/html').send(callbackHtml(false, (tokensResult?.error as string) || 'Failed to create session', appOrigin));
     }
 
-    const cookieOpts = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' as const : 'lax' as const,
-      path: '/',
-      maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
-    };
+    const ott = createOtt({
+      accessToken: tokensResult.accessToken as string,
+      refreshToken: tokensResult.refreshToken as string,
+    });
 
-    reply.setCookie('accessToken', tokensResult.accessToken as string, cookieOpts);
-    reply.setCookie('refreshToken', tokensResult.refreshToken as string, cookieOpts);
-
-    return reply.type('text/html').send(callbackHtml(true, null, appOrigin));
+    return reply.type('text/html').send(callbackHtml(true, null, appOrigin, ott));
   }
 
   return reply.code(400).type('text/html').send(callbackHtml(false, 'Invalid action', appOrigin));

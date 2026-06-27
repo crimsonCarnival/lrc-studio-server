@@ -59,4 +59,8 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.delete('/passkeys/:id', { preHandler: [fastify.requireAuth] }, authController.deletePasskey);
 
   fastify.post('/deactivate', { preHandler: [fastify.requireAuth] }, authController.deactivate);
+
+  // Google OAuth one-time token exchange — public, lightly rate-limited.
+  // The OTT is the credential; no auth cookie is required to call this.
+  fastify.post('/exchange-ott', { config: { rateLimit: { max: 20, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } }, authController.exchangeOtt);
 }
