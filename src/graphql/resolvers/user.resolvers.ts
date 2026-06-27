@@ -254,7 +254,8 @@ export const userResolvers = {
       };
     },
 
-    badgeDefinitions: async () => {
+    badgeDefinitions: async (_root: unknown, _args: unknown, context: Context) => {
+      await requirePermission(context, 'badges.manage');
       const defs = await BadgeDefinition.find().lean<IBadgeDefinition[]>();
       const [totalUsers, holderCounts] = await Promise.all([
         User.countDocuments({ isDeleted: { $ne: true } }),
