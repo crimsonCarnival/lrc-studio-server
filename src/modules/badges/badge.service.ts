@@ -460,17 +460,19 @@ export async function recomputeSyncStats(userId: string): Promise<{
           $or: [
             { 'allLines.timestamp': { $ne: null } },
             {
-              $gt: [
-                {
-                  $size: {
-                    $filter: {
-                      input: { $ifNull: ['$allLines.words', []] },
-                      cond: { $ne: ['$$this.time', null] },
+              $expr: {
+                $gt: [
+                  {
+                    $size: {
+                      $filter: {
+                        input: { $ifNull: ['$allLines.words', []] },
+                        cond: { $ne: ['$$this.time', null] },
+                      },
                     },
                   },
-                },
-                0,
-              ],
+                  0,
+                ],
+              }
             }
           ]
         }
