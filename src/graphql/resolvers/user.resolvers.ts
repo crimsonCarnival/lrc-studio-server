@@ -219,7 +219,7 @@ export const userResolvers = {
       const cap = Math.min(limit, 50);
       const [users, total] = await Promise.all([
         User.find({ isDeleted: { $ne: true } })
-          .sort({ 'stats.minutesSynced': -1 })
+          .sort({ 'stats.minutesSynced': -1, 'stats.secondsSynced': -1, 'stats.syncedLines': -1 })
           .skip(offset)
           .limit(cap + 1)
           .select('_id accountName displayName avatarUrl badges stats streak progression social')
