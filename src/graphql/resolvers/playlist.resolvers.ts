@@ -10,8 +10,8 @@ import { Context } from './context.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 
 type LeanPlaylist = IPlaylist & { _id: mongoose.Types.ObjectId };
+type LeanProject = IProject & { _id: mongoose.Types.ObjectId; publicId: string };
 type LeanUser = IUser & { _id: mongoose.Types.ObjectId };
-type LeanProject = IProject & { _id: mongoose.Types.ObjectId };
 
 export interface PlaylistInput {
   name?: string;
@@ -121,14 +121,14 @@ export const playlistResolvers = {
       let objectIds: mongoose.Types.ObjectId[] = [];
       if (input.publicIds?.length) {
         const projects = await Project.find({ publicId: { $in: input.publicIds } })
-          .select('_id publicId userId public')
-          .lean<{ _id: mongoose.Types.ObjectId, publicId: string, userId: mongoose.Types.ObjectId, public: boolean }[]>();
+          .select('_id userId public publicId')
+          .lean<{ _id: mongoose.Types.ObjectId, userId: mongoose.Types.ObjectId, public: boolean, publicId: string }[]>();
         
         const validProjects = projects.filter(p => p.public || p.userId?.toString() === context.userId);
         if (validProjects.length !== input.publicIds.length) throw new Error('forbidden');
         
-        const projectMap = new Map(projects.map((p) => [p.publicId, p._id]));
-        objectIds = input.publicIds.map((id: string) => projectMap.get(id)).filter((id): id is mongoose.Types.ObjectId => id !== undefined);
+        const projectMap = new Map(projects.map(p => [p.publicId, p._id]));
+        objectIds = input.publicIds.map((id: string) => projectMap.get(id)).filter((id): id is mongoose.Types.ObjectId => Boolean(id));
       }
       const playlist = await Playlist.create({
         userId: context.userId,
@@ -241,12 +241,12 @@ export const playlistResolvers = {
       if (publicIds.length !== playlist.publicIds.length) throw new Error('bad_request');
       const currentSet = new Set(playlist.publicIds.map(id => id.toString()));
       const submittedProjects = await Project.find({ publicId: { $in: publicIds } }).select('_id publicId').lean<{ _id: mongoose.Types.ObjectId, publicId: string }[]>();
-      const submittedSet = new Set(submittedProjects.map((p) => p._id.toString()));
+      const submittedSet = new Set(submittedProjects.map(p => p._id.toString()));
       const setsMatch =
         currentSet.size === submittedSet.size && [...currentSet].every(id => submittedSet.has(id));
       if (!setsMatch) throw new Error('bad_request');
-      const projectMap = new Map(submittedProjects.map((p) => [p.publicId, p._id] as [string, mongoose.Types.ObjectId]));
-      playlist.publicIds = publicIds.map(id => projectMap.get(id)).filter((id): id is mongoose.Types.ObjectId => id !== undefined);
+      const projectMap = new Map(submittedProjects.map(p => [p.publicId, p._id]));
+      playlist.publicIds = publicIds.map(id => projectMap.get(id)).filter((id): id is mongoose.Types.ObjectId => Boolean(id));
       await playlist.save();
       return formatPlaylist(playlist.toObject() as LeanPlaylist, context);
     },

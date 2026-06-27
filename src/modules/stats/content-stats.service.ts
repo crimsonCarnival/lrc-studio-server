@@ -46,6 +46,7 @@ export async function getUserContentStats(userId: string): Promise<ContentStats>
   const musicSyncedSeconds = user.stats?.secondsSynced ?? 0;
   const wordsTimestamped   = user.stats?.wordsSynced ?? 0;
   const karaokeLines_      = user.stats?.karaokeLines ?? 0;
+  const cachedSyncedLines  = user.stats?.syncedLines ?? null;  // use cache if available
   const starsReceived      = user.social?.totalStarsReceived ?? 0;
 
   const heatmap = await getUserActivityHeatmap(userId);
@@ -155,7 +156,7 @@ export async function getUserContentStats(userId: string): Promise<ContentStats>
   const lyricsBypublicId = new Map(lyrics.map(l => [l.publicId, l]));
 
   let totalLines = 0;
-  let syncedLines = 0;
+  let localSyncedLines = 0;
   let fullySyncedProjects = 0;
   let completionSum = 0;
   let projectsWithLines = 0;
@@ -170,7 +171,7 @@ export async function getUserContentStats(userId: string): Promise<ContentStats>
     const projectSyncedLines = countSyncedLines(lyric);
 
     totalLines += projectTotalLines;
-    syncedLines += projectSyncedLines;
+    localSyncedLines += projectSyncedLines;
 
     if (projectTotalLines > 0 && projectSyncedLines === projectTotalLines) {
       fullySyncedProjects++;
@@ -198,7 +199,11 @@ export async function getUserContentStats(userId: string): Promise<ContentStats>
     }
   }
 
-  const completionPercentage = totalLines > 0 ? Math.round((syncedLines / totalLines) * 100) : 0;
+  // Prefer the pre-computed cached value (which also counts karaoke-synced lines);
+  // fall back to the locally computed count if the cache hasn't been populated yet.
+  const syncedLines = cachedSyncedLines ?? localSyncedLines;
+
+  const completionPercentage = totalLines > 0 ? Math.round((localSyncedLines / totalLines) * 100) : 0;
   const averageProjectCompletion = projectsWithLines > 0 ? Math.round((completionSum / projectsWithLines) * 100) : 0;
   const averageLinesPerProject = totalProjects > 0 ? Math.round(totalLines / totalProjects) : 0;
 

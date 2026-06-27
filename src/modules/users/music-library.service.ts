@@ -18,17 +18,18 @@ export async function upsertMusicLibraryEntry(
   const album = (entry.album || '').trim();
   if (!artist && !album) return;
 
-  const user = await User.findById(userId).select('musicLibrary').lean() as any;
+  interface LibraryEntry { artist?: string; album?: string; genre?: string; language?: string; trackCount?: number | null; updatedAt?: Date; }
+  const user = await User.findById(userId).select('musicLibrary').lean() as { musicLibrary?: LibraryEntry[] } | null;
   if (!user) return;
 
-  const library: any[] = user.musicLibrary ?? [];
+  const library: LibraryEntry[] = user.musicLibrary ?? [];
   const idx = library.findIndex(
     (e) =>
       e.artist?.toLowerCase() === artist.toLowerCase() &&
       e.album?.toLowerCase() === album.toLowerCase()
   );
 
-  let newLibrary: any[];
+  let newLibrary: LibraryEntry[];
 
   if (idx >= 0) {
     const existing = library[idx];
@@ -43,7 +44,7 @@ export async function upsertMusicLibraryEntry(
     newLibrary = [...library.slice(0, idx), ...library.slice(idx + 1), updated];
   } else {
     const base = library.length >= MAX_ENTRIES
-      ? [...library].sort((a, b) => +new Date(a.updatedAt) - +new Date(b.updatedAt)).slice(1)
+      ? [...library].sort((a, b) => +new Date(a.updatedAt || 0) - +new Date(b.updatedAt || 0)).slice(1)
       : library;
     newLibrary = [
       ...base,

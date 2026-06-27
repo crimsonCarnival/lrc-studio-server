@@ -455,12 +455,11 @@ export async function recomputeSyncStats(userId: string): Promise<{
         }
       },
       { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
-      {
-        $match: {
-          $or: [
-            { 'allLines.timestamp': { $ne: null } },
-            {
-              $expr: {
+      { $match: {
+          $expr: {
+            $or: [
+              { $ne: ['$allLines.timestamp', null] },
+              {
                 $gt: [
                   {
                     $size: {
@@ -472,10 +471,10 @@ export async function recomputeSyncStats(userId: string): Promise<{
                   },
                   0,
                 ],
-              }
-            }
-          ]
-        }
+              },
+            ],
+          },
+        },
       },
       { $count: 'total' },
     ]),
