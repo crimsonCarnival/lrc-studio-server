@@ -13,7 +13,7 @@ interface UserLean {
   avatarUrl?: string | null;
 }
 
-const ACTIVE_USER_FILTER = { isDeleted: { $ne: true }, 'ban.active': { $ne: true } };
+const ACTIVE_USER_FILTER = { isDeleted: { $ne: true }, 'ban.active': { $ne: true }, 'shadowBan.search': { $ne: true } };
 
 export async function getTrendingProjects(offset: number, limit: number, viewerId?: string) {
   const blockedSet = await getBlockedSet(viewerId);

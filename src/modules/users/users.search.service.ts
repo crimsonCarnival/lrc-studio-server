@@ -8,6 +8,7 @@ export async function searchUsers(query: string, limit = 10) {
   const users = await User.find({
     isDeleted: { $ne: true },
     'ban.active': { $ne: true },
+    'shadowBan.search': { $ne: true },
     $or: [{ accountName: regex }, { displayName: regex }],
   })
     .select('accountName displayName avatarUrl')

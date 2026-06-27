@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Activity, { type ActivityType } from '../../db/activity.model.js';
 import Follow from '../../db/follow.model.js';
+import User from '../../db/user.model.js';
 import { enqueueFanOut } from './fan-out.queue.js';
 
 export interface WriteActivityParams {
@@ -51,7 +52,16 @@ export async function getFeed(
   if (following.length === 0) return { activities: [], hasMore: false };
 
   const actorIds = following.map(f => f.followingId);
-  const items = await Activity.find({ actorId: { $in: actorIds } })
+
+  // Exclude actors who are shadow-banned from feed
+  const shadowBannedIds = await User.find(
+    { _id: { $in: actorIds }, 'shadowBan.feed': true },
+    '_id'
+  ).lean().then(docs => new Set(docs.map(d => d._id.toString())));
+
+  const filteredActorIds = actorIds.filter(id => !shadowBannedIds.has(id.toString()));
+
+  const items = await Activity.find({ actorId: { $in: filteredActorIds } })
     .sort({ createdAt: -1 })
     .skip(offset)
     .limit(limit + 1)
