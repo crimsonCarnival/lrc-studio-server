@@ -656,13 +656,13 @@ export const userResolvers = {
 
     adminShadowBan: async (_root: unknown, { userId, feed, search, reason }: { userId: string; feed: boolean; search: boolean; reason?: string | null }, context: Context) => {
       const { userId: adminId } = await requirePermission(context, 'users.shadowban');
-      const result = await toggleShadowBan(userId, feed, search, reason ?? null, adminId);
+      const result = await toggleShadowBan(userId, feed, search, reason ?? null, adminId, context.ip);
       return result.success === true;
     },
 
     adminUnshadowBan: async (_root: unknown, { userId }: { userId: string }, context: Context) => {
       const { userId: adminId } = await requirePermission(context, 'users.shadowban');
-      const result = await toggleShadowBan(userId, false, false, null, adminId);
+      const result = await toggleShadowBan(userId, false, false, null, adminId, context.ip);
       return result.success === true;
     },
 

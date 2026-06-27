@@ -30,7 +30,7 @@ const notifPrefsSchema = new mongoose.Schema<INotificationPrefs>({
 const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   userId:                   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true, index: true },
   showFollowers:            { type: Boolean, default: true },
-  onlineVisibility:         { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'everyone' },
+  onlineVisibility:         { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'friends' },
   miniProfileBadgesEnabled: { type: Boolean, default: true },
   miniProfileBadgeIds:      { type: [String], default: [] },
   notifications:            { type: notifPrefsSchema, default: () => ({}) },
