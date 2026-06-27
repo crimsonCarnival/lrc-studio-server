@@ -117,9 +117,12 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     try {
       const decoded = verifyToken(token) as JwtPayload;
       const user = await getOrFetchUser(request, decoded.sub);
-      if (!user || user.deletedAt || user.ban?.active) return;
+      if (!user || user.deletedAt) return;
       await user.checkBanStatus();
-      if (user.ban?.active) return;
+      if (user.ban?.active) {
+        (request as FastifyRequest & { bannedUserId?: string }).bannedUserId = decoded.sub;
+        return;
+      }
       request.userId = decoded.sub;
     } catch (err: unknown) {
       // Expired token: treat as anonymous but flag it so resolvers can surface

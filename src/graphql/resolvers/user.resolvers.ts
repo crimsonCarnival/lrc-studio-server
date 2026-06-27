@@ -71,8 +71,9 @@ async function isSelfOrAdmin(user: IUser, context: Context): Promise<boolean> {
 export const userResolvers = {
   Query: {
     me: async (_root: unknown, _args: Record<string, unknown>, context: Context) => {
-      if (!context.userId) return null;
-      const user = await User.findById(context.userId);
+      const uid = context.userId || context.bannedUserId;
+      if (!uid) return null;
+      const user = await User.findById(uid);
       if (!user) return null;
       const wasJustUnbanned = await user.checkBanStatus();
       const pub = user.toPublic();

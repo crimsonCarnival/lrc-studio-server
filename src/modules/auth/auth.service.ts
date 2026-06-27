@@ -289,8 +289,10 @@ export async function login(
 
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
 
+  // Clear any expired bans before issuing tokens.
+  // We intentionally do NOT block banned users here — they receive tokens so
+  // the frontend can detect ban.active and render the BannedScreen + appeal form.
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const ipChanged = ip && user.lastIp !== ip;
   if (ipChanged) user.lastIp = ip;
@@ -332,7 +334,6 @@ export async function loginByUserId(
   if (!user || user.isDeleted) return err('user_not_found', 404);
 
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const { accessToken, refreshToken } = await loginAtomically(
     user,
@@ -370,9 +371,6 @@ export async function checkIdentifier(
   if (!user) return err('identifier_not_found', 404);
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
 
-  await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
-
   const passkeyCount = await Passkey.countDocuments({ userId: user._id });
 
   return {
@@ -402,7 +400,6 @@ export async function refresh(
   if (!user || user.isDeleted) return err('user_not_found', 401);
 
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const deviceCheck = await checkDevice(deviceId, user);
   if (deviceCheck.error) return deviceCheck;
@@ -877,7 +874,6 @@ export async function verifyPasskeyLogin(
 
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
   await user.checkBanStatus();
-  if (user.ban?.active) return BAN_ERRORS.USER_BANNED;
 
   const passkey = await Passkey.findOne({ credentialID: response.id, userId: user._id });
   if (!passkey) return err('credential_not_found', 401);

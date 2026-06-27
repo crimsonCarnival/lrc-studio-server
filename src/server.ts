@@ -69,7 +69,13 @@ async function build() {
     context: async (request: FastifyRequest) => {
       // Run optionalAuth so request.userId is populated for authenticated GraphQL requests.
       await app.optionalAuth(request, {} as FastifyReply);
-      return { userId: request.userId, ip: request.ip, tokenExpired: (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired ?? false, socketId: request.headers['x-socket-id'] as string | undefined };
+      return {
+        userId: request.userId,
+        bannedUserId: (request as FastifyRequest & { bannedUserId?: string }).bannedUserId,
+        ip: request.ip,
+        tokenExpired: (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired ?? false,
+        socketId: request.headers['x-socket-id'] as string | undefined
+      };
     },
     graphiql: process.env.NODE_ENV === 'development',
     // Depth limiting applies in every environment; introspection stays disabled
