@@ -32,18 +32,30 @@ const cookieOptions: CookieSerializeOptions = {
   path: '/',
 };
 
+// Readable by JS (not httpOnly) so the client can skip the `me` query entirely
+// when no session exists. Expires with the refresh token so stale localStorage
+// flags can no longer cause unnecessary network requests for logged-out users.
+const hintCookieOptions: CookieSerializeOptions = {
+  httpOnly: false,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  path: '/',
+};
+
 function setAuthCookies(reply: FastifyReply, result: { accessToken?: string; refreshToken?: string }) {
   if (result.accessToken) {
     reply.setCookie('accessToken', result.accessToken, { ...cookieOptions, maxAge: ACCESS_COOKIE_MAX_AGE });
   }
   if (result.refreshToken) {
     reply.setCookie('refreshToken', result.refreshToken, { ...cookieOptions, maxAge: REFRESH_COOKIE_MAX_AGE });
+    reply.setCookie('session_hint', '1', { ...hintCookieOptions, maxAge: REFRESH_COOKIE_MAX_AGE });
   }
 }
 
 function clearAuthCookies(reply: FastifyReply) {
   reply.clearCookie('accessToken', cookieOptions);
   reply.clearCookie('refreshToken', cookieOptions);
+  reply.clearCookie('session_hint', hintCookieOptions);
 }
 
 const VALID_DEVICE_PREFIXES = ['dv_fp_', 'dv_fallback_'];
