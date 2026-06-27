@@ -29,6 +29,8 @@ import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
 import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import { socialGraph } from '../../lib/social-graph.js';
+import { getPreferences, updatePreferences } from '../../modules/user-preferences/user-preferences.service.js';
+import type { IUserPreferences } from '../../db/user-preferences.model.js';
 
 /** Input shape for updateProfile mutation */
 export interface UpdateProfileInput {
@@ -37,10 +39,6 @@ export interface UpdateProfileInput {
   email?: string;
   bio?: string;
   avatarUrl?: string | null;
-  showFollowers?: boolean;
-  onlineVisibility?: 'friends' | 'nobody';
-  miniProfileBadgesEnabled?: boolean;
-  miniProfileBadgeIds?: string[];
 }
 
 export interface BadgeInput {
@@ -101,6 +99,11 @@ export const userResolvers = {
     blockedUsers: async (_root: unknown, _args: unknown, context: Context) => {
       if (!context.userId) return [];
       return listBlocked(context.userId);
+    },
+
+    myPreferences: async (_root: unknown, _args: unknown, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      return getPreferences(context.userId);
     },
 
     publicProfile: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
@@ -191,10 +194,8 @@ export const userResolvers = {
         isFollowedByMe,
         isFollowingMe,
         isBlockedByMe,
-        miniProfileBadgeIds: (user.privacy?.miniProfileBadgesEnabled ?? true)
-          ? (user.privacy?.miniProfileBadgeIds ?? [])
-          : [],
-        showFollowers: user.privacy?.showFollowers ?? true,
+        miniProfileBadgeIds: [],   // overridden by User.miniProfileBadgeIds field resolver
+        showFollowers: true,        // overridden by User.showFollowers field resolver
         badges: user.badges ?? [],
         showcasedBadges,
         showcasePublic: showcaseVisible,
@@ -316,7 +317,8 @@ export const userResolvers = {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!user || user.isDeleted || user.ban?.active) return { users: [], total: 0 };
       const isOwner = context.userId && context.userId === user._id.toString();
-      if (!user.privacy?.showFollowers && !isOwner) return { users: [], total: 0 };
+      const prefs = await getPreferences(user._id.toString());
+      if (!prefs.showFollowers && !isOwner) return { users: [], total: 0 };
 
       // Hide users in a block relationship with the viewer (either direction).
       const blockedSet = await getBlockedSet(context.userId);
@@ -475,30 +477,6 @@ export const userResolvers = {
 
       if (avatarUrl !== undefined) {
         user.avatarUrl = avatarUrl !== null ? sanitizeUrl(avatarUrl) : null;
-      }
-
-      if (input.showFollowers !== undefined) {
-        if (!user.privacy) user.privacy = {} as IUser['privacy'];
-        user.privacy!.showFollowers = input.showFollowers;
-      }
-
-      if (input.onlineVisibility !== undefined) {
-        if (!user.privacy) user.privacy = {} as IUser['privacy'];
-        user.privacy!.onlineVisibility = input.onlineVisibility;
-      }
-
-      if (input.miniProfileBadgesEnabled !== undefined) {
-        if (!user.privacy) user.privacy = {} as IUser['privacy'];
-        user.privacy!.miniProfileBadgesEnabled = input.miniProfileBadgesEnabled;
-      }
-
-      if (input.miniProfileBadgeIds !== undefined) {
-        if (!user.privacy) user.privacy = {} as IUser['privacy'];
-        // cap at 3, only allow owned badge IDs
-        const ownedIds = new Set((user.badges ?? []).map((b: IUserBadge) => b.id));
-        user.privacy!.miniProfileBadgeIds = input.miniProfileBadgeIds
-          .filter(id => ownedIds.has(id))
-          .slice(0, 3);
       }
 
       await user.save();
@@ -675,6 +653,23 @@ export const userResolvers = {
       logAdminAction({ adminId, action: 'retroactive_scan', targetName: badgeId, details: `granted ${result?.granted ?? 0}/${result?.scanned ?? 0}`, ip: context.ip }).catch(() => {});
       return result;
     },
+
+    updatePreferences: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+
+      if (input.onlineVisibility !== undefined) {
+        const valid = ['everyone', 'friends', 'nobody'];
+        if (!valid.includes(input.onlineVisibility as string)) {
+          throw new Error('Invalid onlineVisibility value');
+        }
+      }
+
+      if (Array.isArray(input.miniProfileBadgeIds) && (input.miniProfileBadgeIds as string[]).length > 3) {
+        throw new Error('Maximum 3 mini profile badges allowed');
+      }
+
+      return updatePreferences(context.userId, input as Partial<IUserPreferences>);
+    },
   },
 
   User: {
@@ -740,6 +735,23 @@ export const userResolvers = {
         }
       }
       return [];
+    },
+
+    showFollowers: async (user: IUser) => {
+      const prefs = await getPreferences(user._id.toString());
+      return prefs.showFollowers;
+    },
+    miniProfileBadgesEnabled: async (user: IUser) => {
+      const prefs = await getPreferences(user._id.toString());
+      return prefs.miniProfileBadgesEnabled;
+    },
+    miniProfileBadgeIds: async (user: IUser) => {
+      const prefs = await getPreferences(user._id.toString());
+      return prefs.miniProfileBadgesEnabled ? prefs.miniProfileBadgeIds : [];
+    },
+    onlineVisibility: async (user: IUser) => {
+      const prefs = await getPreferences(user._id.toString());
+      return prefs.onlineVisibility;
     },
   },
 };

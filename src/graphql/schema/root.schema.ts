@@ -37,6 +37,7 @@ export const rootSchema = `
     myMusicLibrary: [MusicLibraryEntry!]!
     userContentStats: ContentStats!
     adminAddictionLevels: [AddictionLevel!]!
+    myPreferences: UserPreferences!
   }
 
   type MusicLibraryEntry {
@@ -87,6 +88,7 @@ export const rootSchema = `
     adminCreateAddictionLevel(input: AddictionLevelInput!): AddictionLevel!
     adminUpdateAddictionLevel(id: String!, input: AddictionLevelUpdateInput!): AddictionLevel!
     adminDeleteAddictionLevel(id: String!): Boolean!
+    updatePreferences(input: UpdatePreferencesInput!): UserPreferences!
   }
 
   input UpdateProfileInput {
@@ -95,10 +97,40 @@ export const rootSchema = `
     email: String
     bio: String
     avatarUrl: String
+  }
+
+  type NotificationPreferences {
+    follow: Boolean!
+    reaction: Boolean!
+    star: Boolean!
+    fork: Boolean!
+    badge_awarded: Boolean!
+    xp_changed: Boolean!
+  }
+
+  type UserPreferences {
+    showFollowers: Boolean!
+    onlineVisibility: String!
+    miniProfileBadgesEnabled: Boolean!
+    miniProfileBadgeIds: [String!]!
+    notifications: NotificationPreferences!
+  }
+
+  input NotificationPreferencesInput {
+    follow: Boolean
+    reaction: Boolean
+    star: Boolean
+    fork: Boolean
+    badge_awarded: Boolean
+    xp_changed: Boolean
+  }
+
+  input UpdatePreferencesInput {
     showFollowers: Boolean
     onlineVisibility: String
     miniProfileBadgesEnabled: Boolean
     miniProfileBadgeIds: [String!]
+    notifications: NotificationPreferencesInput
   }
 
   type LeaderboardUser {
