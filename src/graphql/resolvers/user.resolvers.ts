@@ -8,7 +8,7 @@ import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
 import { requirePermission } from './auth-guards.js';
 import { hasPermission, rankOf, ROLE_RANK } from '../../shared/permissions.js';
-import { logAdminAction } from '../../modules/admin/admin.service.js';
+import { logAdminAction, toggleShadowBan } from '../../modules/admin/admin.service.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
@@ -652,6 +652,18 @@ export const userResolvers = {
       const result = await retroactiveGrant(badgeId);
       logAdminAction({ adminId, action: 'retroactive_scan', targetName: badgeId, details: `granted ${result?.granted ?? 0}/${result?.scanned ?? 0}`, ip: context.ip }).catch(() => {});
       return result;
+    },
+
+    adminShadowBan: async (_root: unknown, { userId, feed, search, reason }: { userId: string; feed: boolean; search: boolean; reason?: string | null }, context: Context) => {
+      const { userId: adminId } = await requirePermission(context, 'users.shadowban');
+      const result = await toggleShadowBan(userId, feed, search, reason ?? null, adminId);
+      return result.success === true;
+    },
+
+    adminUnshadowBan: async (_root: unknown, { userId }: { userId: string }, context: Context) => {
+      const { userId: adminId } = await requirePermission(context, 'users.shadowban');
+      const result = await toggleShadowBan(userId, false, false, null, adminId);
+      return result.success === true;
     },
 
     updatePreferences: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {

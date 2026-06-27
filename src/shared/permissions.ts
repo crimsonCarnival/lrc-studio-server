@@ -16,6 +16,7 @@ export const PERMISSIONS = [
   'badges.manage',  // create/update/delete badge defs, grant/revoke, retroactive scan
   'levels.manage',  // create/update/delete addiction levels
   'xp.adjust',      // manually adjust user XP
+  'users.shadowban',  // apply / remove shadow bans
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -35,7 +36,7 @@ export const ROLE_RANK: Record<Role, number> = {
 
 // Mods: read + user moderation only. No network blocking (admin handles that),
 // no content management. Mods raise requests to admins out-of-band.
-const MOD_PERMS: Permission[] = ['users.view', 'users.ban', 'audit.view', 'stats.view'];
+const MOD_PERMS: Permission[] = ['users.view', 'users.ban', 'users.shadowban', 'audit.view', 'stats.view'];
 // Admins: mod powers + IP/device blocking + assigning roles below their own
 // (i.e. setting up mods). NOT XP/badges/levels — those are superadmin-only;
 // admins raise proposals to superadmins for them.

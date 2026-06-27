@@ -22,6 +22,14 @@ export interface IBan {
   until?: Date | null;
 }
 
+export interface IShadowBan {
+  feed: boolean;
+  search: boolean;
+  reason: string | null;
+  appliedAt: Date | null;
+  appliedBy: mongoose.Types.ObjectId | null;
+}
+
 export interface IAppeal {
   text?: string | null;
   status: "none" | "pending" | "rejected";
@@ -110,6 +118,8 @@ export interface IUser extends Document {
   musicLibrary: IMusicLibraryEntry[];
   // Progression subdoc
   progression?: IUserProgression;
+  // Shadow ban subdoc (admin-only, never exposed to users)
+  shadowBan?: IShadowBan;
 
   verifyPassword(plain: string): Promise<boolean>;
   toPublic(): Record<string, unknown>;
@@ -119,6 +129,14 @@ export interface IUser extends Document {
 export interface IUserModel extends Model<IUser> {
   hashPassword(plain: string): Promise<string>;
 }
+
+const shadowBanSchema = new mongoose.Schema<IShadowBan>({
+  feed:      { type: Boolean, default: false },
+  search:    { type: Boolean, default: false },
+  reason:    { type: String, default: null },
+  appliedAt: { type: Date, default: null },
+  appliedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+}, { _id: false });
 
 const banSchema = new mongoose.Schema<IBan>(
   {
@@ -310,6 +328,7 @@ const userSchema = new mongoose.Schema<IUser>(
       default: [],
       _id: false,
     },
+    shadowBan: { type: shadowBanSchema, default: () => ({ feed: false, search: false, reason: null, appliedAt: null, appliedBy: null }) },
   },
   { timestamps: true, collection: "users" },
 );

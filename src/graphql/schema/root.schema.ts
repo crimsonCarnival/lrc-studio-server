@@ -89,6 +89,8 @@ export const rootSchema = `
     adminUpdateAddictionLevel(id: String!, input: AddictionLevelUpdateInput!): AddictionLevel!
     adminDeleteAddictionLevel(id: String!): Boolean!
     updatePreferences(input: UpdatePreferencesInput!): UserPreferences!
+    adminShadowBan(userId: ID!, feed: Boolean!, search: Boolean!, reason: String): Boolean!
+    adminUnshadowBan(userId: ID!): Boolean!
   }
 
   input UpdateProfileInput {

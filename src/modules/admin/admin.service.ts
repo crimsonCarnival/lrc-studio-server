@@ -216,6 +216,51 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   return { success: true, user: user.toPublic() };
 }
 
+export async function toggleShadowBan(
+  userId: string,
+  feed: boolean,
+  search: boolean,
+  reason: string | null = null,
+  adminId: string | null = null,
+  actorIp?: string
+): Promise<Record<string, unknown>> {
+  const user = await User.findById(userId);
+  if (!user) return { error: 'User not found', status: 404 };
+
+  if (rankOf(user.role) >= await actorRank(adminId)) {
+    return { error: 'Cannot act on a user of equal or higher rank', status: 403 };
+  }
+
+  const active = feed || search;
+
+  user.shadowBan = {
+    feed,
+    search,
+    reason: active ? reason : null,
+    appliedAt: active ? new Date() : null,
+    appliedBy: active && adminId ? new mongoose.Types.ObjectId(adminId) : null,
+  };
+
+  await user.save();
+
+  if (adminId) {
+    const admin = await User.findById(adminId);
+    await logAdminAction({
+      adminId,
+      adminName: admin?.accountName || 'System',
+      ip: actorIp,
+      action: active ? 'shadow_ban_user' : 'unshadow_ban_user',
+      targetId: user._id.toString(),
+      targetName: user.accountName,
+      details: active
+        ? `Feed: ${feed}, Search: ${search}. Reason: ${reason || 'none'}`
+        : 'Shadow ban removed',
+    });
+  }
+
+  return { success: true, user: user.toPublic() };
+}
+
 export async function rejectAppeal(userId: string, adminId: string | null = null, actorIp?: string): Promise<Record<string, unknown>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 };

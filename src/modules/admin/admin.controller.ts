@@ -166,6 +166,21 @@ export async function unblockDevice(req: FastifyRequest, reply: FastifyReply): P
   const result = await adminService.unblockDevice((req.params as Record<string, string>).id, req.userId!, req.ip);
   return reply.send(result);
 }
+export async function shadowBanUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { id } = req.params as { id: string };
+  const { feed = true, search = true, reason = null } = req.body as { feed?: boolean; search?: boolean; reason?: string | null };
+  const result = await adminService.toggleShadowBan(id, feed, search, reason, req.userId!, req.ip);
+  if (result.error) return reply.code(result.status as number).send({ error: result.error });
+  reply.send(result);
+}
+
+export async function unshadowBanUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { id } = req.params as { id: string };
+  const result = await adminService.toggleShadowBan(id, false, false, null, req.userId!, req.ip);
+  if (result.error) return reply.code(result.status as number).send({ error: result.error });
+  reply.send(result);
+}
+
 export async function adjustXP(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { action, amount, target, userId, userIds } = req.body as Record<string, unknown>;
   if (!['grant', 'revoke'].includes(action as string)) return reply.code(400).send({ error: 'action must be grant or revoke' });
