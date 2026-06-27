@@ -30,6 +30,19 @@ export const changeRoleSchema = {
   params: userIdParam,
 };
 
+export const shadowBanUserSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      feed:   { type: 'boolean' },
+      search: { type: 'boolean' },
+      reason: { type: ['string', 'null'], maxLength: 500 },
+    },
+    additionalProperties: false,
+  },
+  params: userIdParam,
+};
+
 export const blockIpSchema = {
   body: {
     type: 'object',

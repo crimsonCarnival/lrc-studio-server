@@ -3,6 +3,7 @@ import * as adminController from './admin.controller.js';
 import {
   userIdParam,
   banUserSchema,
+  shadowBanUserSchema,
   changeRoleSchema,
   blockIpSchema,
   blockDeviceSchema,
@@ -35,7 +36,7 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
   fastify.post('/users/:id/ban', { preHandler: [perm('users.ban'), sudo], schema: banUserSchema }, adminController.banUser);
   fastify.post('/users/:id/unban', { preHandler: [perm('users.ban'), sudo], schema: { params: userIdParam } }, adminController.unbanUser);
   fastify.post('/users/:id/reject-appeal', { preHandler: [perm('users.ban'), sudo], schema: { params: userIdParam } }, adminController.rejectAppeal);
-  fastify.post('/users/:id/shadowban',   { preHandler: [perm('users.shadowban'), sudo], schema: { params: userIdParam } }, adminController.shadowBanUser);
+  fastify.post('/users/:id/shadowban',   { preHandler: [perm('users.shadowban'), sudo], schema: shadowBanUserSchema }, adminController.shadowBanUser);
   fastify.post('/users/:id/unshadowban', { preHandler: [perm('users.shadowban'), sudo], schema: { params: userIdParam } }, adminController.unshadowBanUser);
   fastify.post('/users/:id/role', { preHandler: [perm('users.role'), sudo], schema: changeRoleSchema }, adminController.changeRole);
   fastify.delete('/users/:id', { preHandler: [perm('users.delete'), sudo], schema: { params: userIdParam } }, adminController.deleteUser);

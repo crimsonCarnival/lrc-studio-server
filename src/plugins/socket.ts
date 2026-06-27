@@ -151,10 +151,10 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
           songName: p.songName ?? '',
           publicId: p.publicId ?? '',
         };
-        setActivity(userId, activity);
-
         const actPrefs = await getPreferences(userId);
         if (actPrefs.onlineVisibility === 'nobody') return;
+
+        setActivity(userId, activity);
 
         const mutualIds = await getMutualFollowIds(userId);
         const event = { userId, activity };
