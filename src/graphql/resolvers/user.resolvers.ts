@@ -243,7 +243,7 @@ export const userResolvers = {
           displayName: u.displayName ?? null,
           avatarUrl: u.avatarUrl ?? null,
           badges: u.badges ?? [],
-          stats: { minutesSynced: u.stats?.minutesSynced ?? 0, wordsSynced: u.stats?.wordsSynced ?? 0, karaokeLines: u.stats?.karaokeLines ?? 0, syncedLines: u.stats?.syncedLines ?? 0 },
+          stats: { minutesSynced: u.stats?.minutesSynced ?? 0, secondsSynced: u.stats?.secondsSynced ?? 0, wordsSynced: u.stats?.wordsSynced ?? 0, karaokeLines: u.stats?.karaokeLines ?? 0, syncedLines: u.stats?.syncedLines ?? 0 },
           streak: { current: u.streak?.current ?? 0, longest: u.streak?.longest ?? 0, lastActiveDate: u.streak?.lastActiveDate ?? null },
           progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },
           projectCount: pcMap.get(u._id.toString()) ?? 0,
