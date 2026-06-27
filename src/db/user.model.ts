@@ -64,6 +64,7 @@ export interface IUserStats {
   secondsSynced: number;
   wordsSynced: number;
   karaokeLines: number;
+  syncedLines: number;
 }
 
 export interface IUserStreak {
@@ -186,6 +187,7 @@ const statsSchema = new mongoose.Schema<IUserStats>(
     secondsSynced: { type: Number, default: 0, min: 0 },
     wordsSynced: { type: Number, default: 0, min: 0 },
     karaokeLines: { type: Number, default: 0, min: 0 },
+    syncedLines: { type: Number, default: 0, min: 0 },
   },
   { _id: false },
 );
@@ -434,6 +436,7 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
       secondsSynced: this.stats?.secondsSynced ?? 0,
       wordsSynced: this.stats?.wordsSynced ?? 0,
       karaokeLines: this.stats?.karaokeLines ?? 0,
+      syncedLines: this.stats?.syncedLines ?? 0,
     },
     streak: {
       current: this.streak?.current ?? 0,

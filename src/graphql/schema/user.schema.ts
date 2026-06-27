@@ -4,6 +4,7 @@ export const userSchema = `
     secondsSynced: Float
     wordsSynced: Float
     karaokeLines: Float
+    syncedLines: Float
   }
 
   type UserStreak {

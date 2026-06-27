@@ -319,54 +319,100 @@ export async function recomputeSyncStats(userId: string): Promise<{
   secondsSynced: number;
   wordsSynced: number;
   karaokeLines: number;
+  syncedLines: number;
 }> {
   const userProjects = await Project.find({ userId }).select('publicId').lean<{ publicId: string }[]>();
   const publicIds: string[] = userProjects.map((p) => p.publicId);
 
   if (publicIds.length === 0) {
-    await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0 } });
-    return { minutesSynced: 0, secondsSynced: 0, wordsSynced: 0, karaokeLines: 0 };
+    await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0, 'stats.syncedLines': 0 } });
+    return { minutesSynced: 0, secondsSynced: 0, wordsSynced: 0, karaokeLines: 0, syncedLines: 0 };
   }
 
-  const [minAgg, wordAgg, karaokeAgg] = await Promise.all([
-    // Minutes: max timestamp per project (across all sections' lines), sum across projects
+  const [minAgg, wordAgg, karaokeAgg, syncedLineAgg] = await Promise.all([
+    // Minutes: max timestamp per project
     Lyrics.aggregate([
       { $match: { publicId: { $in: publicIds } } },
       {
         $project: {
-          allTimestamps: {
-            $reduce: {
-              input: { $ifNull: ['$sections', []] },
-              initialValue: [],
-              in: {
-                $concatArrays: [
-                  '$$value',
-                  { $map: { input: { $ifNull: ['$$this.lines', []] }, as: 'l', in: { $ifNull: ['$$l.timestamp', 0] } } },
-                ],
+          allLines: {
+            $cond: {
+              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+              then: {
+                $reduce: {
+                  input: '$sections',
+                  initialValue: [],
+                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
+                }
               },
-            },
-          },
-        },
+              else: { $ifNull: ['$lines', []] }
+            }
+          }
+        }
       },
-      { $project: { maxTs: { $max: '$allTimestamps' } } },
+      {
+        $project: {
+          maxTs: {
+            $max: {
+              $map: {
+                input: '$allLines',
+                as: 'l',
+                in: { $ifNull: ['$$l.timestamp', 0] }
+              }
+            }
+          }
+        }
+      },
       { $group: { _id: null, total: { $sum: '$maxTs' } } },
     ]),
 
     // Words synced: words with non-null time
     Lyrics.aggregate([
       { $match: { publicId: { $in: publicIds } } },
-      { $unwind: { path: '$sections', preserveNullAndEmptyArrays: false } },
-      { $unwind: { path: '$sections.lines', preserveNullAndEmptyArrays: false } },
-      { $unwind: { path: '$sections.lines.words', preserveNullAndEmptyArrays: false } },
-      { $match: { 'sections.lines.words.time': { $ne: null } } },
+      {
+        $project: {
+          allLines: {
+            $cond: {
+              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+              then: {
+                $reduce: {
+                  input: '$sections',
+                  initialValue: [],
+                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
+                }
+              },
+              else: { $ifNull: ['$lines', []] }
+            }
+          }
+        }
+      },
+      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: '$allLines.words', preserveNullAndEmptyArrays: false } },
+      { $match: { 'allLines.words.time': { $ne: null } } },
       { $count: 'total' },
     ]),
 
     // Karaoke lines: lines where ≥1 word has a time
     Lyrics.aggregate([
       { $match: { publicId: { $in: publicIds } } },
-      { $unwind: { path: '$sections', preserveNullAndEmptyArrays: false } },
-      { $unwind: { path: '$sections.lines', preserveNullAndEmptyArrays: false } },
+      {
+        $project: {
+          allLines: {
+            $cond: {
+              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+              then: {
+                $reduce: {
+                  input: '$sections',
+                  initialValue: [],
+                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
+                }
+              },
+              else: { $ifNull: ['$lines', []] }
+            }
+          }
+        }
+      },
+      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
       {
         $project: {
           hasKaraoke: {
@@ -374,7 +420,7 @@ export async function recomputeSyncStats(userId: string): Promise<{
               {
                 $size: {
                   $filter: {
-                    input: { $ifNull: ['$sections.lines.words', []] },
+                    input: { $ifNull: ['$allLines.words', []] },
                     cond: { $ne: ['$$this.time', null] },
                   },
                 },
@@ -387,6 +433,50 @@ export async function recomputeSyncStats(userId: string): Promise<{
       { $match: { hasKaraoke: true } },
       { $count: 'total' },
     ]),
+
+    // Synced lines: lines with a non-null timestamp or a non-null word time
+    Lyrics.aggregate([
+      { $match: { publicId: { $in: publicIds } } },
+      {
+        $project: {
+          allLines: {
+            $cond: {
+              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+              then: {
+                $reduce: {
+                  input: '$sections',
+                  initialValue: [],
+                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
+                }
+              },
+              else: { $ifNull: ['$lines', []] }
+            }
+          }
+        }
+      },
+      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
+      {
+        $match: {
+          $or: [
+            { 'allLines.timestamp': { $ne: null } },
+            {
+              $gt: [
+                {
+                  $size: {
+                    $filter: {
+                      input: { $ifNull: ['$allLines.words', []] },
+                      cond: { $ne: ['$$this.time', null] },
+                    },
+                  },
+                },
+                0,
+              ],
+            }
+          ]
+        }
+      },
+      { $count: 'total' },
+    ]),
   ]);
 
   const totalSeconds = minAgg[0]?.total ?? 0;
@@ -394,9 +484,10 @@ export async function recomputeSyncStats(userId: string): Promise<{
   const secondsSynced = Math.floor(totalSeconds % 60);
   const wordsSynced = wordAgg[0]?.total ?? 0;
   const karaokeLines = karaokeAgg[0]?.total ?? 0;
+  const syncedLines = syncedLineAgg[0]?.total ?? 0;
 
-  await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines } });
-  return { minutesSynced, secondsSynced, wordsSynced, karaokeLines };
+  await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines, 'stats.syncedLines': syncedLines } });
+  return { minutesSynced, secondsSynced, wordsSynced, karaokeLines, syncedLines };
 }
 
 // ─── XP Event logging (event-based system) ────────────────────────────────────

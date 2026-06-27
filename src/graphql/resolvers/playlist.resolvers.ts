@@ -11,6 +11,7 @@ import { writeActivity } from '../../modules/activity/activity.service.js';
 
 type LeanPlaylist = IPlaylist & { _id: mongoose.Types.ObjectId };
 type LeanUser = IUser & { _id: mongoose.Types.ObjectId };
+type LeanProject = IProject & { _id: mongoose.Types.ObjectId };
 
 export interface PlaylistInput {
   name?: string;
@@ -117,12 +118,17 @@ export const playlistResolvers = {
     createPlaylist: async (_root: unknown, { input }: { input: PlaylistInput }, context: Context) => {
       if (!context.userId) throw new Error('unauthorized');
       validatePlaylistInput(input);
+      let objectIds: mongoose.Types.ObjectId[] = [];
       if (input.publicIds?.length) {
-        const count = await Project.countDocuments({
-          _id: { $in: input.publicIds.map((id: string) => new mongoose.Types.ObjectId(id)) },
-          userId: new mongoose.Types.ObjectId(context.userId),
-        });
-        if (count !== input.publicIds.length) throw new Error('forbidden');
+        const projects = await Project.find({ publicId: { $in: input.publicIds } })
+          .select('_id publicId userId public')
+          .lean<{ _id: mongoose.Types.ObjectId, publicId: string, userId: mongoose.Types.ObjectId, public: boolean }[]>();
+        
+        const validProjects = projects.filter(p => p.public || p.userId?.toString() === context.userId);
+        if (validProjects.length !== input.publicIds.length) throw new Error('forbidden');
+        
+        const projectMap = new Map(projects.map((p) => [p.publicId, p._id]));
+        objectIds = input.publicIds.map((id: string) => projectMap.get(id)).filter((id): id is mongoose.Types.ObjectId => id !== undefined);
       }
       const playlist = await Playlist.create({
         userId: context.userId,
@@ -132,7 +138,7 @@ export const playlistResolvers = {
         tags: input.tags ?? [],
         isPublic: input.isPublic ?? true,
         sortMode: input.sortMode ?? 'DATE_ADDED',
-        publicIds: (input.publicIds ?? []).map((id: string) => new mongoose.Types.ObjectId(id)),
+        publicIds: objectIds,
         savedCount: 0,
       });
 
@@ -190,12 +196,12 @@ export const playlistResolvers = {
       const playlist = await Playlist.findById(playlistId);
       if (!playlist) throw new Error('not_found');
       if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
-      type LeanProject = IProject & { _id: mongoose.Types.ObjectId };
-      const project = await Project.findById(publicId).lean<LeanProject>();
-      if (!project || project.userId?.toString() !== context.userId) throw new Error('forbidden');
+      const project = await Project.findOne({ publicId }).lean<LeanProject>();
+      if (!project) throw new Error('not_found');
+      if (project.userId?.toString() !== context.userId && !project.public) throw new Error('forbidden');
       const updated = await Playlist.findByIdAndUpdate(
         playlistId,
-        { $addToSet: { publicIds: new mongoose.Types.ObjectId(publicId) } },
+        { $addToSet: { publicIds: project._id } },
         { new: true }
       ).lean<LeanPlaylist>();
       if (!updated) throw new Error('not_found');
@@ -211,9 +217,11 @@ export const playlistResolvers = {
       const playlist = await Playlist.findById(playlistId);
       if (!playlist) throw new Error('not_found');
       if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
+      const project = await Project.findOne({ publicId }).lean<LeanProject>();
+      if (!project) throw new Error('not_found');
       const updated = await Playlist.findByIdAndUpdate(
         playlistId,
-        { $pull: { publicIds: new mongoose.Types.ObjectId(publicId) } },
+        { $pull: { publicIds: project._id } },
         { new: true }
       ).lean<LeanPlaylist>();
       if (!updated) throw new Error('not_found');
@@ -232,11 +240,13 @@ export const playlistResolvers = {
       if (playlist.sortMode !== 'MANUAL') throw new Error('bad_request');
       if (publicIds.length !== playlist.publicIds.length) throw new Error('bad_request');
       const currentSet = new Set(playlist.publicIds.map(id => id.toString()));
-      const submittedSet = new Set(publicIds);
+      const submittedProjects = await Project.find({ publicId: { $in: publicIds } }).select('_id publicId').lean<{ _id: mongoose.Types.ObjectId, publicId: string }[]>();
+      const submittedSet = new Set(submittedProjects.map((p) => p._id.toString()));
       const setsMatch =
         currentSet.size === submittedSet.size && [...currentSet].every(id => submittedSet.has(id));
       if (!setsMatch) throw new Error('bad_request');
-      playlist.publicIds = publicIds.map(id => new mongoose.Types.ObjectId(id));
+      const projectMap = new Map(submittedProjects.map((p) => [p.publicId, p._id] as [string, mongoose.Types.ObjectId]));
+      playlist.publicIds = publicIds.map(id => projectMap.get(id)).filter((id): id is mongoose.Types.ObjectId => id !== undefined);
       await playlist.save();
       return formatPlaylist(playlist.toObject() as LeanPlaylist, context);
     },
