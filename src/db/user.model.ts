@@ -125,6 +125,8 @@ export interface IUser extends Document {
   verifyPassword(plain: string): Promise<boolean>;
   toPublic(): Record<string, unknown>;
   checkBanStatus(): Promise<boolean>;
+  // Computed ranking score (0–1000), updated hourly by leaderboard-ranking job
+  rankScore?: number;
 }
 
 export interface IUserModel extends Model<IUser> {
@@ -331,6 +333,8 @@ const userSchema = new mongoose.Schema<IUser>(
       _id: false,
     },
     shadowBan: { type: shadowBanSchema, default: () => ({ feed: false, search: false, reason: null, appliedAt: null, appliedBy: null }) },
+    // Computed weighted-percentile score (0–1000), written by leaderboard-ranking job hourly
+    rankScore: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true, collection: "users" },
 );
@@ -354,6 +358,9 @@ userSchema.index({ accountName: "text", email: "text" });
 
 // Soft-delete filter support
 userSchema.index({ isDeleted: 1 });
+
+// Leaderboard: efficient rank ordering; compound with isDeleted for filtered sort
+userSchema.index({ rankScore: -1, isDeleted: 1 });
 
 /**
  * Verifies the provided plaintext password against the stored hash.

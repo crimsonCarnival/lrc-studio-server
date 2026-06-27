@@ -219,10 +219,10 @@ export const userResolvers = {
       const cap = Math.min(limit, 50);
       const [users, total] = await Promise.all([
         User.find({ isDeleted: { $ne: true } })
-          .sort({ 'stats.minutesSynced': -1, 'stats.secondsSynced': -1, 'stats.syncedLines': -1 })
+          .sort({ rankScore: -1 })
           .skip(offset)
           .limit(cap + 1)
-          .select('_id accountName displayName avatarUrl badges stats streak progression social')
+          .select('_id accountName displayName avatarUrl badges stats streak progression social rankScore')
           .lean<IUser[]>(),
         User.countDocuments({ isDeleted: { $ne: true } }),
       ]);
@@ -249,6 +249,7 @@ export const userResolvers = {
           projectCount: pcMap.get(u._id.toString()) ?? 0,
           totalStarsReceived: u.social?.totalStarsReceived ?? 0,
           totalForksReceived: u.social?.totalForksReceived ?? 0,
+          rankScore: u.rankScore ?? 0,
         })),
         total,
         hasMore,

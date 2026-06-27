@@ -147,6 +147,7 @@ export const rootSchema = `
     projectCount: Int!
     totalStarsReceived: Int!
     totalForksReceived: Int!
+    rankScore: Float!
   }
 
   type LeaderboardResult {

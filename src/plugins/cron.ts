@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { archiveDeletedUsers } from '../jobs/archive-deleted-users.js';
 import { recomputeTrendingScores } from '../jobs/trending.job.js';
+import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
 
@@ -72,6 +73,7 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
     const runTrending = async () => {
       try {
         await recomputeTrendingScores();
+        await recomputeLeaderboardRanking();
       } catch (err) {
         fastify.log.error({ err }, '[cron] recomputeTrendingScores failed');
       }
