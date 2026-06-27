@@ -149,11 +149,15 @@ export async function verifyRecaptcha(token: string | undefined, ip: string): Pr
   }
 }
 
-async function checkDevice(deviceId: string | null | undefined, user: IUser | null = null): Promise<ServiceResult> {
+async function checkDevice(deviceId: string | null | undefined, user: IUser | null = null, bypassBan = false): Promise<ServiceResult> {
   if (!deviceId) return {};
 
-  const deviceBanned = await BannedDevice.findOne({ deviceId });
-  if (deviceBanned) return BAN_ERRORS.DEVICE_BANNED;
+  const isSuperadmin = bypassBan || (user && user.role === 'superadmin');
+
+  if (!isSuperadmin) {
+    const deviceBanned = await BannedDevice.findOne({ deviceId });
+    if (deviceBanned) return BAN_ERRORS.DEVICE_BANNED;
+  }
 
   if (user) {
     await UserDevice.findOneAndUpdate(
@@ -261,19 +265,21 @@ export async function login(
     return err('recaptcha_failed', 403);
   }
 
-  const [ipBanned, deviceCheck] = await Promise.all([
-    ip ? BannedIp.findOne({ ip }) : Promise.resolve(null),
-    checkDevice(deviceId),
-  ]);
-  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
-  if (deviceCheck.error) return deviceCheck;
-
   const { identifier, password } = data;
   const normalised = identifier.toLowerCase().trim();
 
   const user = await User.findOne({
     $or: [{ accountName: normalised }, { email: normalised }],
   });
+
+  const isSuperadmin = user?.role === 'superadmin';
+
+  const [ipBanned, deviceCheck] = await Promise.all([
+    ip && !isSuperadmin ? BannedIp.findOne({ ip }) : Promise.resolve(null),
+    checkDevice(deviceId, null, isSuperadmin),
+  ]);
+  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
+  if (deviceCheck.error) return deviceCheck;
 
   const passwordValid = user ? await user.verifyPassword(password) : false;
   if (!user || !passwordValid) {
@@ -335,6 +341,21 @@ export async function loginByUserId(
 
   await user.checkBanStatus();
 
+  const isSuperadmin = user.role === 'superadmin';
+
+  const [ipBanned, deviceCheck] = await Promise.all([
+    ip && !isSuperadmin ? BannedIp.findOne({ ip }) : Promise.resolve(null),
+    checkDevice(deviceId, user, isSuperadmin),
+  ]);
+
+  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
+  if (deviceCheck.error) return deviceCheck;
+
+  if (ip && user.lastIp !== ip) {
+    await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
+    user.lastIp = ip;
+  }
+
   const { accessToken, refreshToken } = await loginAtomically(
     user,
     jwt,
@@ -356,17 +377,19 @@ export async function checkIdentifier(
   ip: string,
   deviceId: string
 ): Promise<ServiceResult<{ exists: boolean; accountName: string | null; avatarUrl: string | null }>> {
-  const [ipBanned, deviceCheck] = await Promise.all([
-    ip ? BannedIp.findOne({ ip }) : Promise.resolve(null),
-    checkDevice(deviceId),
-  ]);
-  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
-  if (deviceCheck.error) return deviceCheck;
-
   const normalised = identifier.toLowerCase().trim();
   const user = await User.findOne({
     $or: [{ accountName: normalised }, { email: normalised }],
   });
+
+  const isSuperadmin = user?.role === 'superadmin';
+
+  const [ipBanned, deviceCheck] = await Promise.all([
+    ip && !isSuperadmin ? BannedIp.findOne({ ip }) : Promise.resolve(null),
+    checkDevice(deviceId, null, isSuperadmin),
+  ]);
+  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
+  if (deviceCheck.error) return deviceCheck;
 
   if (!user) return err('identifier_not_found', 404);
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
@@ -627,6 +650,11 @@ export async function submitAppeal(
   user.appeal.submittedAt = new Date();
   await user.save();
 
+  try {
+    const { getIO } = await import('../../socket/socket.manager.js');
+    getIO().to('admin').emit('admin:appeal_submitted', { userId: user._id.toString() });
+  } catch { /* socket not ready */ }
+
   return { user: user.toPublic() as unknown as UserPublic };
 }
 
@@ -874,6 +902,16 @@ export async function verifyPasskeyLogin(
 
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
   await user.checkBanStatus();
+
+  const isSuperadmin = user.role === 'superadmin';
+
+  const [ipBanned, deviceCheck] = await Promise.all([
+    ip && !isSuperadmin ? BannedIp.findOne({ ip }) : Promise.resolve(null),
+    checkDevice(deviceId, user, isSuperadmin),
+  ]);
+
+  if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
+  if (deviceCheck.error) return deviceCheck;
 
   const passkey = await Passkey.findOne({ credentialID: response.id, userId: user._id });
   if (!passkey) return err('credential_not_found', 401);

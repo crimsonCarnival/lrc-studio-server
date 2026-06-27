@@ -180,6 +180,8 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   } else {
     user.ban = { active: false, reason: null, until: null };
     user.appeal = { text: null, status: 'none', submittedAt: null, resolvedAt: new Date() };
+    await BannedIp.deleteMany({ userId: user._id });
+    await BannedDevice.deleteMany({ userId: user._id });
   }
 
   await user.save();
