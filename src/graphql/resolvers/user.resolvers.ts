@@ -756,20 +756,24 @@ export const userResolvers = {
       return [];
     },
 
-    showFollowers: async (user: IUser) => {
-      const prefs = await getPreferences(user._id.toString());
+    showFollowers: async (user: IUser & { id?: string }) => {
+      const id = (user._id ?? user.id).toString();
+      const prefs = await getPreferences(id);
       return prefs.showFollowers;
     },
-    miniProfileBadgesEnabled: async (user: IUser) => {
-      const prefs = await getPreferences(user._id.toString());
+    miniProfileBadgesEnabled: async (user: IUser & { id?: string }) => {
+      const id = (user._id ?? user.id).toString();
+      const prefs = await getPreferences(id);
       return prefs.miniProfileBadgesEnabled;
     },
-    miniProfileBadgeIds: async (user: IUser) => {
-      const prefs = await getPreferences(user._id.toString());
+    miniProfileBadgeIds: async (user: IUser & { id?: string }) => {
+      const id = (user._id ?? user.id).toString();
+      const prefs = await getPreferences(id);
       return prefs.miniProfileBadgesEnabled ? prefs.miniProfileBadgeIds : [];
     },
-    onlineVisibility: async (user: IUser) => {
-      const prefs = await getPreferences(user._id.toString());
+    onlineVisibility: async (user: IUser & { id?: string }) => {
+      const id = (user._id ?? user.id).toString();
+      const prefs = await getPreferences(id);
       return prefs.onlineVisibility;
     },
   },
