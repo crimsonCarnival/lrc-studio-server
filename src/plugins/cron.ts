@@ -58,18 +58,14 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
 
   // Seed built-in badges and addiction levels on startup (idempotent — $set merges Spanish strings)
   fastify.addHook('onReady', async () => {
-    try {
-      await seedBuiltinBadges();
-      fastify.log.info('[startup] Built-in badges seeded');
-    } catch (err) {
-      fastify.log.error({ err }, '[startup] Failed to seed built-in badges');
-    }
-    try {
-      await seedAddictionLevels();
-      fastify.log.info('[startup] Addiction levels seeded');
-    } catch (err) {
-      fastify.log.error({ err }, '[startup] Failed to seed addiction levels');
-    }
+    await Promise.allSettled([
+      seedBuiltinBadges()
+        .then(() => fastify.log.info('[startup] Built-in badges seeded'))
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed built-in badges')),
+      seedAddictionLevels()
+        .then(() => fastify.log.info('[startup] Addiction levels seeded'))
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed addiction levels')),
+    ]);
   });
 
   fastify.addHook('onReady', async () => {
@@ -80,7 +76,8 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
         fastify.log.error({ err }, '[cron] recomputeTrendingScores failed');
       }
     };
-    await runTrending();
+    // Fire without awaiting — heavy aggregation job, runs in background after server is up
+    void runTrending();
     trendingTimer = setInterval(runTrending, HOUR_MS);
   });
 

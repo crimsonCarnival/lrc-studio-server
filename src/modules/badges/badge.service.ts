@@ -40,6 +40,9 @@ export const BUILTIN_BADGES = [
 // $set: xpReward only — always synced from code so balance changes deploy immediately.
 // Additionally, we merge Spanish localization strings into existing records during this transition.
 export async function seedBuiltinBadges(): Promise<void> {
+  const existing = await BadgeDefinition.countDocuments({ isBuiltin: true });
+  if (existing > 0) return;
+
   for (const { id, label, description, icon, color, conditionType, conditionValue, autoGrant, isBuiltin, xpReward } of BUILTIN_BADGES) {
     await BadgeDefinition.findOneAndUpdate(
       { id },

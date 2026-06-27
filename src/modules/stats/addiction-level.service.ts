@@ -112,6 +112,9 @@ export const DEFAULT_LEVELS: Array<{
  * survive server restarts.
  */
 export async function seedAddictionLevels(): Promise<void> {
+  const existing = await AddictionLevel.countDocuments();
+  if (existing > 0) return;
+
   for (const level of DEFAULT_LEVELS) {
     const { id, title, description, ...insertOnly } = level;
     await AddictionLevel.findOneAndUpdate(
