@@ -36,13 +36,6 @@ export interface ISocial {
   totalForksReceived: number;
 }
 
-export interface IUserPrivacy {
-  showFollowers: boolean;
-  onlineVisibility: 'friends' | 'nobody';
-  miniProfileBadgesEnabled: boolean;
-  miniProfileBadgeIds: string[];
-}
-
 export interface IUserBadge {
   id: string;
   grantedAt: Date;
@@ -100,7 +93,6 @@ export interface IUser extends Document {
     pictureUrl?: string | null;
   };
   social?: ISocial;
-  privacy?: IUserPrivacy;
   lastIp?: string | null;
   bio: string;
   currentChallenge?: string | null;
@@ -157,16 +149,6 @@ const socialSchema = new mongoose.Schema<ISocial>(
     followingCount: { type: Number, default: 0, min: 0 },
     totalStarsReceived: { type: Number, default: 0, min: 0 },
     totalForksReceived: { type: Number, default: 0, min: 0 },
-  },
-  { _id: false },
-);
-
-const privacySchema = new mongoose.Schema<IUserPrivacy>(
-  {
-    showFollowers:           { type: Boolean, default: true },
-    onlineVisibility:        { type: String, enum: ['friends', 'nobody'], default: 'friends' },
-    miniProfileBadgesEnabled:{ type: Boolean, default: true },
-    miniProfileBadgeIds:     { type: [String], default: [] },
   },
   { _id: false },
 );
@@ -313,7 +295,6 @@ const userSchema = new mongoose.Schema<IUser>(
       maxlength: 160,
     },
     social: { type: socialSchema, default: () => ({}) },
-    privacy: { type: privacySchema, default: () => ({}) },
     currentChallenge: {
       type: String,
       default: null,
@@ -426,10 +407,6 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
           pictureUrl: this.google.pictureUrl,
         }
       : { connected: false },
-    showFollowers: this.privacy?.showFollowers ?? true,
-    onlineVisibility: this.privacy?.onlineVisibility ?? 'friends',
-    miniProfileBadgesEnabled: this.privacy?.miniProfileBadgesEnabled ?? true,
-    miniProfileBadgeIds: this.privacy?.miniProfileBadgeIds ?? [],
     badges: this.badges ?? [],
     showcasedBadges: this.showcasedBadges ?? [],
     showcasePublic: this.showcasePublic ?? true,
