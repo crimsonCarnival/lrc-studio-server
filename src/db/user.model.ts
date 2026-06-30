@@ -1,14 +1,10 @@
 import mongoose, { type Document, type Model } from "mongoose";
 import argon2 from "argon2";
-import bcrypt from "bcrypt";
 import { ROLES, type Role } from "../shared/permissions.js";
 
-/**
- * Argon2id parameters — OWASP recommended minimums for interactive logins.
- * Argon2id is the hybrid variant: resistant to GPU/ASIC brute-force AND
- * side-channel attacks. We keep bcrypt imported only for the transparent
- * migration path: existing hashes are verified + silently re-hashed on login.
- */
+// Argon2id parameters — OWASP recommended minimums for interactive logins.
+// Argon2id is the hybrid variant: resistant to GPU/ASIC brute-force AND
+// side-channel attacks.
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
   memoryCost: 19 * 1024, // 19 MB — OWASP minimum; 64 MB caused OOM in constrained envs
@@ -109,6 +105,7 @@ export interface IUser extends Document {
   updatedAt?: Date;
   // Stats subdoc
   stats?: IUserStats;
+  statsComputedAt?: Date | null;
   // Streak subdoc
   streak?: IUserStreak;
   // Badges
@@ -322,6 +319,7 @@ const userSchema = new mongoose.Schema<IUser>(
       default: null,
     },
     stats: { type: statsSchema, default: () => ({}) },
+    statsComputedAt: { type: Date, default: null },
     streak: { type: streakSchema, default: () => ({}) },
     badges: { type: [userBadgeSchema], default: [] },
     showcasedBadges: { type: [String], default: [] },
@@ -362,32 +360,11 @@ userSchema.index({ isDeleted: 1 });
 // Leaderboard: efficient rank ordering; compound with isDeleted for filtered sort
 userSchema.index({ rankScore: -1, isDeleted: 1 });
 
-/**
- * Verifies the provided plaintext password against the stored hash.
- * Handles transparent migration from legacy bcrypt hashes:
- * if a bcrypt hash is detected ($2b$ / $2a$), it verifies with bcrypt
- * and rehashes to Argon2id in the background to migrate on next login.
- */
 userSchema.methods.verifyPassword = async function (
   this: IUser,
   plain: string,
 ): Promise<boolean> {
-  // Sentinel value for OAuth-only users (no password set)
   if (this.passwordHash === "OAUTH_NO_PASSWORD") return false;
-
-  // Detect legacy bcrypt hash
-  if (
-    this.passwordHash.startsWith("$2b$") ||
-    this.passwordHash.startsWith("$2a$")
-  ) {
-    const match = await bcrypt.compare(plain, this.passwordHash);
-    if (match) {
-      // Silently migrate to Argon2id
-      this.passwordHash = await argon2.hash(plain, ARGON2_OPTIONS);
-      await this.save();
-    }
-    return match;
-  }
   return argon2.verify(this.passwordHash, plain);
 };
 
