@@ -36,7 +36,7 @@ function requireEnv(name: string, value: string | undefined, requiredInProductio
 }
 
 export function loadEnv(): Env {
-  const corsOrigin = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
+  const corsOrigin = requireEnv('CORS_ORIGIN', process.env.CORS_ORIGIN, true) ?? 'http://localhost:5173';
   const appUrlString = process.env.APP_URL ?? corsOrigin;
   const appUrls = appUrlString
     .split(',')
