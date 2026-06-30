@@ -5,6 +5,7 @@ import { recomputeTrendingScores } from '../jobs/trending.job.js';
 import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
+import { syncRolePermissions } from '../modules/admin/admin.service.js';
 
 /**
  * Lightweight cron-like scheduler using setInterval.
@@ -66,6 +67,9 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
       seedAddictionLevels()
         .then(() => fastify.log.info('[startup] Addiction levels seeded'))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed addiction levels')),
+      syncRolePermissions()
+        .then(() => fastify.log.info('[startup] Role permissions synced'))
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to sync role permissions')),
     ]);
   });
 

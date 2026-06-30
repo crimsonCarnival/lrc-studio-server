@@ -47,6 +47,7 @@ export interface BadgeInput {
   description?: { en: string; es?: string };
   icon?: string;
   color?: string;
+  rarity?: string;
   conditionType?: string;
   conditionValue?: number | null;
   autoGrant?: boolean;

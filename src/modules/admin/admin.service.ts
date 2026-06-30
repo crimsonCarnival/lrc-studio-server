@@ -534,6 +534,21 @@ export async function adjustXP(
   return { affected };
 }
 
+/**
+ * Ensures every user's permissions include at least the permissions their role
+ * currently prescribes. Uses $addToSet so custom per-user overrides are never
+ * removed. Called on server startup to pick up newly-added permissions.
+ */
+export async function syncRolePermissions(): Promise<void> {
+  for (const [role, presetPerms] of Object.entries(ROLE_PRESETS)) {
+    if (presetPerms.length === 0) continue;
+    await User.updateMany(
+      { role, isDeleted: { $ne: true } },
+      { $addToSet: { permissions: { $each: presetPerms } } }
+    );
+  }
+}
+
 export async function logAdminAction({ adminId, adminName, action, targetId, targetName, details, ip }: {
   adminId: string;
   adminName?: string;
