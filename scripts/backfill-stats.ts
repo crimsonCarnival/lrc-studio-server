@@ -1,44 +1,62 @@
+/**
+ * backfill-stats.ts
+ *
+ * Recomputes user.stats (minutesSynced, secondsSynced, wordsSynced,
+ * karaokeLines, syncedLines) for every non-deleted user by running the same
+ * aggregation pipeline used by recomputeSyncStats().
+ *
+ * Run with:
+ *   npx ts-node --esm scripts/backfill-stats.ts
+ *   -- or --
+ *   node --loader ts-node/esm scripts/backfill-stats.ts
+ */
+
 import 'dotenv/config';
 import mongoose from 'mongoose';
 import User from '../src/db/user.model.js';
 import { recomputeSyncStats } from '../src/modules/badges/badge.service.js';
 
-const uri = process.env.MONGODB_URI;
-
-if (!uri) {
-  console.error('Error: MONGODB_URI is not defined in .env');
+const MONGO_URI = process.env.MONGODB_URI ?? process.env.MONGO_URI ?? '';
+if (!MONGO_URI) {
+  console.error('❌  No MONGODB_URI env var found.');
   process.exit(1);
 }
 
-async function backfillStats() {
-  try {
-    console.log(`Connecting to MongoDB...`);
-    await mongoose.connect(uri);
-    console.log('Connected.');
+async function main() {
+  await mongoose.connect(MONGO_URI);
+  console.log('✅  Connected to MongoDB');
 
-    const users = await User.find({ isDeleted: { $ne: true } }).select('_id accountName');
-    console.log(`Found ${users.length} active users. Starting backfill...`);
+  const users = await User.find({ isDeleted: { $ne: true } })
+    .select('_id accountName')
+    .lean<{ _id: mongoose.Types.ObjectId; accountName?: string }[]>();
 
-    let processed = 0;
-    for (const user of users) {
-      try {
-        await recomputeSyncStats(user._id.toString());
-        processed++;
-        if (processed % 10 === 0) {
-          console.log(`Processed ${processed}/${users.length} users...`);
-        }
-      } catch (err) {
-        console.error(`Failed to process user ${user.accountName} (${user._id}):`, err);
-      }
+  console.log(`🔄  Backfilling stats for ${users.length} users…\n`);
+
+  let ok = 0;
+  let failed = 0;
+
+  for (const user of users) {
+    const uid = user._id.toString();
+    try {
+      const stats = await recomputeSyncStats(uid);
+      console.log(
+        `  ✓ ${user.accountName ?? uid}` +
+        `  syncedLines=${stats.syncedLines}` +
+        `  minutesSynced=${stats.minutesSynced}` +
+        `  karaokeLines=${stats.karaokeLines}`
+      );
+      ok++;
+    } catch (err) {
+      console.error(`  ✗ ${user.accountName ?? uid}:`, (err as Error).message);
+      failed++;
     }
-
-    console.log(`\nBackfill complete! Processed ${processed} users.`);
-  } catch (error) {
-    console.error('Error:', error);
-  } finally {
-    await mongoose.disconnect();
-    process.exit(0);
   }
+
+  console.log(`\n✅  Done. ${ok} succeeded, ${failed} failed.`);
+  await mongoose.disconnect();
 }
 
-backfillStats();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

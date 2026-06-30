@@ -98,7 +98,6 @@ export const settingsSchema = `
   }
 
   type InterfaceSettings {
-    theme: String
     defaultLanguage: String
     fontSize: String
     spacing: String
@@ -254,7 +253,6 @@ export const settingsSchema = `
   }
 
   input InterfaceSettingsInput {
-    theme: String
     defaultLanguage: String
     fontSize: String
     spacing: String
