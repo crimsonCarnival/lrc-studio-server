@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
+import User from '../../db/user.model.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
@@ -289,6 +290,15 @@ export async function getProject(publicId: string, requestingUserId?: string | n
   if (!project) return null;
 
   if (!project.public && !project.isOwnedBy(requestingUserId ?? '')) return null;
+
+  // Refresh stats for the owner on project load so settings→stats and leaderboard stay current.
+  // Throttled to once per 5 minutes to avoid expensive repeated aggregations.
+  if (requestingUserId && project.isOwnedBy(requestingUserId)) {
+    User.findById(requestingUserId).select('statsComputedAt').lean<{ statsComputedAt?: Date | null }>().then(u => {
+      const stale = !u?.statsComputedAt || (Date.now() - u.statsComputedAt.getTime() > 5 * 60 * 1000);
+      if (stale) recomputeSyncStats(requestingUserId).catch(() => undefined);
+    }).catch(() => undefined);
+  }
 
   const pub: Record<string, unknown> = project.toPublic();
   const rawUpload = pub.uploadId;

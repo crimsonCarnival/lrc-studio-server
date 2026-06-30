@@ -46,7 +46,10 @@ export async function generateAudioSignature(data: Record<string, unknown>, user
   const timestamp = Math.round(Date.now() / 1000);
   // Guests upload to a shared 'guests' folder; authenticated users get their own subfolder.
   const userFolder = userId ? `${UPLOAD_FOLDER}/${userId}` : `${UPLOAD_FOLDER}/guests`;
-  const params = { timestamp, folder: userFolder };
+  // allowed_formats is signed so Cloudinary enforces file type server-side.
+  // Client must echo this value back in the upload form — otherwise Cloudinary rejects the upload.
+  const allowedFormats = ALLOWED_AUDIO_EXTENSIONS.join(',');
+  const params = { timestamp, folder: userFolder, allowed_formats: allowedFormats };
   const signature = cloudinary.utils.api_sign_request(params, apiSecret);
 
   return {
@@ -56,6 +59,7 @@ export async function generateAudioSignature(data: Record<string, unknown>, user
     apiKey: process.env.CLOUDINARY_API_KEY,
     folder: userFolder,
     resourceType: 'video',
+    allowedFormats,
   };
 }
 
