@@ -86,6 +86,7 @@ export const projectSchema = `
     translations: [TranslationInput!]
     words: [WordInput!]
     secondaryWords: [WordInput!]
+    source: String
   }
 
   input ProjectStateInput {

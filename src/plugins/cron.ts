@@ -6,6 +6,7 @@ import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js'
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
 import { syncRolePermissions } from '../modules/admin/admin.service.js';
+import { sweepJobs } from '../modules/asr/job.store.js';
 
 /**
  * Lightweight cron-like scheduler using setInterval.
@@ -76,6 +77,7 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.addHook('onReady', async () => {
     const runTrending = async () => {
       try {
+        sweepJobs();
         await recomputeTrendingScores();
         await recomputeLeaderboardRanking();
       } catch (err) {

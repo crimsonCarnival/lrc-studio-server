@@ -11,6 +11,7 @@ import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
 import { writeActivity } from '../activity/activity.service.js';
 import { recomputeSyncStats, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
+import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
   _id: mongoose.Types.ObjectId;
@@ -400,7 +401,12 @@ export async function updateProject(
     Promise.all([
       recomputeSyncStats(userId),
       updateStreak(userId),
-    ]).then(() => triggerBadgeCheck(userId, 'sync_update')).catch(() => {});
+    ]).then(([_stats]) =>
+      Promise.all([
+        triggerBadgeCheck(userId, 'sync_update'),
+        recomputeLeaderboardRanking(),
+      ])
+    ).catch(() => {});
   }
 
   return { project: pub as unknown as ProjectPublic };
