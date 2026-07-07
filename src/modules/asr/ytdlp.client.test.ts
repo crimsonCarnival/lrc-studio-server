@@ -81,7 +81,7 @@ describe('extractYoutubeAudio', () => {
     expect(res.data.equals(Buffer.from('audio-bytes'))).toBe(true);
     // Download call must use the probed format id and canonical URL, array args, no shell.
     const dlArgs = vi.mocked(spawn).mock.calls[1];
-    expect(dlArgs[1]).toEqual(['-f', '140', '--no-playlist', '-o', '-', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+    expect(dlArgs[1]).toEqual(['--extractor-args', 'youtube:player_client=android,web', '-f', '140', '--no-playlist', '-o', '-', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
     expect(dlArgs[2]).toMatchObject({ shell: false });
   });
 

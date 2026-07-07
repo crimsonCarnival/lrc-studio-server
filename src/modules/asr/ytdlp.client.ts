@@ -125,7 +125,7 @@ export async function extractYoutubeAudio(videoId: string, signal: AbortSignal):
   try {
     const url = canonicalUrl(videoId);
 
-    const probeOut = await runYtdlp(['-J', '--no-playlist', url], { signal, maxBytes: MAX_PROBE_BYTES });
+    const probeOut = await runYtdlp(['--extractor-args', 'youtube:player_client=android,web', '-J', '--no-playlist', url], { signal, maxBytes: MAX_PROBE_BYTES });
     let probe: Probe;
     try { probe = JSON.parse(probeOut.toString('utf8')) as Probe; }
     catch { throw new AsrError('asr_youtube_unavailable', 'unparseable probe'); }
@@ -138,7 +138,7 @@ export async function extractYoutubeAudio(videoId: string, signal: AbortSignal):
     }
     const { formatId, format } = pickAudioFormat(probe.formats ?? []);
 
-    const data = await runYtdlp(['-f', formatId, '--no-playlist', '-o', '-', url], { signal, maxBytes: MAX_AUDIO_BYTES });
+    const data = await runYtdlp(['--extractor-args', 'youtube:player_client=android,web', '-f', formatId, '--no-playlist', '-o', '-', url], { signal, maxBytes: MAX_AUDIO_BYTES });
     if (data.byteLength === 0) throw new AsrError('asr_youtube_unavailable', 'empty download');
     return { data, format };
   } finally {

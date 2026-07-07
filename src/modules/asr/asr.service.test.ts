@@ -89,7 +89,7 @@ describe('startStampJob', () => {
 
     const job = getJob(jobId)!;
     expect(job.result).toEqual([
-      { index: 0, timestamp: 0, endTime: 2, confidence: 1, status: 'matched' },
+      { index: 0, timestamp: 0, endTime: 2, confidence: 1, status: 'matched', words: [{ time: 0, word: 'hello' }, { time: 1, word: 'world' }] },
     ]);
     expect(job.errorCode).toBeUndefined();
 
