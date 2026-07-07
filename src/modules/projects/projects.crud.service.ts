@@ -6,6 +6,7 @@ import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import User from '../../db/user.model.js';
+import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
@@ -139,6 +140,17 @@ export async function createProject(
       resolvedUploadId = upload._id;
     }
 
+    let finalIsPublic: boolean;
+    if (isPublic !== undefined) {
+      finalIsPublic = isPublic;
+    } else if (userId) {
+      const prefs = await getPreferences(userId);
+      // Ensure backwards compatibility by defaulting to public if the preference is somehow missing
+      finalIsPublic = prefs?.defaultProjectPrivacy !== 'private';
+    } else {
+      finalIsPublic = false; // Guests default to private
+    }
+
     const [project] = await Project.create([{
       userId: userId || null,
       title: stripHtml(title || '').slice(0, 200),
@@ -147,7 +159,7 @@ export async function createProject(
       metadata: metadata || {},
       coverImage: coverImage ? sanitizeUrl(coverImage) : '',
       readOnly: readOnly ?? true,
-      public: isPublic ?? true,
+      public: finalIsPublic,
     }], { session });
 
     const incomingSections: SectionEntry[] = lyrics?.sections

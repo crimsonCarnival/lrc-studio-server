@@ -13,6 +13,7 @@ export interface IUserPreferences {
   userId: mongoose.Types.ObjectId;
   showFollowers: boolean;
   onlineVisibility: 'everyone' | 'friends' | 'nobody';
+  defaultProjectPrivacy: 'public' | 'private';
   miniProfileBadgesEnabled: boolean;
   miniProfileBadgeIds: string[];
   notifications: INotificationPrefs;
@@ -31,6 +32,7 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   userId:                   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true, index: true },
   showFollowers:            { type: Boolean, default: true },
   onlineVisibility:         { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'friends' },
+  defaultProjectPrivacy:    { type: String, enum: ['public', 'private'], default: 'public' },
   miniProfileBadgesEnabled: { type: Boolean, default: true },
   miniProfileBadgeIds:      { type: [String], default: [] },
   notifications:            { type: notifPrefsSchema, default: () => ({}) },

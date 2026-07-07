@@ -98,23 +98,41 @@ export interface UserPublic {
   isVerified: boolean;
   ban: { active: boolean; reason?: string | null; until?: Date | null };
   appeal?: { text?: string | null; status: string; submittedAt?: Date | null; resolvedAt?: Date | null } | null;
-  wasJustUnbanned?: boolean;
   role: string;
-  permissions?: string[];
+  permissions: string[];
   createdAt?: Date;
   passwordChangedAt?: Date | null;
+  lastAccountNameChangedAt?: Date | null;
   hasPassword?: boolean;
+  lastIp?: string;
+  lastDevice?: string;
+  lastLoginAt?: Date;
   google?: {
     connected: boolean;
     googleId?: string | null;
     email?: string | null;
     name?: string | null;
     pictureUrl?: string | null;
-  } | null;
-  showFollowers?: boolean;
-  stats?: { minutesSynced: number; wordsSynced: number; karaokeLines: number };
-  streak?: { current: number; longest: number; lastActiveDate?: Date | null };
-  progression?: { xp: number; level: number };
+  };
+  badges: Array<{ id: string; grantedAt: Date; grantedBy: string }>;
+  showcasedBadges: string[];
+  showcasePublic: boolean;
+  stats: {
+    minutesSynced: number;
+    secondsSynced: number;
+    wordsSynced: number;
+    karaokeLines: number;
+    syncedLines: number;
+  };
+  streak: {
+    current: number;
+    longest: number;
+    lastActiveDate?: Date | null;
+  };
+  progression: {
+    xp: number;
+    level: number;
+  };
 }
 
 export interface AuthTokens {

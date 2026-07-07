@@ -113,6 +113,7 @@ export const rootSchema = `
   type UserPreferences {
     showFollowers: Boolean!
     onlineVisibility: String!
+    defaultProjectPrivacy: String!
     miniProfileBadgesEnabled: Boolean!
     miniProfileBadgeIds: [String!]!
     notifications: NotificationPreferences!
@@ -130,6 +131,7 @@ export const rootSchema = `
   input UpdatePreferencesInput {
     showFollowers: Boolean
     onlineVisibility: String
+    defaultProjectPrivacy: String
     miniProfileBadgesEnabled: Boolean
     miniProfileBadgeIds: [String!]
     notifications: NotificationPreferencesInput

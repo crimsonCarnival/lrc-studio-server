@@ -519,7 +519,19 @@ export async function getProfile(
     user.lastIp = ip;
   }
 
-  return { user: user.toPublic() as unknown as UserPublic };
+  // Fetch the latest session to expose privacy metrics to the owner
+  const latestSession = await Session.findOne({ userId: user._id })
+    .sort({ lastUsedAt: -1 })
+    .lean();
+
+  const publicProfile = user.toPublic() as unknown as UserPublic;
+  if (latestSession) {
+    publicProfile.lastIp = latestSession.ip;
+    publicProfile.lastDevice = latestSession.deviceName;
+    publicProfile.lastLoginAt = latestSession.lastUsedAt;
+  }
+
+  return { user: publicProfile };
 }
 
 export interface UpdateProfileData {
