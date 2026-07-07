@@ -38,9 +38,13 @@ const lineSchema = new mongoose.Schema(
     translations: { type: [translationSchema], default: undefined },
     words: { type: [wordSchema], default: undefined },
     secondaryWords: { type: [wordSchema], default: undefined },
+    // Tracks whether the timestamp was set by AI (ASR auto-stamp) or manually.
+    // null = legacy/unknown (treated as manual). Resets to 'manual' on any manual edit.
+    source: { type: String, enum: ['manual', 'asr'], default: null },
   },
   { _id: false }
 );
+
 
 // --- Subdocument: Section ---
 const sectionSchema = new mongoose.Schema(

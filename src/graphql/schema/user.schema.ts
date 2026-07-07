@@ -5,6 +5,8 @@ export const userSchema = `
     wordsSynced: Float
     karaokeLines: Float
     syncedLines: Float
+    aiSyncedLines: Float
+    aiWordsSynced: Float
   }
 
   type UserStreak {

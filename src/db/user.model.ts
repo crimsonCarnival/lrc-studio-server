@@ -61,6 +61,9 @@ export interface IUserStats {
   wordsSynced: number;
   karaokeLines: number;
   syncedLines: number;
+  // Lines whose timestamp was set by ASR auto-stamp (not manually synced)
+  aiSyncedLines: number;
+  aiWordsSynced: number;
 }
 
 export interface IUserStreak {
@@ -187,6 +190,8 @@ const statsSchema = new mongoose.Schema<IUserStats>(
     wordsSynced: { type: Number, default: 0, min: 0 },
     karaokeLines: { type: Number, default: 0, min: 0 },
     syncedLines: { type: Number, default: 0, min: 0 },
+    aiSyncedLines: { type: Number, default: 0, min: 0 },
+    aiWordsSynced: { type: Number, default: 0, min: 0 },
   },
   { _id: false },
 );

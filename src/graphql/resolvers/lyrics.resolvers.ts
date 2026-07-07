@@ -2,6 +2,7 @@ import Project from '../../modules/projects/project.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import { Context } from './context.js';
 import { recomputeSyncStats, triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
+import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
 
 export interface LyricsInput {
   [key: string]: unknown;
@@ -28,11 +29,16 @@ export const lyricsResolvers = {
         { $set: update, $unset: { lines: 1 } },
         { new: true, upsert: true }
       );
-      // Fire-and-forget: recompute stats then check badges
+      // Fire-and-forget: recompute stats, ranking, then check badges
       Promise.all([
         recomputeSyncStats(context.userId),
         updateStreak(context.userId),
-      ]).then(() => triggerBadgeCheck(context.userId!, 'sync_update')).catch(() => {});
+      ]).then(([_stats]) =>
+        Promise.all([
+          triggerBadgeCheck(context.userId!, 'sync_update'),
+          recomputeLeaderboardRanking(),
+        ])
+      ).catch(() => {});
       return result;
     },
   },

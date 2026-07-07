@@ -320,16 +320,18 @@ export async function recomputeSyncStats(userId: string): Promise<{
   wordsSynced: number;
   karaokeLines: number;
   syncedLines: number;
+  aiSyncedLines: number;
+  aiWordsSynced: number;
 }> {
   const userProjects = await Project.find({ userId }).select('publicId').lean<{ publicId: string }[]>();
   const publicIds: string[] = userProjects.map((p) => p.publicId);
 
   if (publicIds.length === 0) {
-    await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0, 'stats.syncedLines': 0, statsComputedAt: new Date() } });
-    return { minutesSynced: 0, secondsSynced: 0, wordsSynced: 0, karaokeLines: 0, syncedLines: 0 };
+    await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0, 'stats.syncedLines': 0, 'stats.aiSyncedLines': 0, 'stats.aiWordsSynced': 0, statsComputedAt: new Date() } });
+    return { minutesSynced: 0, secondsSynced: 0, wordsSynced: 0, karaokeLines: 0, syncedLines: 0, aiSyncedLines: 0, aiWordsSynced: 0 };
   }
 
-  const [minAgg, wordAgg, karaokeAgg, syncedLineAgg] = await Promise.all([
+  const [minAgg, wordAgg, aiWordAgg, karaokeAgg, syncedLineAgg, aiSyncedLineAgg] = await Promise.all([
     // Minutes: max timestamp per project
     Lyrics.aggregate([
       { $match: { publicId: { $in: publicIds } } },
@@ -387,6 +389,33 @@ export async function recomputeSyncStats(userId: string): Promise<{
         }
       },
       { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: '$allLines.words', preserveNullAndEmptyArrays: false } },
+      { $match: { 'allLines.words.time': { $ne: null } } },
+      { $count: 'total' },
+    ]),
+
+    // AI Words: total number of words with time != null in AI-sourced lines
+    Lyrics.aggregate([
+      { $match: { publicId: { $in: publicIds } } },
+      {
+        $project: {
+          allLines: {
+            $cond: {
+              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+              then: {
+                $reduce: {
+                  input: '$sections',
+                  initialValue: [],
+                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
+                }
+              },
+              else: { $ifNull: ['$lines', []] }
+            }
+          }
+        }
+      },
+      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
+      { $match: { 'allLines.source': 'asr' } },
       { $unwind: { path: '$allLines.words', preserveNullAndEmptyArrays: false } },
       { $match: { 'allLines.words.time': { $ne: null } } },
       { $count: 'total' },
@@ -456,6 +485,55 @@ export async function recomputeSyncStats(userId: string): Promise<{
       },
       { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
       { $match: {
+          // Exclude blank/placeholder lines (empty text shown as ♪)
+          'allLines.text': { $exists: true, $nin: [null, ''] },
+          $expr: {
+            $or: [
+              { $ne: ['$allLines.timestamp', null] },
+              {
+                $gt: [
+                  {
+                    $size: {
+                      $filter: {
+                        input: { $ifNull: ['$allLines.words', []] },
+                        cond: { $ne: ['$$this.time', null] },
+                      },
+                    },
+                  },
+                  0,
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { $count: 'total' },
+    ]),
+    // AI-stamped synced lines: lines with source='asr' and a non-null timestamp or word time
+    Lyrics.aggregate([
+      { $match: { publicId: { $in: publicIds } } },
+      {
+        $project: {
+          allLines: {
+            $cond: {
+              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
+              then: {
+                $reduce: {
+                  input: '$sections',
+                  initialValue: [],
+                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
+                }
+              },
+              else: { $ifNull: ['$lines', []] }
+            }
+          }
+        }
+      },
+      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
+      { $match: {
+          'allLines.source': 'asr',
+          // Exclude blank/placeholder lines (empty text shown as ♪)
+          'allLines.text': { $exists: true, $nin: [null, ''] },
           $expr: {
             $or: [
               { $ne: ['$allLines.timestamp', null] },
@@ -486,9 +564,11 @@ export async function recomputeSyncStats(userId: string): Promise<{
   const wordsSynced = wordAgg[0]?.total ?? 0;
   const karaokeLines = karaokeAgg[0]?.total ?? 0;
   const syncedLines = syncedLineAgg[0]?.total ?? 0;
+  const aiSyncedLines = aiSyncedLineAgg[0]?.total ?? 0;
+  const aiWordsSynced = aiWordAgg[0]?.total ?? 0;
 
-  await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines, 'stats.syncedLines': syncedLines, statsComputedAt: new Date() } });
-  return { minutesSynced, secondsSynced, wordsSynced, karaokeLines, syncedLines };
+  await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines, 'stats.syncedLines': syncedLines, 'stats.aiSyncedLines': aiSyncedLines, 'stats.aiWordsSynced': aiWordsSynced, statsComputedAt: new Date() } });
+  return { minutesSynced, secondsSynced, wordsSynced, karaokeLines, syncedLines, aiSyncedLines, aiWordsSynced };
 }
 
 // ─── XP Event logging (event-based system) ────────────────────────────────────
