@@ -47,7 +47,7 @@ function runYtdlp(args: string[], { signal, maxBytes }: RunOpts): Promise<Buffer
     try {
       child = spawn(process.env.YTDLP_PATH || 'yt-dlp', args, { shell: false, windowsHide: true });
     } catch {
-      reject(new AsrError('asr_not_configured', 'yt-dlp spawn failed'));
+      reject(new AsrError('asr_ytdlp_not_configured', 'yt-dlp spawn failed'));
       return;
     }
 
@@ -78,7 +78,7 @@ function runYtdlp(args: string[], { signal, maxBytes }: RunOpts): Promise<Buffer
     child.on('error', (err: NodeJS.ErrnoException) => {
       // ENOENT = binary not installed → server misconfiguration, not a user error.
       killAndReject(err.code === 'ENOENT'
-        ? new AsrError('asr_not_configured', 'yt-dlp binary not found')
+        ? new AsrError('asr_ytdlp_not_configured', 'yt-dlp binary not found')
         : new AsrError('asr_network', 'yt-dlp process error'));
     });
     child.stdout.on('data', (chunk: Buffer) => {

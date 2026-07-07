@@ -168,12 +168,12 @@ describe('extractYoutubeAudio', () => {
     }).not.toThrow();
   });
 
-  it('maps ENOENT (binary missing) to asr_not_configured', async () => {
+  it('maps ENOENT (binary missing) to asr_ytdlp_not_configured', async () => {
     const probe = fakeChild();
     queueChildren(probe);
     setImmediate(() => probe.emit('error', Object.assign(new Error('spawn yt-dlp ENOENT'), { code: 'ENOENT' })));
     await expect(extractYoutubeAudio('dQw4w9WgXcQ', abort().signal))
-      .rejects.toMatchObject({ code: 'asr_not_configured' });
+      .rejects.toMatchObject({ code: 'asr_ytdlp_not_configured' });
   });
 
   it('rejects the 4th concurrent extraction with asr_rate_limited', async () => {
