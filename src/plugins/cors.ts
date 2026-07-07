@@ -11,7 +11,7 @@ async function corsPlugin(fastify: FastifyInstance): Promise<void> {
     origin: origins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id', 'X-Socket-Id'],
   });
 }
 
