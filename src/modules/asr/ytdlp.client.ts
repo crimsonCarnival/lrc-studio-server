@@ -29,6 +29,16 @@ function canonicalUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
+// bgutil PO-token sidecar (datacenter IPs get bot-checked without one).
+// Plugin zip lives in ./yt-dlp-plugins (downloaded by render-build.sh),
+// relative to cwd like YTDLP_PATH. Read at call time, not module load —
+// dotenv may not have run yet.
+function extractorArgs(): string[] {
+  const potUrl = process.env.YTDLP_POT_PROVIDER_URL;
+  if (!potUrl) return [];
+  return ['--plugin-dirs', './yt-dlp-plugins', '--extractor-args', `youtubepot-bgutilhttp:base_url=${potUrl}`];
+}
+
 function mapStderr(stderr: string): AsrError {
   if (/sign in to confirm|confirm you.{0,3}re not a bot|HTTP Error 403/i.test(stderr)) {
     return new AsrError('asr_youtube_blocked', 'yt-dlp blocked');
@@ -95,7 +105,10 @@ function runYtdlp(args: string[], { signal, maxBytes }: RunOpts): Promise<Buffer
     });
     child.on('close', (code) => {
       if (code === 0) settle(() => resolve(Buffer.concat(chunks)));
-      else settle(() => reject(mapStderr(stderr)));
+      else settle(() => {
+        console.error('[asr] yt-dlp exited non-zero:', stderr.slice(0, 2000));
+        reject(mapStderr(stderr));
+      });
     });
 
     if (signal.aborted) { onAbort(); return; }
@@ -125,7 +138,7 @@ export async function extractYoutubeAudio(videoId: string, signal: AbortSignal):
   try {
     const url = canonicalUrl(videoId);
 
-    const probeOut = await runYtdlp(['--extractor-args', 'youtube:player_client=android,web', '-J', '--no-playlist', url], { signal, maxBytes: MAX_PROBE_BYTES });
+    const probeOut = await runYtdlp([...extractorArgs(), '-J', '--no-playlist', url], { signal, maxBytes: MAX_PROBE_BYTES });
     let probe: Probe;
     try { probe = JSON.parse(probeOut.toString('utf8')) as Probe; }
     catch { throw new AsrError('asr_youtube_unavailable', 'unparseable probe'); }
@@ -138,7 +151,7 @@ export async function extractYoutubeAudio(videoId: string, signal: AbortSignal):
     }
     const { formatId, format } = pickAudioFormat(probe.formats ?? []);
 
-    const data = await runYtdlp(['--extractor-args', 'youtube:player_client=android,web', '-f', formatId, '--no-playlist', '-o', '-', url], { signal, maxBytes: MAX_AUDIO_BYTES });
+    const data = await runYtdlp([...extractorArgs(), '-f', formatId, '--no-playlist', '-o', '-', url], { signal, maxBytes: MAX_AUDIO_BYTES });
     if (data.byteLength === 0) throw new AsrError('asr_youtube_unavailable', 'empty download');
     return { data, format };
   } finally {

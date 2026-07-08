@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
@@ -81,8 +81,48 @@ describe('extractYoutubeAudio', () => {
     expect(res.data.equals(Buffer.from('audio-bytes'))).toBe(true);
     // Download call must use the probed format id and canonical URL, array args, no shell.
     const dlArgs = vi.mocked(spawn).mock.calls[1];
-    expect(dlArgs[1]).toEqual(['--extractor-args', 'youtube:player_client=android,web', '-f', '140', '--no-playlist', '-o', '-', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+    expect(dlArgs[1]).toEqual(['-f', '140', '--no-playlist', '-o', '-', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
     expect(dlArgs[2]).toMatchObject({ shell: false });
+  });
+
+  describe('PO token provider wiring', () => {
+    afterEach(() => { delete process.env.YTDLP_POT_PROVIDER_URL; });
+
+    it('passes the bgutil base_url extractor-args to both invocations when YTDLP_POT_PROVIDER_URL is set', async () => {
+      process.env.YTDLP_POT_PROVIDER_URL = 'http://pot-provider:4416';
+      const probe = fakeChild();
+      const dl = fakeChild();
+      queueChildren(probe, dl);
+      finish(probe, probeJson());
+      const promise = extractYoutubeAudio('dQw4w9WgXcQ', abort().signal);
+      await new Promise((r) => setTimeout(r, 10));
+      finish(dl, Buffer.from('x'));
+      await promise;
+      const potArgs = ['--plugin-dirs', './yt-dlp-plugins', '--extractor-args', 'youtubepot-bgutilhttp:base_url=http://pot-provider:4416'];
+      expect(vi.mocked(spawn).mock.calls[0][1]).toEqual([...potArgs, '-J', '--no-playlist', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+      expect(vi.mocked(spawn).mock.calls[1][1]).toEqual([...potArgs, '-f', '140', '--no-playlist', '-o', '-', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+    });
+
+    it('passes no extractor-args when YTDLP_POT_PROVIDER_URL is unset', async () => {
+      const probe = fakeChild();
+      queueChildren(probe);
+      finish(probe, probeJson({ duration: 1201 }));
+      await expect(extractYoutubeAudio('dQw4w9WgXcQ', abort().signal)).rejects.toBeInstanceOf(AsrError);
+      expect(vi.mocked(spawn).mock.calls[0][1]).toEqual(['-J', '--no-playlist', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+    });
+  });
+
+  it('logs a stderr snippet when yt-dlp exits non-zero', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const probe = fakeChild();
+      queueChildren(probe);
+      finish(probe, '', 1, 'ERROR: Sign in to confirm you\'re not a bot');
+      await expect(extractYoutubeAudio('dQw4w9WgXcQ', abort().signal)).rejects.toMatchObject({ code: 'asr_youtube_blocked' });
+      expect(spy).toHaveBeenCalledWith('[asr] yt-dlp exited non-zero:', expect.stringContaining('not a bot'));
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('falls back to webm when no m4a audio-only format exists', async () => {
