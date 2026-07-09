@@ -20,8 +20,18 @@ export interface UploadDoc {
 
 export const uploadResolvers = {
   Query: {
-    upload: async (_root: unknown, { id }: { id: string }) => {
-      return Upload.findById(id);
+    upload: async (_root: unknown, { id }: { id: string }, context: Context) => {
+      const upload = await Upload.findById(id);
+      if (!upload) return null;
+      // Ownerless (guest, userId: null) uploads are denied too, not just
+      // mismatched-owner ones — mirrors the REST twin (uploads.service.ts
+      // getMedia). Guests never reach this query in practice: the `uploads`
+      // list query above already returns [] when unauthenticated, so there's
+      // nothing to click into. Unrelated to Project.upload (project.resolvers.ts),
+      // which stays ungated since access there is already decided by the
+      // project query itself (public/shared projects must still resolve media).
+      if (!upload.userId || upload.userId.toString() !== context.userId) return null;
+      return upload;
     },
 
     uploads: async (_root: unknown, { limit = 50, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
