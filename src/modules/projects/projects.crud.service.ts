@@ -367,6 +367,7 @@ export async function updateProject(
     if (lyrics.editorMode !== undefined) lyricsUpdate.editorMode = lyrics.editorMode;
     if (lyrics.language !== undefined) lyricsUpdate.language = lyrics.language;
     if (lyrics.sections !== undefined) lyricsUpdate.sections = lyrics.sections;
+    if (lyricsUpdate.sections) assertValidSectionsTiming(lyricsUpdate.sections as unknown[]);
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },
@@ -544,6 +545,24 @@ function isValidIndex(n: unknown, max: number): n is number {
   return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max;
 }
 
+// findOneAndUpdate never runs the Lyrics model's document-level pre('validate') hook
+// (Mongoose only runs SchemaType path validators for updates, not document middleware),
+// so cross-field timing checks must be re-applied here before every $set that can touch
+// timestamp/endTime.
+function assertValidLineTiming(line: { timestamp?: unknown; endTime?: unknown }, context: string): void {
+  const { timestamp, endTime } = line;
+  if (typeof timestamp === 'number' && typeof endTime === 'number' && endTime <= timestamp) {
+    throw Object.assign(new Error(`${context}: endTime must be greater than timestamp`), { statusCode: 422 });
+  }
+}
+
+function assertValidSectionsTiming(sections: unknown[]): void {
+  for (const section of sections ?? []) {
+    const lines = (section as { lines?: unknown[] })?.lines ?? [];
+    lines.forEach((line, i) => assertValidLineTiming(line as { timestamp?: unknown; endTime?: unknown }, `Section line ${i}`));
+  }
+}
+
 async function patchLyricsWithSession(
   publicId: string,
   lyricsData: NonNullable<UpdateProjectData['lyrics']>,
@@ -560,6 +579,7 @@ async function patchLyricsWithSession(
       update[`sections.${lyricsData.sectionIdx}.lines.${lyricsData.lineIdx}.${key}`] = value;
     }
     if (Object.keys(update).length === 0) return Lyrics.findOne({ publicId }, null, { session }) as Promise<LyricsDoc | null>;
+    assertValidLineTiming(lyricsData.line, `Section ${lyricsData.sectionIdx} line ${lyricsData.lineIdx}`);
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: update, $inc: { version: 1 } },
@@ -595,6 +615,7 @@ async function patchLyricsWithSession(
   if (lyricsData.sections !== undefined) lyricsUpdate.sections = lyricsData.sections;
 
   if (Object.keys(lyricsUpdate).length > 0) {
+    if (lyricsUpdate.sections) assertValidSectionsTiming(lyricsUpdate.sections as unknown[]);
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },

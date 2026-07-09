@@ -15,6 +15,7 @@ import { schema } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
 import fastifyCookie from '@fastify/cookie';
+import { handleFastifyError } from './shared/errorHandler.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import projectRoutes from './modules/projects/projects.routes.js';
@@ -50,6 +51,10 @@ async function build() {
   const app = Fastify({
     logger: envToLogger[process.env.NODE_ENV as string] ?? envToLogger.production,
     trustProxy: true,
+    // JSON/text bodies only — audio uploads go client→Cloudinary directly via
+    // signed URL and never pass through this limit. 5MB comfortably covers a
+    // full-project PATCH (large words-mode projects with translations).
+    bodyLimit: 5 * 1024 * 1024,
   });
 
   await app.register(fastifyCookie, {
@@ -97,26 +102,7 @@ async function build() {
     },
   });
 
-  app.setErrorHandler((error, request, reply) => {
-    const err = error as Error & { validation?: { keyword: string; params?: { missingProperty?: string } }[]; statusCode?: number };
-    if (err.validation) {
-      const missingHeaders = err.validation.filter(
-        (v) => v.keyword === 'required' && v.params?.missingProperty
-      );
-      if (missingHeaders.length > 0) {
-        return reply.code(400).send({ error: 'Missing required header: ' + missingHeaders[0].params?.missingProperty });
-      }
-      return reply.code(400).send({ error: 'validation_error' });
-    }
-    if (err.statusCode === 429) {
-      return reply.code(429).send({ error: 'too_many_requests' });
-    }
-    if (err.statusCode === 413) {
-      return reply.code(413).send({ error: 'payload_too_large' });
-    }
-    request.log.error({ err: error, url: request.url, method: request.method }, 'Unhandled error');
-    return reply.code(err.statusCode || 500).send({ error: 'server_error' });
-  });
+  app.setErrorHandler(handleFastifyError);
 
   if (process.env.NODE_ENV === 'development') {
     app.addHook('preHandler', async (request: FastifyRequest) => {

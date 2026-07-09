@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as authController from './auth.controller.js';
+import { handleFastifyError } from '../../shared/errorHandler.js';
 import {
   registerSchema,
   loginSchema,
@@ -9,16 +10,7 @@ import {
 } from './auth.schema.js';
 
 export default async function authRoutes(fastify: FastifyInstance): Promise<void> {
-  fastify.setErrorHandler((error: Error & { validation?: unknown; statusCode?: number }, request, reply) => {
-    if (error.validation) {
-      return reply.code(400).send({ error: 'validation_error' });
-    }
-    if (error.statusCode === 429) {
-      return reply.code(429).send({ error: 'too_many_requests' });
-    }
-    request.log.error(error);
-    return reply.code(error.statusCode || 500).send({ error: 'server_error' });
-  });
+  fastify.setErrorHandler(handleFastifyError);
 
   // Auth-sensitive routes key the limiter on IP ALONE. The global limiter keys on
   // `${ip}-${deviceId}`, but `x-device-id` is a client-supplied header — rotating
