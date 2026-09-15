@@ -58,6 +58,9 @@ export const userSchema = `
     progression: UserProgression
     showcaseSlots: Int!
     country: String
+    lastIp: String
+    lastDevice: String
+    lastLoginAt: String
   }
 
   type UserBan {

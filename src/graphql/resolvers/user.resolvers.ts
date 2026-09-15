@@ -13,6 +13,7 @@ import AccountNameHistory from '../../db/account-name-history.model.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
 import Follow from '../../db/follow.model.js';
+import Session from '../../db/session.model.js';
 import {
   blockUser as svcBlockUser,
   unblockUser as svcUnblockUser,
@@ -77,8 +78,19 @@ export const userResolvers = {
       const user = await User.findById(uid);
       if (!user) return null;
       const wasJustUnbanned = await user.checkBanStatus();
-      const pub = user.toPublic();
+      const pub = user.toPublic() as Record<string, unknown>;
       if (wasJustUnbanned) pub.wasJustUnbanned = true;
+
+      const latestSession = await Session.findOne({ userId: user._id })
+        .sort({ lastUsedAt: -1 })
+        .lean();
+
+      if (latestSession) {
+        pub.lastIp = latestSession.ip;
+        pub.lastDevice = latestSession.deviceName;
+        pub.lastLoginAt = latestSession.createdAt ? latestSession.createdAt.toISOString() : null;
+      }
+
       return pub;
     },
 
@@ -862,7 +874,8 @@ export const userResolvers = {
       const id = (user._id ?? user.id).toString();
       
       if (context.userId === id) {
-        if (!user.lastIp || user.lastIp === '127.0.0.1' || user.lastIp === '::1') return null;
+        if (!user.lastIp) return null;
+        if (user.lastIp === '127.0.0.1' || user.lastIp === '::1') return 'LOCAL';
         const geoip = (await import('geoip-lite')).default;
         return geoip.lookup(user.lastIp)?.country ?? null;
       }
@@ -870,7 +883,8 @@ export const userResolvers = {
       if (context.userId) {
         const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
         if (hasPermission(requester?.permissions, 'users.view')) {
-          if (!user.lastIp || user.lastIp === '127.0.0.1' || user.lastIp === '::1') return null;
+          if (!user.lastIp) return null;
+          if (user.lastIp === '127.0.0.1' || user.lastIp === '::1') return 'LOCAL';
           const geoip = (await import('geoip-lite')).default;
           return geoip.lookup(user.lastIp)?.country ?? null;
         }
