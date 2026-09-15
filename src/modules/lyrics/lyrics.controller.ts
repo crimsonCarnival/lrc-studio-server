@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { LineEntry } from '../../types/index.js';
+import JobLog from '../../db/job-log.model.js';
 
 import {
   parseLrcSrtFile,
@@ -62,8 +63,15 @@ export async function compileSrt(req: FastifyRequest, reply: FastifyReply) {
 export async function inferEnd(req: FastifyRequest, reply: FastifyReply) {
   const body = req.body as Body;
   const { lines, duration = null, srtConfig = {} } = body;
-  const result = inferEndTimes(lines, duration, srtConfig);
-  return reply.send({ lines: result });
+  try {
+    const result = inferEndTimes(lines, duration, srtConfig);
+    await JobLog.create({ jobType: 'infer_end_times', status: 'succeeded', userId: req.userId || null }).catch(() => {});
+    return reply.send({ lines: result });
+  } catch (error) {
+    req.log.error({ err: error }, 'inferEndTimes failed');
+    await JobLog.create({ jobType: 'infer_end_times', status: 'failed', error: (error as Error).message || 'unknown_error', userId: req.userId || null }).catch(() => {});
+    return reply.code(500).send({ error: 'infer_failed' });
+  }
 }
 
 export async function mark(req: FastifyRequest, reply: FastifyReply) {

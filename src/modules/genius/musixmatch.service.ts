@@ -54,7 +54,19 @@ async function fetchSecret(): Promise<string> {
   const res = await fetchWithTimeout(absoluteUrl, { headers: BROWSER_HEADERS });
   const js = await res.text();
   // The secret is a reversed, Base64-encoded string passed to from("...".split(...))
-  const match = js.match(/from\(\s*"(.*?)"\s*\.split/);
+  // We use multiple patterns to survive minification/bundler changes
+  const patterns = [
+    /from\(\s*"(.*?)"\s*\.split/,
+    /from\(\s*'(.*?)'\s*\.split/,
+    /"([a-zA-Z0-9+/=]{40,})"\s*\.split\(""\)\.reverse\(\)/,
+    /'([a-zA-Z0-9+/=]{40,})'\s*\.split\(''\)\.reverse\(\)/
+  ];
+  let match = null;
+  for (const p of patterns) {
+    match = js.match(p);
+    if (match) break;
+  }
+  
   if (!match) throw new Error('musixmatch_secret_not_found');
   const reversed = match[1].split('').reverse().join('');
   return Buffer.from(reversed, 'base64').toString('utf-8');
