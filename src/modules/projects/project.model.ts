@@ -23,6 +23,8 @@ export interface IProject extends Document {
   };
   forkCount: number;
   starCount: number;
+  viewCount: number;
+  shareCount: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -120,6 +122,8 @@ const projectSchema = new mongoose.Schema(
 
     forkCount: { type: Number, default: 0 },
     starCount: { type: Number, default: 0 },
+    viewCount: { type: Number, default: 0 },
+    shareCount: { type: Number, default: 0 },
   },
   { timestamps: true, collection: 'projects' }
 );

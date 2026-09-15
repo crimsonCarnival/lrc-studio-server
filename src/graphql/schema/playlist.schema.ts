@@ -11,6 +11,8 @@ export const playlistSchema = `
     projects: [Project!]!
     projectCount: Int!
     savedCount: Int!
+    viewCount: Int!
+    shareCount: Int!
     isSavedByMe: Boolean!
     createdAt: String!
     updatedAt: String!
