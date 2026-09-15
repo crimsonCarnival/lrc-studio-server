@@ -47,6 +47,8 @@ export const userSchema = `
     settings: Settings
     showFollowers: Boolean!
     onlineVisibility: String!
+    lastOnlineVisibility: String!
+    lastOnlineAt: String
     miniProfileBadgesEnabled: Boolean!
     miniProfileBadgeIds: [String!]!
     badges: [UserBadge!]!
@@ -55,6 +57,7 @@ export const userSchema = `
     streak: UserStreak
     progression: UserProgression
     showcaseSlots: Int!
+    country: String
   }
 
   type UserBan {
@@ -116,6 +119,8 @@ export const userSchema = `
     stats: UserStats
     streak: UserStreak
     progression: UserProgression
+    country: String
+    lastOnlineAt: String
   }
 
   type FollowUser {

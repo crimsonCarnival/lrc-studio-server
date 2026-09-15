@@ -101,6 +101,8 @@ export interface IUser extends Document {
     pictureUrl?: string | null;
   };
   social?: ISocial;
+  lastActiveDate?: Date | null;
+  lastOnlineAt?: Date | null;
   lastIp?: string | null;
   bio: string;
   currentChallenge?: string | null;
@@ -291,6 +293,10 @@ const userSchema = new mongoose.Schema<IUser>(
     isDeleted: {
       type: Boolean,
       default: false,
+    },
+    lastOnlineAt: {
+      type: Date,
+      default: null,
     },
     role: {
       type: String,

@@ -679,6 +679,18 @@ export const userResolvers = {
           throw new Error('Invalid onlineVisibility value');
         }
       }
+      if (input.lastOnlineVisibility !== undefined) {
+        const valid = ['everyone', 'friends', 'nobody'];
+        if (!valid.includes(input.lastOnlineVisibility as string)) {
+          throw new Error('Invalid lastOnlineVisibility value');
+        }
+      }
+      if (input.countryVisibility !== undefined) {
+        const valid = ['everyone', 'friends', 'nobody'];
+        if (!valid.includes(input.countryVisibility as string)) {
+          throw new Error('Invalid countryVisibility value');
+        }
+      }
 
       if (Array.isArray(input.miniProfileBadgeIds) && (input.miniProfileBadgeIds as string[]).length > 3) {
         throw new Error('Maximum 3 mini profile badges allowed');
@@ -760,25 +772,140 @@ export const userResolvers = {
       return [];
     },
 
-    showFollowers: async (user: IUser & { id?: string }) => {
+    showFollowers: async (user: IUser & { id?: string }, _args: unknown, context: Context) => {
       const id = (user._id ?? user.id).toString();
       const prefs = await getPreferences(id);
-      return prefs.showFollowers;
+      if (prefs.showFollowers) return true;
+      
+      if (context.userId && context.userId !== id) {
+        const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
+        if (hasPermission(requester?.permissions, 'users.view')) return true;
+      }
+      return false;
     },
-    miniProfileBadgesEnabled: async (user: IUser & { id?: string }) => {
+    miniProfileBadgesEnabled: async (user: IUser & { id?: string }, _args: unknown, context: Context) => {
       const id = (user._id ?? user.id).toString();
       const prefs = await getPreferences(id);
-      return prefs.miniProfileBadgesEnabled;
+      if (prefs.miniProfileBadgesEnabled) return true;
+      
+      if (context.userId && context.userId !== id) {
+        const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
+        if (hasPermission(requester?.permissions, 'users.view')) return true;
+      }
+      return false;
     },
-    miniProfileBadgeIds: async (user: IUser & { id?: string }) => {
+    miniProfileBadgeIds: async (user: IUser & { id?: string }, _args: unknown, context: Context) => {
       const id = (user._id ?? user.id).toString();
       const prefs = await getPreferences(id);
-      return prefs.miniProfileBadgesEnabled ? prefs.miniProfileBadgeIds : [];
+      if (prefs.miniProfileBadgesEnabled) return prefs.miniProfileBadgeIds;
+      
+      if (context.userId && context.userId !== id) {
+        const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
+        if (hasPermission(requester?.permissions, 'users.view')) return prefs.miniProfileBadgeIds;
+      }
+      return [];
     },
     onlineVisibility: async (user: IUser & { id?: string }) => {
       const id = (user._id ?? user.id).toString();
       const prefs = await getPreferences(id);
       return prefs.onlineVisibility;
+    },
+    lastOnlineVisibility: async (user: IUser & { id?: string }) => {
+      const id = (user._id ?? user.id).toString();
+      const prefs = await getPreferences(id);
+      return prefs.lastOnlineVisibility ?? 'friends';
+    },
+    lastOnlineAt: async (user: IUser & { id?: string }, _args: unknown, context: Context) => {
+      if (!user.lastOnlineAt) return null;
+      
+      const id = (user._id ?? user.id).toString();
+      
+      if (context.userId === id) return new Date(user.lastOnlineAt).toISOString();
+      
+      if (context.userId) {
+        const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
+        if (hasPermission(requester?.permissions, 'users.view')) {
+          return new Date(user.lastOnlineAt).toISOString();
+        }
+      }
+      
+      const prefs = await getPreferences(id);
+      const visibility = prefs.lastOnlineVisibility ?? 'friends';
+      
+      if (visibility === 'nobody') return null;
+      
+      if (visibility === 'friends') {
+        if (!context.userId) return null;
+        
+        const mongoose = (await import('mongoose')).default;
+        const Follow = (await import('../../db/follow.model.js')).default;
+        
+        const userOid = new mongoose.Types.ObjectId(id);
+        const following = await Follow.find({ followerId: userOid }).select('followingId').lean();
+        const followingIds = following.map(f => f.followingId);
+        
+        let mutualIds: string[] = [];
+        if (followingIds.length > 0) {
+          const mutuals = await Follow.find({
+            followerId: { $in: followingIds },
+            followingId: userOid,
+          }).select('followerId').lean();
+          mutualIds = mutuals.map(f => f.followerId.toString());
+        }
+
+        if (!mutualIds.includes(context.userId)) return null;
+      }
+      
+      return new Date(user.lastOnlineAt).toISOString();
+    },
+    country: async (user: IUser, _args: unknown, context: Context) => {
+      const id = (user._id ?? user.id).toString();
+      
+      if (context.userId === id) {
+        if (!user.lastIp || user.lastIp === '127.0.0.1' || user.lastIp === '::1') return null;
+        const geoip = (await import('geoip-lite')).default;
+        return geoip.lookup(user.lastIp)?.country ?? null;
+      }
+      
+      if (context.userId) {
+        const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
+        if (hasPermission(requester?.permissions, 'users.view')) {
+          if (!user.lastIp || user.lastIp === '127.0.0.1' || user.lastIp === '::1') return null;
+          const geoip = (await import('geoip-lite')).default;
+          return geoip.lookup(user.lastIp)?.country ?? null;
+        }
+      }
+      
+      const prefs = await getPreferences(id);
+      const visibility = prefs.countryVisibility ?? 'nobody';
+      
+      if (visibility === 'nobody') return null;
+      
+      if (visibility === 'friends') {
+        if (!context.userId) return null;
+        
+        const mongoose = (await import('mongoose')).default;
+        const Follow = (await import('../../db/follow.model.js')).default;
+        
+        const userOid = new mongoose.Types.ObjectId(id);
+        const following = await Follow.find({ followerId: userOid }).select('followingId').lean();
+        const followingIds = following.map(f => f.followingId);
+        
+        let mutualIds: string[] = [];
+        if (followingIds.length > 0) {
+          const mutuals = await Follow.find({
+            followerId: { $in: followingIds },
+            followingId: userOid,
+          }).select('followerId').lean();
+          mutualIds = mutuals.map(f => f.followerId.toString());
+        }
+
+        if (!mutualIds.includes(context.userId)) return null;
+      }
+      
+      if (!user.lastIp || user.lastIp === '127.0.0.1' || user.lastIp === '::1') return null;
+      const geoip = (await import('geoip-lite')).default;
+      return geoip.lookup(user.lastIp)?.country ?? null;
     },
   },
 };
