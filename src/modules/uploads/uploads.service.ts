@@ -83,7 +83,7 @@ export async function generateAvatarSignature(data: Record<string, unknown>, use
   const params = { 
     timestamp, 
     folder: userFolder,
-    transformation: 'c_fill,w_256,h_256,f_auto,q_auto'
+    transformation: 'c_fill,w_256,h_256,f_webp,q_auto'
   };
   const signature = cloudinary.utils.api_sign_request(params, apiSecret);
 
@@ -94,7 +94,7 @@ export async function generateAvatarSignature(data: Record<string, unknown>, use
     apiKey: process.env.CLOUDINARY_API_KEY,
     folder: userFolder,
     resourceType: 'image',
-    transformation: 'c_fill,w_256,h_256,f_auto,q_auto',
+    transformation: 'c_fill,w_256,h_256,f_webp,q_auto',
   };
 }
 
@@ -126,7 +126,11 @@ export async function generateCoverSignature(data: Record<string, unknown>, user
   const apiSecret = process.env.CLOUDINARY_API_SECRET as string;
   const timestamp = Math.round(Date.now() / 1000);
   const userFolder = `${COVER_FOLDER}/${userId}`;
-  const params = { timestamp, folder: userFolder };
+  const params = { 
+    timestamp, 
+    folder: userFolder,
+    transformation: 'c_limit,w_1024,f_webp,q_auto'
+  };
   const signature = cloudinary.utils.api_sign_request(params, apiSecret);
 
   return {
@@ -136,6 +140,7 @@ export async function generateCoverSignature(data: Record<string, unknown>, user
     apiKey: process.env.CLOUDINARY_API_KEY,
     folder: userFolder,
     resourceType: 'image',
+    transformation: 'c_limit,w_1024,f_webp,q_auto',
   };
 }
 
