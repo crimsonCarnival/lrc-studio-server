@@ -142,3 +142,5 @@ elevate-admin.js
 
 # Local-only admin bootstrap script
 src/scripts/grant-role.ts
+scripts/migrate-last-online.ts
+src/scripts/migrate-upload-sizes.ts
