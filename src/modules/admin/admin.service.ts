@@ -14,6 +14,9 @@ import Settings from '../settings/settings.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import type { IUser } from '../../db/user.model.js';
 import { ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole } from '../../shared/permissions.js';
+import geoip from 'geoip-lite';
+import JobLog from '../../db/job-log.model.js';
+import { getOnlineUserIds } from '../../socket/presence.js';
 
 // Staff-protection: resolve the acting admin's rank. A null actor (system call)
 // is treated as top rank so internal automation isn't blocked.
@@ -79,7 +82,7 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
     ]),
     Upload.aggregate([
       { $match: { userId: { $in: userIds } } },
-      { $group: { _id: '$userId', count: { $sum: 1 } } },
+      { $group: { _id: '$userId', count: { $sum: 1 }, storageUsed: { $sum: '$sizeBytes' } } },
     ]),
     Session.aggregate([
       { $match: { userId: { $in: userIds } } },
@@ -89,14 +92,17 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   ]);
 
   const projectCountMap = new Map((projectCounts as { _id: string; count: number }[]).map(r => [r._id.toString(), r.count]));
-  const uploadCountMap = new Map((uploadCounts as { _id: string; count: number }[]).map(r => [r._id.toString(), r.count]));
+  const uploadCountMap = new Map((uploadCounts as { _id: string; count: number; storageUsed: number }[]).map(r => [r._id.toString(), { count: r.count, storageUsed: r.storageUsed || 0 }]));
   const sessionMap = new Map((sessionData as { _id: mongoose.Types.ObjectId; deviceId: string; deviceName: string }[]).map(s => [s._id.toString(), { lastDeviceId: s.deviceId, lastDeviceName: s.deviceName }]));
 
   const users = page.map((u: Record<string, unknown>) => ({
     ...u,
     id: (u._id as mongoose.Types.ObjectId).toString(),
     projectCount: projectCountMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? 0,
-    uploadCount: uploadCountMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? 0,
+    uploadCount: uploadCountMap.get((u._id as mongoose.Types.ObjectId).toString())?.count ?? 0,
+    storageUsed: uploadCountMap.get((u._id as mongoose.Types.ObjectId).toString())?.storageUsed ?? 0,
+    country: u.lastIp && u.lastIp !== '127.0.0.1' && u.lastIp !== '::1' ? geoip.lookup(u.lastIp as string)?.country : null,
+    isOnline: getOnlineUserIds().includes((u._id as mongoose.Types.ObjectId).toString()),
     ...(sessionMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? {}),
   }));
 
@@ -111,6 +117,7 @@ export async function getStats(): Promise<Record<string, unknown>> {
     deletedUsers,
     totalProjects,
     totalUploads,
+    totalStorageRaw,
   ] = await Promise.all([
     User.countDocuments(),
     User.countDocuments({ 'ban.active': true }),
@@ -118,10 +125,36 @@ export async function getStats(): Promise<Record<string, unknown>> {
     User.countDocuments({ isDeleted: true }),
     Project.countDocuments({}),
     Upload.countDocuments(),
+    Upload.aggregate([{ $group: { _id: null, totalBytes: { $sum: '$sizeBytes' } } }]),
   ]);
 
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const activeUsers = await User.countDocuments({ updatedAt: { $gte: yesterday } });
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  
+  const [
+    activeUsers,
+    newSignups24h,
+    newSignups7d,
+    newSignups30d,
+    jobLogs24h
+  ] = await Promise.all([
+    User.countDocuments({ updatedAt: { $gte: yesterday } }),
+    User.countDocuments({ createdAt: { $gte: yesterday } }),
+    User.countDocuments({ createdAt: { $gte: sevenDaysAgo } }),
+    User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
+    JobLog.aggregate([
+      { $match: { createdAt: { $gte: yesterday } } },
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ])
+  ]);
+  
+  const totalStorage = (totalStorageRaw as { totalBytes?: number }[])[0]?.totalBytes || 0;
+  
+  const jobHealth = {
+    succeeded: (jobLogs24h as { _id: string, count: number }[]).find(j => j._id === 'succeeded')?.count || 0,
+    failed: (jobLogs24h as { _id: string, count: number }[]).find(j => j._id === 'failed')?.count || 0,
+  };
 
   return {
     totalUsers,
@@ -129,8 +162,13 @@ export async function getStats(): Promise<Record<string, unknown>> {
     pendingAppeals,
     deletedUsers,
     activeUsers,
+    newSignups24h,
+    newSignups7d,
+    newSignups30d,
     totalProjects,
-    totalUploads,
+    totalUploads: totalUploads as number,
+    totalStorage,
+    jobHealth,
   };
 }
 
