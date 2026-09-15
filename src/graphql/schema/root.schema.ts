@@ -77,6 +77,10 @@ export const rootSchema = `
     unsavePlaylist(playlistId: ID!): Boolean!
     setForksEnabled(publicId: ID!, enabled: Boolean!): Project!
     boostProject(publicId: ID!): Boolean!
+    incrementProjectView(id: ID!): Boolean!
+    incrementProjectShare(id: ID!): Boolean!
+    incrementPlaylistView(id: ID!): Boolean!
+    incrementPlaylistShare(id: ID!): Boolean!
     reactToProject(publicId: String!, emoji: String!): ProjectReactions!
     updateShowcase(badgeIds: [String!]!, showcasePublic: Boolean): UpdateShowcaseResult!
     adminGrantBadge(userIdentifier: String!, badgeId: String!): Boolean!
@@ -113,6 +117,8 @@ export const rootSchema = `
   type UserPreferences {
     showFollowers: Boolean!
     onlineVisibility: String!
+    lastOnlineVisibility: String!
+    countryVisibility: String!
     defaultProjectPrivacy: String!
     miniProfileBadgesEnabled: Boolean!
     miniProfileBadgeIds: [String!]!
@@ -131,6 +137,8 @@ export const rootSchema = `
   input UpdatePreferencesInput {
     showFollowers: Boolean
     onlineVisibility: String
+    lastOnlineVisibility: String
+    countryVisibility: String
     defaultProjectPrivacy: String
     miniProfileBadgesEnabled: Boolean
     miniProfileBadgeIds: [String!]

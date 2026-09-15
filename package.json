@@ -31,6 +31,7 @@
     "dotenv": "16.6.1",
     "fastify": "5.8.5",
     "fastify-plugin": "5.1.0",
+    "geoip-lite": "^2.0.3",
     "graphql": "16.14.0",
     "i18next": "26.3.0",
     "jsonwebtoken": "9.0.3",
@@ -52,6 +53,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/geoip-lite": "^1.4.4",
     "@types/jsonwebtoken": "9.0.10",
     "@types/node": "25.9.1",
     "@types/sanitize-html": "2.16.1",

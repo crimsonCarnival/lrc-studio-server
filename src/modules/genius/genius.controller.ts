@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { searchSongs } from './genius.service.js';
 import { getLyricsForSong } from './musixmatch.service.js';
+import JobLog from '../../db/job-log.model.js';
 
 export async function search(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const query = (request.query as Record<string, string>).q;
@@ -35,10 +36,16 @@ export async function extract(request: FastifyRequest, reply: FastifyReply): Pro
 
   try {
     const lyrics = await getLyricsForSong(track, artist);
-    if (lyrics) return reply.send({ lyrics });
+    if (lyrics) {
+      await JobLog.create({ jobType: 'extract_lyrics', status: 'succeeded', userId: request.userId || null }).catch(() => {});
+      return reply.send({ lyrics });
+    }
+    
+    await JobLog.create({ jobType: 'extract_lyrics', status: 'failed', error: 'lyrics_unavailable', userId: request.userId || null }).catch(() => {});
     return reply.code(422).send({ error: 'lyrics_unavailable' });
   } catch (err) {
     request.log.error({ err }, 'Musixmatch extract failed');
+    await JobLog.create({ jobType: 'extract_lyrics', status: 'failed', error: 'upstream_error', userId: request.userId || null }).catch(() => {});
     return reply.code(502).send({ error: 'upstream_error' });
   }
 }

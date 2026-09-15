@@ -169,7 +169,16 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
 }
 
 export async function createMedia(userId: string | null | undefined, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { source, uploadUrl: cloudinaryUrl, publicId, fileName, title, duration, coverImage } = data as Record<string, string | undefined>;
+  const { source, uploadUrl: cloudinaryUrl, publicId, fileName, title, duration, coverImage, sizeBytes } = data as {
+    source?: string;
+    uploadUrl?: string;
+    publicId?: string;
+    fileName?: string;
+    title?: string;
+    duration?: string | number;
+    coverImage?: string;
+    sizeBytes?: number;
+  };
   // For youtube source, the URL is stored in uploadUrl (cloudinaryUrl variable)
   const youtubeUrl = source === 'youtube' ? cloudinaryUrl : undefined;
   const query: Record<string, unknown> = { source };
@@ -231,6 +240,7 @@ export async function createMedia(userId: string | null | undefined, data: Recor
       title: finalTitle,
       duration: finalDuration,
       coverImage: finalCover,
+      sizeBytes: sizeBytes ? Number(sizeBytes) : 0,
     },
     { upsert: true, new: true }
   );

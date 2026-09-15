@@ -23,6 +23,8 @@ export const projectSchema = `
     forkedFrom: ForkedFrom
     forkCount: Int
     starCount: Int
+    viewCount: Int
+    shareCount: Int
     isStarredByMe: Boolean
     isForkedByMe: Boolean
     forksEnabled: Boolean

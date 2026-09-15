@@ -10,6 +10,8 @@ export interface IPlaylist {
   sortMode: 'MANUAL' | 'DATE_ADDED' | 'STARS' | 'ALPHABETICAL';
   publicIds: mongoose.Types.ObjectId[];
   savedCount: number;
+  viewCount: number;
+  shareCount: number;
   trendingScore: number;
   createdAt: Date;
   updatedAt: Date;
@@ -30,6 +32,8 @@ const playlistSchema = new mongoose.Schema<IPlaylist>(
     },
     publicIds: { type: [mongoose.Schema.Types.ObjectId], ref: 'Project', default: [] },
     savedCount: { type: Number, default: 0 },
+    viewCount: { type: Number, default: 0 },
+    shareCount: { type: Number, default: 0 },
     trendingScore: { type: Number, default: 0 },
   },
   { timestamps: true, collection: 'playlists' }

@@ -67,6 +67,8 @@ async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
     projects,
     projectCount: playlist.publicIds?.length ?? 0,
     savedCount: playlist.savedCount ?? 0,
+    viewCount: playlist.viewCount ?? 0,
+    shareCount: playlist.shareCount ?? 0,
     isSavedByMe: !!isSavedByMe,
     createdAt: new Date(playlist.createdAt).toISOString(),
     updatedAt: new Date(playlist.updatedAt).toISOString(),
@@ -281,6 +283,16 @@ export const playlistResolvers = {
           { $inc: { savedCount: -1 } }
         );
       }
+      return true;
+    },
+
+    incrementPlaylistView: async (_: unknown, { id }: { id: string }) => {
+      await Playlist.updateOne({ _id: id }, { $inc: { viewCount: 1 } });
+      return true;
+    },
+
+    incrementPlaylistShare: async (_: unknown, { id }: { id: string }) => {
+      await Playlist.updateOne({ _id: id }, { $inc: { shareCount: 1 } });
       return true;
     },
   },

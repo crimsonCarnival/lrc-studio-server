@@ -311,6 +311,16 @@ export const projectResolvers = {
 
       return true;
     },
+
+    incrementProjectView: async (_: unknown, { id }: { id: string }) => {
+      await Project.updateOne({ publicId: id }, { $inc: { viewCount: 1 } });
+      return true;
+    },
+
+    incrementProjectShare: async (_: unknown, { id }: { id: string }) => {
+      await Project.updateOne({ publicId: id }, { $inc: { shareCount: 1 } });
+      return true;
+    },
   },
 
   // ── Field Resolvers ────────────────────────────────────────────────────────
