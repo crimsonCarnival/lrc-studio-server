@@ -216,6 +216,8 @@ export const userResolvers = {
         stats: { minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0, syncedLines: user.stats?.syncedLines ?? 0, aiSyncedLines: user.stats?.aiSyncedLines ?? 0, aiWordsSynced: user.stats?.aiWordsSynced ?? 0 },
         streak: { current: user.streak?.current ?? 0, longest: user.streak?.longest ?? 0, lastActiveDate: user.streak?.lastActiveDate ?? null },
         progression: { xp: user.progression?.xp ?? 0, level: user.progression?.level ?? 0 },
+        lastIp: user.lastIp,
+        lastOnlineAt: user.lastOnlineAt,
       };
     },
 
@@ -923,3 +925,12 @@ export const userResolvers = {
     },
   },
 };
+
+// Map the User field resolvers to PublicUser as well
+(userResolvers as any).PublicUser = {
+  showFollowers: userResolvers.User.showFollowers,
+  miniProfileBadgeIds: userResolvers.User.miniProfileBadgeIds,
+  lastOnlineAt: userResolvers.User.lastOnlineAt,
+  country: userResolvers.User.country,
+};
+

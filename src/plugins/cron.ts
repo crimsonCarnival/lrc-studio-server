@@ -3,8 +3,6 @@ import fp from 'fastify-plugin';
 import { archiveDeletedUsers } from '../jobs/archive-deleted-users.js';
 import { recomputeTrendingScores } from '../jobs/trending.job.js';
 import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js';
-import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
-import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
 import { syncRolePermissions } from '../modules/admin/admin.service.js';
 import { sweepJobs } from '../modules/asr/job.store.js';
 
@@ -59,15 +57,9 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
 
   let trendingTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Seed built-in badges and addiction levels on startup (idempotent — $set merges Spanish strings)
+  // Sync role permissions on startup
   fastify.addHook('onReady', async () => {
     await Promise.allSettled([
-      seedBuiltinBadges()
-        .then(() => fastify.log.info('[startup] Built-in badges seeded'))
-        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed built-in badges')),
-      seedAddictionLevels()
-        .then(() => fastify.log.info('[startup] Addiction levels seeded'))
-        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed addiction levels')),
       syncRolePermissions()
         .then(() => fastify.log.info('[startup] Role permissions synced'))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to sync role permissions')),
