@@ -57,6 +57,7 @@ const metadataSchema = new mongoose.Schema(
       },
       set: (v: unknown) => (Array.isArray(v) ? v.map((t: unknown) => (typeof t === 'string' ? stripHtml(t).slice(0, 50) : t)) : v),
     },
+    singerColors: { type: [String], default: [] },
     songName: { type: String, default: '', maxlength: 500, set: textSetter },
     songArtist: { type: String, default: '', maxlength: 500, set: textSetter },
     songAlbum: { type: String, default: '', maxlength: 500, set: textSetter },

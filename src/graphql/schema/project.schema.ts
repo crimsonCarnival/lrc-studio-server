@@ -49,6 +49,7 @@ export const projectSchema = `
     description: String
     genre: String
     tags: [String!]
+    singerColors: [String!]
     songName: String
     songArtist: String
     songAlbum: String
@@ -103,6 +104,7 @@ export const projectSchema = `
     description: String
     genre: String
     tags: [String!]
+    singerColors: [String!]
     songName: String
     songArtist: String
     songAlbum: String

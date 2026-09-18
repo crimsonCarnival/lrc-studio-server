@@ -58,6 +58,7 @@ const displaySchema = sub({
   readingFormat: { type: String, enum: ['hiragana', 'katakana', 'romaji'] },
   karaokeFillTrack: { type: String, enum: ['main', 'secondary', 'both'] },
   karaokeFillEasing: { type: String, enum: ['linear', 'ease-in-out'], default: 'linear' },
+  singerColors: { type: [String] },
 });
 
 const scrollSchema = sub({

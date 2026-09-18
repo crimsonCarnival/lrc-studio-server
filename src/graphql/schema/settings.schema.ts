@@ -78,6 +78,7 @@ export const settingsSchema = `
     readingFormat: String
     karaokeFillTrack: String
     karaokeFillEasing: String
+    singerColors: [String!]
   }
 
   type ScrollSettings {
@@ -219,6 +220,7 @@ export const settingsSchema = `
     readingFormat: String
     karaokeFillTrack: String
     karaokeFillEasing: String
+    singerColors: [String!]
   }
 
   input ScrollSettingsInput {
