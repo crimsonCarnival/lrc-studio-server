@@ -107,12 +107,13 @@ export async function recomputeTrendingScores(): Promise<void> {
       });
     }
 
-    await Project.bulkWrite(projectWrites, { ordered: false });
+    await Project.bulkWrite(projectWrites, { ordered: false, timestamps: false });
   }
 
   await Project.updateMany(
     { public: true, publicId: { $nin: Array.from(allpublicIds) } },
-    { $set: { trendingScore: 0 } }
+    { $set: { trendingScore: 0 } },
+    { timestamps: false }
   );
 
   // --- Playlists ---
@@ -166,12 +167,13 @@ export async function recomputeTrendingScores(): Promise<void> {
       });
     }
 
-    await Playlist.bulkWrite(playlistWrites, { ordered: false });
+    await Playlist.bulkWrite(playlistWrites, { ordered: false, timestamps: false });
   }
 
   const activePlaylistIds = playlistStats.map((p) => p._id);
   await Playlist.updateMany(
     { isPublic: true, _id: { $nin: activePlaylistIds } },
-    { $set: { trendingScore: 0 } }
+    { $set: { trendingScore: 0 } },
+    { timestamps: false }
   );
 }

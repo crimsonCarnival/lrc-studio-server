@@ -207,6 +207,6 @@ export async function recomputeLeaderboardRanking(): Promise<void> {
 
   // 6. Write all scores atomically
   if (bulkOps.length > 0) {
-    await User.bulkWrite(bulkOps, { ordered: false });
+    await User.bulkWrite(bulkOps, { ordered: false, timestamps: false });
   }
 }
