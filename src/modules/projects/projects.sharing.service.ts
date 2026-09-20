@@ -1,7 +1,7 @@
 import type { ServiceResult, ProjectPublic } from '../../types/index.js';
 import Project from './project.model.js';
 import ProjectFork from './projectFork.model.js';
-import Lyrics from '../lyrics/lyrics.model.js';
+import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import { withTransaction } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
@@ -98,7 +98,7 @@ export async function cloneProject(
     } as ServiceResult<{ publicId: string; url: string }>;
   }
 
-  const sourceLyrics = await Lyrics.findOne({ publicId: sourcepublicId });
+  const sourceLyrics = await Lyrics.findOne({ publicId: sourcepublicId }).select('+lines').lean();
 
   // Upload upsert is idempotent and outside the transaction (shared resource)
   let newUploadId = null;
@@ -141,10 +141,14 @@ export async function cloneProject(
       },
     }], { session });
 
+    const incomingSections = sourceLyrics?.sections?.length
+      ? sourceLyrics.sections
+      : migrateLinesToSections(sourceLyrics?.lines || []);
+
     const [newLyricsDoc] = await Lyrics.create([{
       publicId: newProject.publicId,
       editorMode: sourceLyrics?.editorMode || 'lrc',
-      lines: sourceLyrics?.lines || [],
+      sections: incomingSections,
     }], { session });
 
     newProject.lyricsId = newLyricsDoc._id;
