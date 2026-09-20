@@ -95,16 +95,19 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   const uploadCountMap = new Map((uploadCounts as { _id: string; count: number; storageUsed: number }[]).map(r => [r._id.toString(), { count: r.count, storageUsed: r.storageUsed || 0 }]));
   const sessionMap = new Map((sessionData as { _id: mongoose.Types.ObjectId; deviceId: string; deviceName: string }[]).map(s => [s._id.toString(), { lastDeviceId: s.deviceId, lastDeviceName: s.deviceName }]));
 
-  const users = page.map((u: Record<string, unknown>) => ({
-    ...u,
-    id: (u._id as mongoose.Types.ObjectId).toString(),
-    projectCount: projectCountMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? 0,
-    uploadCount: uploadCountMap.get((u._id as mongoose.Types.ObjectId).toString())?.count ?? 0,
-    storageUsed: uploadCountMap.get((u._id as mongoose.Types.ObjectId).toString())?.storageUsed ?? 0,
-    country: u.lastIp && u.lastIp !== '127.0.0.1' && u.lastIp !== '::1' ? geoip.lookup(u.lastIp as string)?.country : null,
-    isOnline: getOnlineUserIds().includes((u._id as mongoose.Types.ObjectId).toString()),
-    ...(sessionMap.get((u._id as mongoose.Types.ObjectId).toString()) ?? {}),
-  }));
+  const users = page.map((u: Record<string, unknown>) => {
+    const { _id, __v, ...rest } = u;
+    return {
+      ...rest,
+      id: (_id as mongoose.Types.ObjectId).toString(),
+      projectCount: projectCountMap.get((_id as mongoose.Types.ObjectId).toString()) ?? 0,
+      uploadCount: uploadCountMap.get((_id as mongoose.Types.ObjectId).toString())?.count ?? 0,
+      storageUsed: uploadCountMap.get((_id as mongoose.Types.ObjectId).toString())?.storageUsed ?? 0,
+      country: rest.lastIp && rest.lastIp !== '127.0.0.1' && rest.lastIp !== '::1' ? geoip.lookup(rest.lastIp as string)?.country : null,
+      isOnline: getOnlineUserIds().includes((_id as mongoose.Types.ObjectId).toString()),
+      ...(sessionMap.get((_id as mongoose.Types.ObjectId).toString()) ?? {}),
+    };
+  });
 
   return { users, nextCursor, hasMore, total };
 }
@@ -438,7 +441,10 @@ export async function reactivateUser(userId: string, adminId: string | null = nu
 
 export async function listBannedIps(): Promise<Record<string, unknown>[]> {
   const ips = await BannedIp.find().sort({ createdAt: -1 }).lean();
-  return ips.map((ip: Record<string, unknown>) => ({ ...ip, id: (ip._id as Record<string, unknown>).toString() }));
+  return ips.map((ip: Record<string, unknown>) => {
+    const { _id, __v, ...rest } = ip;
+    return { ...rest, id: (_id as Record<string, unknown>).toString() };
+  });
 }
 
 export async function blockIp(ip: string, reason: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {
@@ -462,7 +468,10 @@ export async function unblockIp(ipId: string, adminId: string, actorIp?: string)
 
 export async function listBannedDevices(): Promise<Record<string, unknown>[]> {
   const devices = await BannedDevice.find().sort({ createdAt: -1 }).lean();
-  return devices.map((d: Record<string, unknown>) => ({ ...d, id: (d._id as Record<string, unknown>).toString() }));
+  return devices.map((d: Record<string, unknown>) => {
+    const { _id, __v, ...rest } = d;
+    return { ...rest, id: (_id as Record<string, unknown>).toString() };
+  });
 }
 
 export async function blockDevice(deviceId: string, reason: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {

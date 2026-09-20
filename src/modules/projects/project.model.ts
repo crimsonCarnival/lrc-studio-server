@@ -7,6 +7,7 @@ export interface IProject extends Document {
   publicId: string;
   userId?: mongoose.Types.ObjectId | null;
   title?: string;
+  type?: string;
   uploadId?: mongoose.Types.ObjectId | null;
   lyricsId?: mongoose.Types.ObjectId | null;
   state?: ProjectState;
@@ -88,6 +89,7 @@ const projectSchema = new mongoose.Schema(
       sparse: true,
     },
     title: { type: String, default: '', maxlength: 500, set: textSetter },
+    type: { type: String, default: null, maxlength: 100 },
 
     // Audio reference to Upload collection (required)
     uploadId: {
