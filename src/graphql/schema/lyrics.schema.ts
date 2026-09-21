@@ -36,6 +36,7 @@ export const lyricsSchema = `
     translations: [Translation!]
     words: [Word!]
     secondaryWords: [Word!]
+    source: String
   }
 
   type Word {

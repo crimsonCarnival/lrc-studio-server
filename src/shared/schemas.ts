@@ -55,6 +55,7 @@ export const lineItemSchema = {
         },
       },
     },
+    source: { type: ['string', 'null'], enum: ['manual', 'asr', null] },
   },
 };
 

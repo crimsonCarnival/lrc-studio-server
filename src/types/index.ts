@@ -239,6 +239,6 @@ export interface AdminLogEntry {
 
 export interface JwtPayload {
   sub: string;
-  username?: string;
+  accountName?: string;
   role?: string;
 }
