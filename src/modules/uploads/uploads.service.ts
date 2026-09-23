@@ -273,6 +273,7 @@ export async function deleteMedia(uploadId: string, userId: string, logger: Reco
   }
 
   await upload.deleteOne();
+  await Project.updateMany({ uploadId }, { $unset: { uploadId: 1 } });
   return {};
 }
 
