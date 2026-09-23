@@ -499,7 +499,7 @@ export async function listAdminLogs(query: Record<string, unknown> = {}): Promis
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(Number(limit))
-    .populate('adminId', 'username email')
+    .populate('adminId', 'accountName email')
     .lean();
   return { logs, page, limit };
 }
