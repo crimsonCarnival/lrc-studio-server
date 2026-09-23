@@ -2,7 +2,6 @@ import type { ServiceResult, ProjectPublic } from '../../types/index.js';
 import Project from './project.model.js';
 import ProjectFork from './projectFork.model.js';
 import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
-import Upload from '../uploads/upload.model.js';
 import { withTransaction, TransactionError } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
 import User from '../../db/user.model.js';
@@ -123,17 +122,6 @@ export async function cloneProject(
         accountName: (sourceProject.userId as unknown as { accountName?: string })?.accountName || null,
       },
     }], { session });
-
-    // Share the source project's Upload by reference instead of duplicating it — the new
-    // fork's publicId (assigned by Project.create above) is recorded on the shared Upload's
-    // referencingProjectIds so Task 4's delete-time cleanup can tell whether it's still in use.
-    if (sourceProject.uploadId) {
-      await Upload.updateOne(
-        { _id: sourceProject.uploadId },
-        { $addToSet: { referencingProjectIds: { $each: [sourcepublicId, newProject.publicId] } } },
-        { session },
-      );
-    }
 
     const incomingSections = sourceLyrics?.sections?.length
       ? sourceLyrics.sections

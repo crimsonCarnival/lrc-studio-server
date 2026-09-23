@@ -14,7 +14,6 @@ export interface IUpload {
   duration?: number | null;
   coverImage?: string | null;
   sizeBytes?: number;
-  referencingProjectIds?: string[];
 }
 
 export interface IUploadMethods {
@@ -43,7 +42,6 @@ const uploadSchema = new mongoose.Schema<IUpload, UploadModel, IUploadMethods>(
     duration: { type: Number, default: null },
     coverImage: { type: String, default: null, maxlength: 2000, set: urlSetter },
     sizeBytes: { type: Number, default: 0 },
-    referencingProjectIds: { type: [String], default: [] },
   },
   { timestamps: true, collection: 'uploads' }
 );
