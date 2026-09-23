@@ -56,6 +56,7 @@ export const lineItemSchema = {
       },
     },
     source: { type: ['string', 'null'], enum: ['manual', 'asr', null] },
+    adLibOf: { type: ['number', 'null'] },
   },
 };
 

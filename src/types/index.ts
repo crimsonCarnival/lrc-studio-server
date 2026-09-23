@@ -22,6 +22,8 @@ export interface LineEntry {
   translations?: Array<{ text: string; language?: string | null }>;
   words?: WordEntry[];
   secondaryWords?: WordEntry[];
+  /** When set, marks this line as an ad-lib that overlaps the line whose timestamp equals adLibOf. */
+  adLibOf?: number | null;
 }
 
 export interface SectionEntry {

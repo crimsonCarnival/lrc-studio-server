@@ -90,6 +90,7 @@ export const projectSchema = `
     words: [WordInput!]
     secondaryWords: [WordInput!]
     source: String
+    adLibOf: Float
   }
 
   input ProjectStateInput {

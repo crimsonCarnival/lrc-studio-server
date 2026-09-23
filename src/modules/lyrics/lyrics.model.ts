@@ -41,6 +41,8 @@ const lineSchema = new mongoose.Schema(
     // Tracks whether the timestamp was set by AI (ASR auto-stamp) or manually.
     // null = legacy/unknown (treated as manual). Resets to 'manual' on any manual edit.
     source: { type: String, enum: ['manual', 'asr'], default: null },
+    // Ad-lib anchor: when set, this line overlaps the parent line at timestamp=adLibOf.
+    adLibOf: { type: Number, default: null },
   },
   { _id: false }
 );
