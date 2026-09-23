@@ -122,26 +122,3 @@ export async function getShare(req: FastifyRequest, reply: FastifyReply): Promis
   return reply.send({ project });
 }
 
-/**
- * POST /projects/clone/:id — clone a project (requires authentication).
- */
-export async function clone(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const sourcepublicId = (req.params as Record<string, string>).id;
-  const result = await projectService.cloneProject(sourcepublicId, req.userId!);
-  if (result.error) {
-    return reply.code(result.status || 500).send({ error: result.error });
-  }
-
-  logUserAction({
-    userId: req.userId!,
-    action: 'PROJECT_CLONE',
-    entityType: 'Project',
-    entityId: sourcepublicId,
-    ip: req.ip,
-    deviceId: req.headers['x-device-id'] as string || 'unknown',
-    metadata: { newpublicId: (result as Record<string, unknown>).publicId },
-  });
-
-  return reply.code(201).send(result);
-}
-

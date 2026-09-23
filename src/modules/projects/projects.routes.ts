@@ -15,5 +15,4 @@ export default async function projectRoutes(fastify: FastifyInstance): Promise<v
   fastify.patch('/:id', { schema: patchProjectSchema, preHandler: [fastify.requireActiveUser] }, projectController.patch);
   fastify.delete('/:id', { schema: { params: publicIdParam }, preHandler: [fastify.requireActiveUser] }, projectController.remove);
   fastify.get('/share/:id', { schema: { params: publicIdParam } }, projectController.getShare);
-  fastify.post('/clone/:id', { schema: { params: publicIdParam }, preHandler: [fastify.requireActiveUser] }, projectController.clone);
 }
