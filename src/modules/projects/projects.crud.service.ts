@@ -2,12 +2,15 @@ import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, Section
 import { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import mongoose from 'mongoose';
+import { v2 as cloudinary } from 'cloudinary';
 import Project from './project.model.js';
+import ProjectFork from './projectFork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import User from '../../db/user.model.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
+import { isStorageConfigured } from '../uploads/uploads.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
 import { writeActivity } from '../activity/activity.service.js';
@@ -654,10 +657,99 @@ export async function deleteProject(
     return { error: 'Not authorized to delete this project', status: 403 } as ServiceResult;
   }
 
+  // Populated inside the transaction (step 4) when the shared Upload ends up with no
+  // remaining referencers, so the real Cloudinary asset can be destroyed afterwards —
+  // fire-and-forget, outside the transaction. See the comment at that branch for why
+  // this is NOT set when other projects still get a clone of the Upload: those clones
+  // keep pointing at the same physical Cloudinary asset (same uploadUrl/publicId), so
+  // destroying it there would break their playback.
+  let cloudinaryAssetToDestroy: string | null = null;
+
   await withTransaction(async (session) => {
+    // 1. Fork bookkeeping: this project IS a fork of another project. Decrement the
+    // source's forkCount (no-op if the source is already gone or already at 0) and
+    // remove this fork's ProjectFork row.
+    if (project.forkedFrom?.publicId) {
+      await Project.updateOne(
+        { publicId: project.forkedFrom.publicId, forkCount: { $gt: 0 } },
+        { $inc: { forkCount: -1 } },
+        { session }
+      );
+      await ProjectFork.deleteOne({ forkedpublicId: publicId }, { session });
+    }
+
+    // 2. Source-with-forks cascade: this project IS a source with active forks pointing
+    // at it. Mark those forks' forkedFrom.sourceDeleted — purely cosmetic, does not touch
+    // public/readOnly/editability. The ProjectFork rows themselves are kept as historical
+    // lineage records (only deleted when the FORK itself is deleted, in step 1 above).
+    const childForks = await ProjectFork.find({ sourcepublicId: publicId }).session(session).lean();
+    if (childForks.length > 0) {
+      await Project.updateMany(
+        { publicId: { $in: childForks.map((f) => f.forkedpublicId) } },
+        { $set: { 'forkedFrom.sourceDeleted': true } },
+        { session }
+      );
+    }
+
+    // 3. Shared-Upload handling — generic, applies whether this project is a fork, a
+    // source, or plain. Uploads are shared by reference (Task 3): this project's own
+    // publicId may or may not appear in the Upload's referencingProjectIds (only
+    // fork-clones are added there today), so removing it is a safe no-op either way.
+    if (project.uploadId) {
+      const upload = await Upload.findOne({ _id: project.uploadId }, null, { session });
+      if (upload) {
+        const remaining = (upload.referencingProjectIds || []).filter((id) => id !== publicId);
+
+        if (remaining.length > 0) {
+          // Other projects still reference this Upload — give each its own independent
+          // Upload document (same media fields, fresh _id) and repoint it there, instead
+          // of leaving them pointing at a row we're about to delete.
+          for (const otherPublicId of remaining) {
+            const clonedFields = upload.toObject() as unknown as Record<string, unknown>;
+            delete clonedFields._id;
+            delete clonedFields.__v;
+            delete clonedFields.createdAt;
+            delete clonedFields.updatedAt;
+            clonedFields.referencingProjectIds = [otherPublicId];
+
+            const [clonedUpload] = await Upload.create([clonedFields], { session });
+            await Project.updateOne(
+              { publicId: otherPublicId },
+              { $set: { uploadId: clonedUpload._id } },
+              { session }
+            );
+          }
+          // The original row is retired now that every remaining referencer has its own
+          // clone. Do NOT queue a Cloudinary destroy here: the clones just created above
+          // still point at the same physical asset (same uploadUrl/publicId), so deleting
+          // the cloud file here would break their playback.
+          await Upload.deleteOne({ _id: upload._id }, { session });
+        } else {
+          // No other project references this Upload anymore — safe to fully retire it.
+          await Upload.deleteOne({ _id: upload._id }, { session });
+          if (upload.source === 'cloudinary' && upload.publicId) {
+            cloudinaryAssetToDestroy = upload.publicId;
+          }
+        }
+      }
+    }
+
+    // 5. Existing behavior — unchanged.
     await Project.deleteOne({ publicId }, { session });
     await Lyrics.deleteOne({ publicId }, { session });
   }, { operation: 'deleteProject', publicId, userId });
+
+  // Cloudinary cleanup, fire-and-forget after the transaction has committed — mirrors the
+  // fire-and-forget side-effect pattern cloneProject uses for its notification/socket work
+  // in projects.sharing.service.ts (a detached promise chain ending in .catch(() => {})).
+  if (cloudinaryAssetToDestroy && isStorageConfigured()) {
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+    cloudinary.uploader.destroy(cloudinaryAssetToDestroy, { resource_type: 'video' }).catch(() => {});
+  }
 
   logUserAction({
     userId,
