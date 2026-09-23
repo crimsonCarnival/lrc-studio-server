@@ -36,7 +36,7 @@ export async function loadHeap(userId: string): Promise<void> {
   clearTimeout(ttlTimers.get(userId))
   ttlTimers.delete(userId)
   const heap = getOrCreate(userId)
-  if (!heap.isEmpty()) return  // already loaded (brief reconnect)
+  heap.clear()
   const unread = await Notification.find({ userId, read: false })
     .sort({ createdAt: -1 })
     .limit(200)
@@ -54,7 +54,17 @@ export function enqueueNotif(userId: string, notif: INotification): void {
 export function peekNotifs(userId: string, limit: number): INotification[] {
   const heap = heaps.get(userId)
   if (!heap) return []
-  return heap.toArray().sort(comparator).slice(0, limit)
+  const all = heap.toArray().sort(comparator)
+  const seen = new Set<string>()
+  const deduped: INotification[] = []
+  for (const n of all) {
+    const id = n._id.toString()
+    if (!seen.has(id)) {
+      seen.add(id)
+      deduped.push(n)
+    }
+  }
+  return deduped.slice(0, limit)
 }
 
 export function clearHeap(userId: string): void {
