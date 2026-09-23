@@ -35,6 +35,7 @@ export const projectSchema = `
     publicId: String
     userId: ID
     accountName: String
+    sourceDeleted: Boolean
   }
 
   type ProjectState {
