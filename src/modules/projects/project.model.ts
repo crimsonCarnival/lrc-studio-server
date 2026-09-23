@@ -21,6 +21,7 @@ export interface IProject extends Document {
     publicId?: string | null;
     userId?: mongoose.Types.ObjectId | null;
     accountName?: string | null;
+    sourceDeleted?: boolean;
   };
   forkCount: number;
   starCount: number;
@@ -121,6 +122,7 @@ const projectSchema = new mongoose.Schema(
       publicId: { type: String, default: null },
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
       accountName: { type: String, default: null },
+      sourceDeleted: { type: Boolean, default: false },
     },
 
     forkCount: { type: Number, default: 0 },
