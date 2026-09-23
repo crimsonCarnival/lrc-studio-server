@@ -28,13 +28,11 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.get('/me', { preHandler: [fastify.requireAuth] }, authController.me);
   fastify.patch('/profile', { schema: updateProfileSchema, preHandler: [fastify.requireAuth] }, authController.updateProfile);
   fastify.post('/appeal', { preHandler: [fastify.requireAuthForAppeal] }, authController.submitAppeal);
-  fastify.post('/clear-unban-message', { preHandler: [fastify.requireAuthLax] }, authController.clearUnbanMessage);
   fastify.post('/forgot-password', { ...authRateLimit }, authController.forgotPassword);
   fastify.get('/reset-password/validate', { ...authRateLimit }, authController.validateResetPasswordToken);
   fastify.post('/reset-password', { ...authRateLimit }, authController.resetPasswordEndpoint);
   fastify.post('/change-password', { preHandler: [fastify.requireAuth] }, authController.changePassword);
   fastify.post('/set-password', { preHandler: [fastify.requireAuth] }, authController.setPassword);
-  fastify.post('/send-verification', { preHandler: [fastify.requireAuth], config: { rateLimit: { max: 5, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } }, authController.sendVerificationEmailHandler);
   fastify.post('/verify-email', { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } }, authController.verifyEmailHandler);
   fastify.get('/sessions', { preHandler: [fastify.requireAuth] }, authController.getSessions);
   fastify.delete('/sessions/:id', { preHandler: [fastify.requireAuth] }, authController.revokeSession);

@@ -670,13 +670,6 @@ export async function submitAppeal(
   return { user: user.toPublic() as unknown as UserPublic };
 }
 
-export async function clearUnbanMessage(
-  _userId: string
-): Promise<ServiceResult<{ success: boolean }>> {
-  // showUnbanMessage is now a transient signal from checkBanStatus(), not a DB field.
-  return { success: true };
-}
-
 // ─── Session Management ──────────────────────────────────────────────────────
 
 export interface SessionPublic {

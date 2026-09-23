@@ -4,7 +4,7 @@ import * as authService from './auth.service.js';
 import { consumeOtt } from './ott.service.js';
 import type { UpdateProfileData } from './auth.service.js';
 import { requestPasswordReset, validateResetToken, resetPassword, changePassword as changePasswordService, PasswordResetError } from '../password-reset/password-reset.service.js';
-import { resendVerification, verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
+import { verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
 import { verifyRecaptcha } from './auth.service.js';
 import { getEnv } from '../../config/env.js';
 
@@ -214,14 +214,6 @@ export async function submitAppeal(req: FastifyRequest, reply: FastifyReply): Pr
   return reply.send(result);
 }
 
-export async function clearUnbanMessage(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await authService.clearUnbanMessage(req.userId!);
-  if (result.error) {
-    return reply.code(result.status || 500).send({ error: result.error, code: result.code });
-  }
-  return reply.send(result);
-}
-
 export async function forgotPassword(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { email, recaptchaToken } = req.body as { email?: string; recaptchaToken?: string };
 
@@ -339,18 +331,6 @@ export async function setPassword(req: FastifyRequest, reply: FastifyReply): Pro
     }
     return reply.code(500).send({ error: 'Server error' });
   }
-}
-
-export async function sendVerificationEmailHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  try {
-    await resendVerification(req.userId!);
-  } catch (err) {
-    if (err instanceof VerificationError) {
-      return reply.code(err.status).send({ error: err.code });
-    }
-    return reply.code(500).send({ error: 'server_error' });
-  }
-  return reply.send({ success: true });
 }
 
 export async function verifyEmailHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
