@@ -107,40 +107,15 @@ export async function cloneProject(
 
   const sourceLyrics = await Lyrics.findOne({ publicId: sourcepublicId }).select('+lines').lean();
 
-  // Upload upsert is idempotent and outside the transaction (shared resource)
-  let newUploadId = null;
-  if (sourceProject.uploadId) {
-    const sourceUpload = await Upload.findById(sourceProject.uploadId);
-    if (sourceUpload) {
-      const srcUp = sourceUpload as unknown as Record<string, unknown>;
-      const query: Record<string, unknown> = { userId: newUserId, source: srcUp.source };
-      if (srcUp.uploadUrl) query.uploadUrl = srcUp.uploadUrl;
-
-      const newUpload = await Upload.findOneAndUpdate(
-        query,
-        {
-          userId: newUserId,
-          source: srcUp.source,
-          uploadUrl: srcUp.uploadUrl || null,
-          publicId: srcUp.publicId || null,
-          fileName: srcUp.fileName || '',
-          title: srcUp.title || '',
-          duration: srcUp.duration || null,
-        },
-        { upsert: true, new: true }
-      );
-      newUploadId = newUpload._id;
-    }
-  }
-
   try {
     return await withTransaction(async (session) => {
     const [newProject] = await Project.create([{
       userId: newUserId,
       title: `Clone - ${sourceProject.title}`,
-      uploadId: newUploadId,
+      uploadId: sourceProject.uploadId || null,
       state: sourceProject.state,
       metadata: sourceProject.metadata,
+      coverImage: sourceProject.coverImage || '',
       readOnly: false,
       forkedFrom: {
         publicId: sourcepublicId,
@@ -148,6 +123,17 @@ export async function cloneProject(
         accountName: (sourceProject.userId as unknown as { accountName?: string })?.accountName || null,
       },
     }], { session });
+
+    // Share the source project's Upload by reference instead of duplicating it — the new
+    // fork's publicId (assigned by Project.create above) is recorded on the shared Upload's
+    // referencingProjectIds so Task 4's delete-time cleanup can tell whether it's still in use.
+    if (sourceProject.uploadId) {
+      await Upload.updateOne(
+        { _id: sourceProject.uploadId },
+        { $addToSet: { referencingProjectIds: newProject.publicId } },
+        { session },
+      );
+    }
 
     const incomingSections = sourceLyrics?.sections?.length
       ? sourceLyrics.sections
