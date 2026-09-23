@@ -130,7 +130,7 @@ export async function cloneProject(
     if (sourceProject.uploadId) {
       await Upload.updateOne(
         { _id: sourceProject.uploadId },
-        { $addToSet: { referencingProjectIds: newProject.publicId } },
+        { $addToSet: { referencingProjectIds: { $each: [sourcepublicId, newProject.publicId] } } },
         { session },
       );
     }
