@@ -926,8 +926,8 @@ export const userResolvers = {
   },
 };
 
-// Map the User field resolvers to PublicUser as well
-(userResolvers as any).PublicUser = {
+// PublicUser reuses the same field resolvers as User (privacy/permission logic is identical)
+export const publicUserResolvers = {
   showFollowers: userResolvers.User.showFollowers,
   miniProfileBadgeIds: userResolvers.User.miniProfileBadgeIds,
   lastOnlineAt: userResolvers.User.lastOnlineAt,
