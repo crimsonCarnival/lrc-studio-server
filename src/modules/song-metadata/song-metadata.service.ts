@@ -1,7 +1,6 @@
 import { getEnv } from '../../config/env.js';
 import { stripHtml } from '../../utils/sanitize.js';
 import { LRUCache } from '@crimson-carnival/ds-js';
-import { insertAutocompleteTerms } from './autocomplete.trie.js';
 
 const PROVIDER_TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const PROVIDER_API_BASE = 'https://api.spotify.com/v1';
@@ -180,9 +179,6 @@ export async function lookupTrack(songName: string, artistName?: string): Promis
         const details = await fetchTrackDetails(trackId);
         if (!details.error) {
           result = details;
-          insertAutocompleteTerms(
-            [result.name, result.artist].filter((v): v is string => typeof v === 'string' && v.length > 0)
-          );
           return result;
         }
       }
@@ -192,10 +188,5 @@ export async function lookupTrack(songName: string, artistName?: string): Promis
   }
 
   result = await fetchFallbackTrack(songName, artistName);
-  if (!result.error) {
-    insertAutocompleteTerms(
-      [result.name, result.artist].filter((v): v is string => typeof v === 'string' && v.length > 0)
-    );
-  }
   return result;
 }
