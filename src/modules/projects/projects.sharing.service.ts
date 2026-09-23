@@ -3,7 +3,7 @@ import Project from './project.model.js';
 import ProjectFork from './projectFork.model.js';
 import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
-import { withTransaction } from '../../db/transaction.js';
+import { withTransaction, TransactionError } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
 import User from '../../db/user.model.js';
 import { getIO } from '../../socket/socket.manager.js';
@@ -82,10 +82,16 @@ export async function cloneProject(
   sourcepublicId: string,
   newUserId: string
 ): Promise<ServiceResult<{ publicId: string; url: string }>> {
+  // Dedup check first — matches the ordering the resolver used to enforce before the source
+  // was even fetched. Living here (not just in the resolver) means every caller gets it, and
+  // moving it into the create path below closes the remaining TOCTOU race under concurrency.
+  const alreadyForked = await ProjectFork.exists({ sourcepublicId, userId: newUserId });
+  if (alreadyForked) return { error: 'already_forked', status: 409, code: 'already_forked' };
+
   const sourceProject = await Project.findOne({ publicId: sourcepublicId }).populate('userId', 'accountName');
-  if (!sourceProject) return { error: 'Source project not found', status: 404 };
-  if (!sourceProject.public && !(sourceProject as unknown as { isOwnedBy(id: string): boolean }).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404 };
-  if (sourceProject.forksEnabled === false) throw new Error('Forking is disabled for this project');
+  if (!sourceProject) return { error: 'Source project not found', status: 404, code: 'not_found' };
+  if (!sourceProject.public && !(sourceProject as unknown as { isOwnedBy(id: string): boolean }).isOwnedBy(newUserId)) return { error: 'Project not found', status: 404, code: 'not_found' };
+  if (sourceProject.forksEnabled === false) return { error: 'forks_disabled', status: 403, code: 'forks_disabled' };
 
   const MAX_PROJECTS_PER_USER = 200;
 
@@ -95,6 +101,7 @@ export async function cloneProject(
     return {
       error: `Project limit reached (${MAX_PROJECTS_PER_USER} max). Delete old projects to create new ones.`,
       status: 429,
+      code: 'quota_exceeded',
     } as ServiceResult<{ publicId: string; url: string }>;
   }
 
@@ -126,7 +133,8 @@ export async function cloneProject(
     }
   }
 
-  return withTransaction(async (session) => {
+  try {
+    return await withTransaction(async (session) => {
     const [newProject] = await Project.create([{
       userId: newUserId,
       title: `Clone - ${sourceProject.title}`,
@@ -193,5 +201,18 @@ export async function cloneProject(
       publicId: newProject.publicId,
       url: `/s/${newProject.publicId}`,
     };
-  }, { operation: 'cloneProject', sourcepublicId, userId: newUserId });
+    }, { operation: 'cloneProject', sourcepublicId, userId: newUserId });
+  } catch (err) {
+    // ProjectFork.create can lose the TOCTOU race to a concurrent request past the
+    // exists() check above — the unique { sourcepublicId, userId } index (Task 1) then
+    // rejects the insert with a duplicate-key error. withTransaction wraps whatever the
+    // callback throws in a TransactionError with the original error on `.cause` (see
+    // db/transaction.ts) and the transaction is rolled back, so no half-created
+    // Project/Lyrics documents are left behind. Unwrap that here and translate the
+    // duplicate-key case to the same already_forked shape used by the upfront check.
+    if (err instanceof TransactionError && (err.cause as { code?: number } | undefined)?.code === 11000) {
+      return { error: 'already_forked', status: 409, code: 'already_forked' };
+    }
+    throw err;
+  }
 }

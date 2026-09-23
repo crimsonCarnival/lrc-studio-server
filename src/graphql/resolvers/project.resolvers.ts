@@ -167,16 +167,20 @@ export const projectResolvers = {
     cloneProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
 
-      const alreadyForked = await ProjectFork.exists({ sourcepublicId: id, userId: context.userId });
-      if (alreadyForked) throw new Error('already_forked');
-
       // Fetch source metadata before cloning — needed for the activity payload
       const sourceProject = await Project.findOne({ publicId: id })
         .select('title coverImage userId')
         .lean<IProject>();
 
+      // Dedup (already_forked), not-found, forks-disabled, and quota checks now live in
+      // cloneProject() itself so every caller gets them consistently and the TOCTOU race is
+      // closed via the unique index — don't duplicate the check here.
       const result = await cloneProject(id, context.userId);
-      if ('error' in result) throw new Error(result.error ?? 'Unknown error');
+      if ('error' in result) {
+        throw Object.assign(new Error(result.error ?? 'unknown_error'), {
+          extensions: { code: result.code ?? 'unknown_error', status: result.status ?? 500 },
+        });
+      }
       const cloned = result as { publicId: string; url: string };
 
       writeActivity({
