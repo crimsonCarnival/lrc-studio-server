@@ -10,6 +10,8 @@ import Notification from '../notifications/notification.model.js';
 import XPEvent, { type IXPEvent } from '../progression/xp-event.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
+import { enqueueNotif } from '../../lib/notification-heap.js';
+import type { INotification } from '../notifications/notification.model.js';
 
 // ─── Builtin seed data ────────────────────────────────────────────────────────
 
@@ -830,6 +832,7 @@ async function notifyBadgeAwarded(userId: string, badgeId: string): Promise<void
     sticky: false,
     body: badgeId,
   });
+  enqueueNotif(userId, notification.toObject() as unknown as INotification);
   try {
     const io = getIO();
     io.to(`user:${userId}`).emit('notification:push', notification.toObject());
