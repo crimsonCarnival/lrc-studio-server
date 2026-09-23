@@ -66,9 +66,12 @@ export const projectResolvers = {
       return getShareProject(id);
     },
 
-    publicProject: async (_root: unknown, { publicId }: { publicId: string }) => {
-      const project = await Project.findOne({ publicId, public: true }).lean();
-      return project ?? null;
+    publicProject: async (_root: unknown, { publicId }: { publicId: string }, context: Context) => {
+      const project = await Project.findOne({ publicId }).lean<IProject>();
+      if (!project) return null;
+      if (project.public) return project;
+      if (context.userId && project.userId?.toString() === context.userId) return project;
+      return null;
     },
 
     searchProjects: async (
