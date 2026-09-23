@@ -112,6 +112,13 @@ export async function createProject(
     return { error: 'recaptcha_failed', status: 403, code: 'recaptcha_failed' } as ServiceResult;
   }
 
+  if (uploadId) {
+    const ownedUpload = await Upload.findOne({ _id: uploadId, userId });
+    if (!ownedUpload) {
+      return { error: 'Not authorized to use this upload', status: 403 } as ServiceResult;
+    }
+  }
+
   const result = await withTransaction(async (session) => {
     // Resolve uploadId: use provided ID, or create inline from raw media URL
     let resolvedUploadId: mongoose.Types.ObjectId | null = uploadId
@@ -353,6 +360,13 @@ export async function updateProject(
 
   const { title, uploadId, lyrics, state, metadata, readOnly } = data;
 
+  if (uploadId !== undefined) {
+    const ownedUpload = await Upload.findOne({ _id: uploadId, userId });
+    if (!ownedUpload) {
+      return { error: 'Not authorized to use this upload', status: 403 } as ServiceResult;
+    }
+  }
+
   const projectUpdate: Record<string, unknown> = {};
   if (title !== undefined) projectUpdate.title = stripHtml(title).slice(0, 200);
   if (uploadId !== undefined) projectUpdate.uploadId = uploadId;
@@ -448,6 +462,13 @@ export async function patchProject(
   const projectWithVersion = project as unknown as { version?: number };
   if (data.version !== undefined && data.version !== projectWithVersion.version) {
     return { error: 'Version conflict — reload and retry', status: 409 } as ServiceResult;
+  }
+
+  if (data.uploadId !== undefined) {
+    const ownedUpload = await Upload.findOne({ _id: data.uploadId, userId });
+    if (!ownedUpload) {
+      return { error: 'Not authorized to use this upload', status: 403 } as ServiceResult;
+    }
   }
 
   // Detect publish transition (false → true) before the transaction overwrites the doc
