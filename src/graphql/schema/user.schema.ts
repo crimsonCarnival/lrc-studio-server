@@ -107,6 +107,7 @@ export const userSchema = `
     createdAt: String
     projects: [Project!]!
     projectCount: Int!
+    playlistCount: Int!
     totalStarsReceived: Int!
     totalForksReceived: Int!
     followerCount: Int!

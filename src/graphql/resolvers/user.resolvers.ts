@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
 import type { IUser, IUserBadge } from '../../db/user.model.js';
 import Project from '../../modules/projects/project.model.js';
+import Playlist from '../../db/playlist.model.js';
 import type { IProject } from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
@@ -133,12 +134,15 @@ export const userResolvers = {
       const isOwner = context.userId && context.userId === user._id.toString();
       const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true };
 
-      const [projects, projectCount] = await Promise.all([
+      const playlistFilter = isOwner ? { userId: user._id } : { userId: user._id, isPublic: true };
+
+      const [projects, projectCount, playlistCount] = await Promise.all([
         Project.find(projectFilter)
           .sort({ starCount: -1 })
           .limit(50)
           .lean<IProject[]>(),
         Project.countDocuments(projectFilter),
+        Playlist.countDocuments(playlistFilter),
       ]);
 
       const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
@@ -201,6 +205,7 @@ export const userResolvers = {
         createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : null,
         projects,
         projectCount,
+        playlistCount,
         totalStarsReceived,
         totalForksReceived,
         followerCount: user.social?.followerCount ?? 0,
