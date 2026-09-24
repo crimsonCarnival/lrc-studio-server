@@ -24,6 +24,7 @@ import {
   isBlockedEitherWay,
 } from '../../modules/blocks/block.service.js';
 import { upsertFollow } from '../../modules/notifications/notifications.service.js';
+import { getIO } from '../../socket/socket.manager.js';
 import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots } from '../../modules/badges/badge.service.js';
@@ -540,6 +541,15 @@ export const userResolvers = {
             actorAccountName: follower.accountName ?? '',
             actorAvatarUrl: follower.avatarUrl ?? null,
           }).catch(() => {});
+
+          try {
+            getIO().to(`user:${targetId}`).emit('follow:new', {
+              followerId: context.userId,
+              accountName: follower.accountName ?? '',
+              avatarUrl: follower.avatarUrl ?? null,
+              followerCount: (target.social?.followerCount ?? 0) + 1,
+            });
+          } catch {}
 
           // fan-out follow activity — fire and forget
           writeActivity({
