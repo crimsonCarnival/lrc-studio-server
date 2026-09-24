@@ -261,7 +261,13 @@ export const projectResolvers = {
           coverImage:   project.coverImage || '',
         }).catch(() => {});
       }
-      return Project.findOne({ publicId: id });
+      const starred = await Project.findOne({ publicId: id });
+      if (isNewStar && starred) {
+        try {
+          getIO().to(`project:${id}`).emit('star:update', { publicId: id, starCount: starred.starCount ?? 0 });
+        } catch {}
+      }
+      return starred;
     },
 
     unstarProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
@@ -278,7 +284,13 @@ export const projectResolvers = {
           { $inc: { starCount: -1 } }
         );
       }
-      return Project.findOne({ publicId: id });
+      const unstarred = await Project.findOne({ publicId: id });
+      if (deletedCount > 0 && unstarred) {
+        try {
+          getIO().to(`project:${id}`).emit('star:update', { publicId: id, starCount: unstarred.starCount ?? 0 });
+        } catch {}
+      }
+      return unstarred;
     },
 
     setForksEnabled: async (_root: unknown, { publicId, enabled }: { publicId: string; enabled: boolean }, context: Context) => {
@@ -303,6 +315,11 @@ export const projectResolvers = {
         if ((err as { code?: number }).code === 11000) return true;
         throw err;
       }
+
+      const boostCount = await Boost.countDocuments({ publicId });
+      try {
+        getIO().to(`project:${publicId}`).emit('boost:update', { publicId, boostCount });
+      } catch {}
 
       const actor = await User.findById(ctx.userId).select('accountName').lean<IUser>();
       if (actor) {
