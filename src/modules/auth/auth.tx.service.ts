@@ -6,6 +6,7 @@ import Session from '../../db/session.model.js';
 import PasswordReset from '../../db/passwordReset.model.js';
 import UserDevice from './userDevice.model.js';
 import { withTransaction } from '../../db/transaction.js';
+import { grantSuperadminIfEnvMatch } from './superadmin-env.service.js';
 
 type JwtTools = {
   signAccess: (p: Record<string, unknown>) => string;
@@ -64,6 +65,11 @@ export async function registerAtomically(
     if (userData.deviceId) {
       await UserDevice.create([{ userId: user._id, deviceId: userData.deviceId }], { session });
     }
+
+    // A fresh signup using SUPERADMIN_EMAIL doesn't exist yet at server
+    // startup, so it can't wait for the startup sync job — promote it now,
+    // before the token below is signed, so the JWT's role claim is correct.
+    await grantSuperadminIfEnvMatch(user, session);
 
     const familyId = crypto.randomUUID();
     const tokenPayload = { sub: user._id.toString(), accountName: user.accountName, role: user.role, familyId };

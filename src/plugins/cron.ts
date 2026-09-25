@@ -8,6 +8,7 @@ import { sweepJobs } from '../modules/asr/job.store.js';
 import { sendStreakWarnings } from '../jobs/streak-warning.job.js';
 import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
+import { syncSuperadminEmailGrant } from '../modules/auth/superadmin-env.service.js';
 
 /**
  * Lightweight cron-like scheduler using setInterval.
@@ -73,6 +74,9 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
       seedAddictionLevels()
         .then((n) => fastify.log.info(`[startup] Addiction levels seeded (${n} inserted)`))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed addiction levels')),
+      syncSuperadminEmailGrant()
+        .then(() => fastify.log.info('[startup] SUPERADMIN_EMAIL sync checked'))
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to sync SUPERADMIN_EMAIL grant')),
     ]);
   });
 

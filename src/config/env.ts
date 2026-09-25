@@ -26,6 +26,12 @@ export interface Env {
   TRACK_METADATA_CLIENT_ID?: string;
   TRACK_METADATA_CLIENT_SECRET?: string;
   LASTFM_API_KEY?: string;
+  /**
+   * Email address to auto-grant the `superadmin` role to (case-insensitive
+   * exact match, no wildcards). See modules/auth/superadmin-env.service.ts.
+   * Unset/empty is a no-op — never accidentally grants to nobody/everybody.
+   */
+  SUPERADMIN_EMAIL?: string;
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -72,6 +78,7 @@ export function loadEnv(): Env {
     TRACK_METADATA_CLIENT_ID: process.env.TRACK_METADATA_CLIENT_ID,
     TRACK_METADATA_CLIENT_SECRET: process.env.TRACK_METADATA_CLIENT_SECRET,
     LASTFM_API_KEY: process.env.LASTFM_API_KEY,
+    SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL,
   };
 }
 

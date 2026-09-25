@@ -4,6 +4,7 @@ import User from '../../db/user.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
 import { createOnce } from '../notifications/notifications.service.js';
 import { triggerBadgeCheck } from '../badges/badge.service.js';
+import { grantSuperadminIfEnvMatch } from '../auth/superadmin-env.service.js';
 import type { JwtPayload } from '../../types/index.js';
 
 /**
@@ -242,6 +243,11 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
     user.google.pictureUrl = picture;
     await user.save();
   }
+
+  // Covers both branches above (brand-new account and first-time Google link
+  // to an existing account) — a fresh signup with SUPERADMIN_EMAIL doesn't
+  // exist yet at server startup, so it can't wait for the startup sync job.
+  await grantSuperadminIfEnvMatch(user);
 
   return {
     userId: user._id.toString(),
