@@ -204,7 +204,7 @@ export async function createProject(
     // Every create path (REST POST, GraphQL createProject, autosave auto-create,
     // guest→account migration) funnels through here; forks use cloneProject and
     // are already counted via their project_forked activity.
-    recordHeatmapEvent(userId, 'project_created').catch(() => {});
+    recordHeatmapEvent(userId, 'project_created', result.publicId).catch(() => {});
   }
 
   return result;
@@ -492,9 +492,12 @@ export async function patchProject(
   if (data.metadata !== undefined) projectUpdate.metadata = preserveSingers(data.metadata, project.metadata);
 
   const hasProjectUpdate = allowed.some(k => data[k] !== undefined);
-  // Only explicit saves are candidates for the heatmap; whether they changed
+  // Any save by an authenticated user is a heatmap candidate now — manual and
+  // auto both count, deduped to one contribution per project per day (see
+  // recordHeatmapEvent). `saveKind` is no longer part of this gate; it's kept
+  // on the wire for other analytics. Whether the save actually changed
   // anything is decided below from persisted state, never from the client.
-  const isManualSave = data.saveKind === 'manual' && !!userId;
+  const trackForHeatmap = !!userId;
   let lyricsBefore: LyricsContent | null = null;
   let lyricsAfter: LyricsContent | null = null;
 
@@ -511,9 +514,9 @@ export async function patchProject(
 
     let updatedLyrics;
     if (data.lyrics !== undefined) {
-      if (isManualSave) lyricsBefore = await readLyricsContent(publicId, session);
+      if (trackForHeatmap) lyricsBefore = await readLyricsContent(publicId, session);
       updatedLyrics = await patchLyricsWithSession(publicId, data.lyrics, session);
-      if (isManualSave) lyricsAfter = await readLyricsContent(publicId, session);
+      if (trackForHeatmap) lyricsAfter = await readLyricsContent(publicId, session);
     } else {
       updatedLyrics = await Lyrics.findOne({ publicId }, null, { session });
     }
@@ -566,10 +569,10 @@ export async function patchProject(
     ]).then(() => triggerBadgeCheck(userId, 'sync_update')).catch(() => {});
   }
 
-  if (isManualSave && userId && (
+  if (trackForHeatmap && userId && (
     projectContentChanged(project, updatedProject) || !isDeepStrictEqual(lyricsBefore, lyricsAfter)
   )) {
-    recordHeatmapEvent(userId, 'manual_save').catch(() => {});
+    recordHeatmapEvent(userId, 'project_edited', publicId).catch(() => {});
   }
 
   return { project: pub as unknown as ProjectPublic };
