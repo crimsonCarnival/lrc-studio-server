@@ -14,7 +14,7 @@ export const rootSchema = `
     uploads(limit: Int, offset: Int): [Upload!]!
     settings: Settings
     getShare(id: ID!): Project
-    publicProfile(accountName: String!): PublicUser
+    publicProfile(accountName: String!, asVisitor: Boolean): PublicUser
     followList(accountName: String!, type: FollowListType!, offset: Int): FollowListResult!
     blockedUsers: [BlockedUser!]!
     playlist(id: ID!): Playlist
@@ -33,6 +33,7 @@ export const rootSchema = `
     projectReactions(publicId: String!): ProjectReactions!
     leaderboard(limit: Int, offset: Int): LeaderboardResult!
     badgeDefinitions: [BadgeDef!]!
+    publicBadgeDefinitions: [PublicBadgeDef!]!
     userShowcase(accountName: String!): [ShowcasedBadge!]!
     myMusicLibrary: [MusicLibraryEntry!]!
     userContentStats: ContentStats!
@@ -112,6 +113,7 @@ export const rootSchema = `
     fork: Boolean!
     badge_awarded: Boolean!
     xp_changed: Boolean!
+    streak_warning: Boolean!
   }
 
   type UserPreferences {
@@ -122,6 +124,7 @@ export const rootSchema = `
     defaultProjectPrivacy: String!
     miniProfileBadgesEnabled: Boolean!
     miniProfileBadgeIds: [String!]!
+    showActivityHeatmap: Boolean!
     notifications: NotificationPreferences!
   }
 
@@ -132,6 +135,7 @@ export const rootSchema = `
     fork: Boolean
     badge_awarded: Boolean
     xp_changed: Boolean
+    streak_warning: Boolean
   }
 
   input UpdatePreferencesInput {
@@ -142,6 +146,7 @@ export const rootSchema = `
     defaultProjectPrivacy: String
     miniProfileBadgesEnabled: Boolean
     miniProfileBadgeIds: [String!]
+    showActivityHeatmap: Boolean
     notifications: NotificationPreferencesInput
   }
 
@@ -215,6 +220,17 @@ export const rootSchema = `
     holderCount: Int!
     holderPct: Float!
     xpReward: Int!
+  }
+
+  type PublicBadgeDef {
+    id: String!
+    label: LocalizedString!
+    description: LocalizedString!
+    icon: String!
+    color: String!
+    rarity: String!
+    holderCount: Int!
+    holderPct: Float!
   }
 
   input BadgeDefInput {

@@ -15,7 +15,7 @@ import type { INotification } from '../notifications/notification.model.js';
 
 // ─── Builtin seed data ────────────────────────────────────────────────────────
 
-export const BUILTIN_BADGES = [
+export const BUILTIN_BADGES: Array<Omit<IBadgeDefinition, 'rarity' | 'createdBy' | 'createdAt' | 'updatedAt'>> = [
   { id: 'og',          label: { en: 'Side A', es: 'OG' },         description: { en: 'One of the first 100 users to join', es: 'Uno de los primeros 100 usuarios en unirse' },       icon: '🏆', color: 'amber',   conditionType: 'registration_rank',    conditionValue: 100,   autoGrant: true, isBuiltin: true, xpReward: 750 },
   { id: 'pioneer',     label: { en: 'Pioneer', es: 'Pionero' },          description: { en: 'Among the first 1,000 users', es: 'Entre los primeros 1.000 usuarios' },              icon: '🚀', color: 'teal',    conditionType: 'registration_rank',    conditionValue: 1000,  autoGrant: true, isBuiltin: true, xpReward: 200 },
   { id: 'syncer10h',   label: { en: 'Open Mic', es: 'Sincronizado 10h' },       description: { en: 'Synced at least 10 hours of lyrics', es: '10 horas de letras sincronizadas' },       icon: '🎵', color: 'green',   conditionType: 'minutes_synced',       conditionValue: 600,   autoGrant: true, isBuiltin: true, xpReward: 200 },
@@ -37,24 +37,22 @@ export const BUILTIN_BADGES = [
   { id: 'admin',       label: { en: 'A&R', es: 'Staff' },            description: { en: 'Platform administrator', es: 'Miembro del equipo de LRC Studio' },                   icon: '🛡️', color: 'rose',   conditionType: 'role_admin',           conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 500 },
 ];
 
-// Seeds built-in badges to DB — called on server startup.
-// $setOnInsert: display fields (label, description, icon, color) so admin edits survive redeployment.
-// $set: xpReward only — always synced from code so balance changes deploy immediately.
-// Additionally, we merge Spanish localization strings into existing records during this transition.
-export async function seedBuiltinBadges(): Promise<void> {
-  const existing = await BadgeDefinition.countDocuments({ isBuiltin: true });
-  if (existing > 0) return;
-
-  for (const { id, label, description, icon, color, conditionType, conditionValue, autoGrant, isBuiltin, xpReward } of BUILTIN_BADGES) {
-    await BadgeDefinition.findOneAndUpdate(
-      { id },
-      {
-        $setOnInsert: { icon, color, conditionType, conditionValue, autoGrant, isBuiltin },
-        $set: { xpReward, label, description },
-      },
-      { upsert: true }
-    );
-  }
+// Seeds built-in badges to DB — called on server startup (plugins/cron.ts) and
+// before the registration badge check. Idempotent per badge, keyed by `id`:
+// missing built-ins are inserted, existing ones are left untouched ($setOnInsert
+// only), so admin edits survive restarts and badges added to BUILTIN_BADGES later
+// still reach existing databases. Built-ins cannot be deleted (deleteBadgeDef),
+// so there is no "deliberately deleted" state to preserve.
+// Note: recomputeXP reads built-in xpReward from BUILTIN_BADGES, not the DB.
+export async function seedBuiltinBadges(): Promise<number> {
+  const result = await BadgeDefinition.bulkWrite(
+    BUILTIN_BADGES.map(({ id, ...fields }) => ({
+      updateOne: { filter: { id }, update: { $setOnInsert: fields }, upsert: true },
+    })),
+    { ordered: false }
+  );
+  if (result.upsertedCount > 0) invalidatePublicBadgeDefsCache();
+  return result.upsertedCount;
 }
 
 // ─── Event → condition types mapping ─────────────────────────────────────────
@@ -92,7 +90,7 @@ type UserForCondition = {
   _id: mongoose.Types.ObjectId;
   createdAt?: Date;
   stats?: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number };
-  streak?: { current?: number };
+  streak?: { current?: number; longest?: number; lastActiveDate?: Date | null };
   isVerified: boolean;
   role: 'user' | 'admin';
   social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number };
@@ -133,7 +131,7 @@ export async function checkCondition(user: UserForCondition, def: IBadgeDefiniti
       return days >= (def.conditionValue ?? 0);
     }
     case 'streak_days':
-      return (user.streak?.current ?? 0) >= (def.conditionValue ?? 0);
+      return getStreakView(user.streak).current >= (def.conditionValue ?? 0);
     case 'is_verified':
       return user.isVerified === true;
     case 'role_admin':
@@ -193,14 +191,67 @@ export interface BadgeDefInput {
   xpReward?: number;
 }
 
+export type BadgeDefWithHolders = IBadgeDefinition & { holderCount: number; holderPct: number };
+
+/** All badge definitions with holder counts. Admin view — includes condition/XP internals. */
+export async function listBadgeDefsWithHolders(): Promise<BadgeDefWithHolders[]> {
+  const [defs, totalUsers, holderCounts] = await Promise.all([
+    BadgeDefinition.find().lean<IBadgeDefinition[]>(),
+    User.countDocuments({ isDeleted: { $ne: true } }),
+    User.aggregate<{ _id: string; count: number }>([
+      { $unwind: '$badges' },
+      { $group: { _id: '$badges.id', count: { $sum: 1 } } },
+    ]),
+  ]);
+  const hcMap = new Map<string, number>(holderCounts.map(r => [r._id, r.count]));
+  return defs.map(d => {
+    const holderCount = hcMap.get(d.id) ?? 0;
+    const holderPct = totalUsers > 0 ? parseFloat(((holderCount / totalUsers) * 100).toFixed(1)) : 0;
+    return { ...d, holderCount, holderPct };
+  });
+}
+
+/** Display-only projection, safe for any viewer (including guests). */
+export type PublicBadgeDef = Pick<IBadgeDefinition, 'id' | 'label' | 'description' | 'icon' | 'color' | 'rarity'> & {
+  holderCount: number;
+  holderPct: number;
+};
+
+// The holder-count aggregation unwinds every user's badges; the public query is
+// unauthenticated and hit on every app load, so cache it briefly.
+const PUBLIC_DEFS_TTL_MS = 60_000;
+let publicDefsCache: { at: number; defs: PublicBadgeDef[] } | null = null;
+
+export function invalidatePublicBadgeDefsCache(): void {
+  publicDefsCache = null;
+}
+
+export async function listPublicBadgeDefs(): Promise<PublicBadgeDef[]> {
+  if (publicDefsCache && Date.now() - publicDefsCache.at < PUBLIC_DEFS_TTL_MS) return publicDefsCache.defs;
+  const defs = (await listBadgeDefsWithHolders()).map(d => ({
+    id: d.id,
+    label: d.label,
+    description: d.description,
+    icon: d.icon,
+    color: d.color,
+    rarity: d.rarity ?? 'common',
+    holderCount: d.holderCount,
+    holderPct: d.holderPct,
+  }));
+  publicDefsCache = { at: Date.now(), defs };
+  return defs;
+}
+
 export async function createBadgeDef(input: BadgeDefInput, createdBy?: string): Promise<Record<string, unknown>> {
   const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy });
+  invalidatePublicBadgeDefsCache();
   return { ...def.toObject(), holderCount: 0, holderPct: 0 };
 }
 
 export async function updateBadgeDef(id: string, input: BadgeDefInput): Promise<Record<string, unknown>> {
   const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { new: true });
   if (!def) throw new Error('Badge not found');
+  invalidatePublicBadgeDefsCache();
   const [holderCount, totalUsers] = await Promise.all([
     User.countDocuments({ 'badges.id': id, isDeleted: { $ne: true } }),
     User.countDocuments({ isDeleted: { $ne: true } }),
@@ -214,6 +265,7 @@ export async function deleteBadgeDef(id: string): Promise<boolean> {
   if (!def) throw new Error('Badge not found');
   if (def.isBuiltin) throw new Error('Cannot delete built-in badges');
   await BadgeDefinition.deleteOne({ id });
+  invalidatePublicBadgeDefsCache();
   return true;
 }
 
@@ -665,6 +717,31 @@ export async function updateStreak(userId: string): Promise<number> {
   });
 
   return current;
+}
+
+export type StreakView = { current: number; longest: number; lastActiveDate: string | null };
+
+/**
+ * Read-side view of a stored streak. `streak.current` is only rewritten when the
+ * user is active again, so a streak broken days ago still holds its old value in
+ * the DB. A streak is alive only if the last active UTC day is today or
+ * yesterday; otherwise the effective current streak is 0.
+ */
+export function getStreakView(
+  streak: { current?: number; longest?: number; lastActiveDate?: Date | string | null } | null | undefined,
+  now: Date = new Date()
+): StreakView {
+  const last = streak?.lastActiveDate ? new Date(streak.lastActiveDate) : null;
+  const lastValid = last && !Number.isNaN(last.getTime()) ? last : null;
+  const lastDay = lastValid ? lastValid.toISOString().slice(0, 10) : null;
+  const today = now.toISOString().slice(0, 10);
+  const yesterday = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+  const alive = lastDay === today || lastDay === yesterday;
+  return {
+    current: alive ? (streak?.current ?? 0) : 0,
+    longest: streak?.longest ?? 0,
+    lastActiveDate: lastValid ? lastValid.toISOString() : null,
+  };
 }
 
 // ─── XP / Level ──────────────────────────────────────────────────────────────

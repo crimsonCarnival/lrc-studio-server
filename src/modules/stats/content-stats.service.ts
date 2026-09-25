@@ -3,7 +3,7 @@ import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import User from '../../db/user.model.js';
 import { getAddictionLevel } from './addiction-level.service.js';
-import { getUserActivityHeatmap } from '../activity/activity.service.js';
+import { getStreakView } from '../badges/badge.service.js';
 
 export interface ContentStats {
   totalProjects: number;
@@ -49,71 +49,10 @@ export async function getUserContentStats(userId: string): Promise<ContentStats>
   const cachedSyncedLines  = user.stats?.syncedLines ?? null;  // use cache if available
   const starsReceived      = user.social?.totalStarsReceived ?? 0;
 
-  const heatmap = await getUserActivityHeatmap(userId);
-  let currentStreak = 0;
-  let longestStreak = 0;
-  let runningStreak = 0;
-
-  // Compute streaks (heatmap dates are sorted descending by date if we sort them, wait, getUserActivityHeatmap groups and projects. 
-  // Let's sort them descending first just to be sure)
-  heatmap.sort((a, b) => b.date.localeCompare(a.date));
-
-  const today = now.toISOString().slice(0, 10);
-  const yesterday = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
-  
-  if (heatmap.length > 0) {
-    // Current streak logic
-    const checkDate = new Date(now);
-    let checkDateStr = checkDate.toISOString().slice(0, 10);
-    let heatmapIdx = 0;
-    
-    // Allow today to be 0 if yesterday was > 0
-    if (heatmap[0].date === today) {
-      currentStreak++;
-      heatmapIdx++;
-      checkDate.setUTCDate(checkDate.getUTCDate() - 1);
-      checkDateStr = checkDate.toISOString().slice(0, 10);
-    } else if (heatmap[0].date === yesterday) {
-      // streak started yesterday, that's fine
-    } else {
-      // No activity today or yesterday, streak is broken
-      heatmapIdx = -1;
-    }
-
-    if (heatmapIdx !== -1) {
-      while (heatmapIdx < heatmap.length) {
-        if (heatmap[heatmapIdx].date === checkDateStr) {
-          currentStreak++;
-          heatmapIdx++;
-          checkDate.setUTCDate(checkDate.getUTCDate() - 1);
-          checkDateStr = checkDate.toISOString().slice(0, 10);
-        } else {
-          break; // Broken sequence
-        }
-      }
-    }
-
-    // Longest streak logic
-    // We need to iterate over the sorted heatmap and check consecutive days
-    for (let i = 0; i < heatmap.length; i++) {
-      if (i === 0) {
-        runningStreak = 1;
-      } else {
-        const currDate = new Date(heatmap[i].date);
-        const prevDate = new Date(heatmap[i - 1].date);
-        // difference in days
-        const diff = (prevDate.getTime() - currDate.getTime()) / 86400000;
-        if (Math.round(diff) === 1) {
-          runningStreak++;
-        } else {
-          runningStreak = 1;
-        }
-      }
-      if (runningStreak > longestStreak) {
-        longestStreak = runningStreak;
-      }
-    }
-  }
+  // Single source of truth for streaks: the stored authoring streak (see
+  // updateStreak), read through getStreakView so a lapsed streak shows 0.
+  // The activity heatmap counts social events and must not drive this number.
+  const { current: currentStreak, longest: longestStreak } = getStreakView(user.streak);
 
   if (totalProjects === 0) {
     const { id: addictionId, title: addictionTitle } = await getAddictionLevel({

@@ -30,6 +30,7 @@
 import mongoose from 'mongoose';
 import User from '../db/user.model.js';
 import Project from '../modules/projects/project.model.js';
+import { getStreakView } from '../modules/badges/badge.service.js';
 
 // ─── Weights (must sum to 1.0) ────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ interface LeanUserForRanking {
     totalStarsReceived?: number;
     totalForksReceived?: number;
   };
-  streak?: { current?: number };
+  streak?: { current?: number; longest?: number; lastActiveDate?: Date | null };
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -133,7 +134,7 @@ export async function recomputeLeaderboardRanking(): Promise<void> {
     const stars        = u.social?.totalStarsReceived ?? 0;
     const forks        = u.social?.totalForksReceived ?? 0;
     const projects     = projectCountMap.get(u._id.toString()) ?? 0;
-    const streak       = u.streak?.current ?? 0;
+    const streak       = getStreakView(u.streak).current;
 
     // Eligibility floor: user must have some real activity
     const eligible = syncedLines >= 1 || timeSynced >= 1;

@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import User from '../../db/user.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
 import { createOnce } from '../notifications/notifications.service.js';
-import { triggerBadgeCheck, seedBuiltinBadges } from '../badges/badge.service.js';
+import { triggerBadgeCheck } from '../badges/badge.service.js';
 import type { JwtPayload } from '../../types/index.js';
 
 /**
@@ -229,9 +229,7 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
       }
       createOnce({ userId: user._id.toString(), type: 'set_password', sticky: true }).catch(() => {});
       // New user via Google — check registration badges (og, pioneer, etc.)
-      seedBuiltinBadges()
-        .then(() => triggerBadgeCheck(user!._id.toString(), 'registration'))
-        .catch(() => {});
+      triggerBadgeCheck(user!._id.toString(), 'registration').catch(() => {});
     }
   } else {
     // Returning user — update Google metadata only, never touch avatarUrl

@@ -231,9 +231,8 @@ export async function register(
 
   // Fire-and-forget: check registration badges (og, pioneer, etc.)
   import('../../modules/badges/badge.service.js')
-    .then(({ triggerBadgeCheck, seedBuiltinBadges }) =>
-      seedBuiltinBadges().then(() => triggerBadgeCheck(user._id.toString(), 'registration'))
-    ).catch(() => {});
+    .then(({ triggerBadgeCheck }) => triggerBadgeCheck(user._id.toString(), 'registration'))
+    .catch(() => {});
 
   logUserAction({
     userId: user._id.toString(),

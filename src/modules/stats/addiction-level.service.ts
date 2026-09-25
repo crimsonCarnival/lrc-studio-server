@@ -2,6 +2,7 @@ import AddictionLevel, {
   type IAddictionLevel,
   type ILevelRequirements,
 } from '../../db/addiction-level.model.js';
+import SeedMarker from '../../db/seed-marker.model.js';
 
 // ─── Default seed data ────────────────────────────────────────────────────────
 // Each level specifies only the stats it cares about.
@@ -107,25 +108,41 @@ export const DEFAULT_LEVELS: Array<{
   }
 ];
 
-/**
- * Seeds default addiction levels. Uses $setOnInsert so admin edits
- * survive server restarts.
- */
-export async function seedAddictionLevels(): Promise<void> {
-  const existing = await AddictionLevel.countDocuments();
-  if (existing > 0) return;
+const levelMarkerId = (id: string): string => `addiction_level:${id}`;
 
-  for (const level of DEFAULT_LEVELS) {
-    const { id, title, description, ...insertOnly } = level;
-    await AddictionLevel.findOneAndUpdate(
-      { id },
-      {
-        $setOnInsert: insertOnly,
-        $set: { title, description },
-      },
-      { upsert: true, runValidators: false }
-    );
-  }
+/**
+ * Seeds default addiction levels on startup (plugins/cron.ts). Idempotent per
+ * level, keyed by `id`:
+ * - existing levels are never modified ($setOnInsert only), so admin edits survive;
+ * - each seeded default gets a SeedMarker, so a level an admin later deletes is
+ *   not resurrected on the next restart;
+ * - defaults added to DEFAULT_LEVELS later are inserted into existing databases.
+ * Returns the number of levels inserted.
+ */
+export async function seedAddictionLevels(): Promise<number> {
+  const markers = await SeedMarker.find({ _id: { $in: DEFAULT_LEVELS.map(l => levelMarkerId(l.id)) } })
+    .select('_id')
+    .lean<{ _id: string }[]>();
+  const seeded = new Set(markers.map(m => m._id));
+  const pending = DEFAULT_LEVELS.filter(l => !seeded.has(levelMarkerId(l.id)));
+  if (pending.length === 0) return 0;
+
+  const result = await AddictionLevel.bulkWrite(
+    pending.map(({ id, ...fields }) => ({
+      updateOne: { filter: { id }, update: { $setOnInsert: fields }, upsert: true },
+    })),
+    { ordered: false }
+  );
+  // Markers are written after the levels: if this step fails, the next run
+  // re-upserts (a no-op for levels that now exist) and retries the markers.
+  await SeedMarker.bulkWrite(
+    pending.map(l => ({
+      updateOne: { filter: { _id: levelMarkerId(l.id) }, update: { $setOnInsert: { _id: levelMarkerId(l.id) } }, upsert: true },
+    })),
+    { ordered: false }
+  );
+  if (result.upsertedCount > 0) invalidateLevelCache();
+  return result.upsertedCount;
 }
 
 // ─── Stats snapshot used for level evaluation ─────────────────────────────────
