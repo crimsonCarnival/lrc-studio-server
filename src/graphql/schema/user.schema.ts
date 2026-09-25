@@ -53,6 +53,7 @@ export const userSchema = `
     miniProfileBadgeIds: [String!]!
     badges: [UserBadge!]!
     showcasedBadges: [String!]!
+    showcasePublic: Boolean!
     stats: UserStats
     streak: UserStreak
     progression: UserProgression
@@ -125,6 +126,8 @@ export const userSchema = `
     progression: UserProgression
     country: String
     lastOnlineAt: String
+    # Null unless the owner enabled preferences.showActivityHeatmap.
+    activityHeatmap: [ActivityHeatmapDay!]
   }
 
   type FollowUser {

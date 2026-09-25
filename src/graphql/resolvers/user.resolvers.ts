@@ -7,7 +7,7 @@ import type { IProject } from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
-import { requirePermission } from './auth-guards.js';
+import { requirePermission, requireStaff } from './auth-guards.js';
 import { hasPermission, rankOf, ROLE_RANK } from '../../shared/permissions.js';
 import { logAdminAction, toggleShadowBan } from '../../modules/admin/admin.service.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
@@ -26,8 +26,8 @@ import {
 import { upsertFollow } from '../../modules/notifications/notifications.service.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
-import { writeActivity } from '../../modules/activity/activity.service.js';
-import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots } from '../../modules/badges/badge.service.js';
+import { writeActivity, getPublicActivityHeatmap } from '../../modules/activity/activity.service.js';
+import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots, getStreakView, listBadgeDefsWithHolders, listPublicBadgeDefs } from '../../modules/badges/badge.service.js';
 import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
 import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
@@ -122,9 +122,17 @@ export const userResolvers = {
       return getPreferences(context.userId);
     },
 
-    publicProfile: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
+    publicProfile: async (
+      _root: unknown,
+      { accountName, asVisitor }: { accountName: string; asVisitor?: boolean | null },
+      context: Context
+    ) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!user || user.isDeleted || user.ban?.active) return null;
+
+      // asVisitor: project the profile exactly as an anonymous visitor sees it
+      // (owner's "view as others" preview). It can only remove data, never add.
+      const viewerId = asVisitor ? null : (context.userId ?? null);
 
       // A user blocked by the profile owner cannot view that profile.
       if (context.userId && context.userId !== user._id.toString()
@@ -132,34 +140,39 @@ export const userResolvers = {
         return null;
       }
 
-      const isOwner = context.userId && context.userId === user._id.toString();
+      const isOwner = !!viewerId && viewerId === user._id.toString();
       const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true };
 
       const playlistFilter = isOwner ? { userId: user._id } : { userId: user._id, isPublic: true };
 
-      const [projects, projectCount, playlistCount] = await Promise.all([
+      const [projects, projectCount, playlistCount, socialTotals] = await Promise.all([
         Project.find(projectFilter)
           .sort({ starCount: -1 })
           .limit(50)
           .lean<IProject[]>(),
         Project.countDocuments(projectFilter),
         Playlist.countDocuments(playlistFilter),
+        // Summed over every project the viewer may see, not just the 50 returned.
+        Project.aggregate<{ stars: number; forks: number }>([
+          { $match: projectFilter },
+          { $group: { _id: null, stars: { $sum: { $ifNull: ['$starCount', 0] } }, forks: { $sum: { $ifNull: ['$forkCount', 0] } } } },
+        ]),
       ]);
 
-      const totalStarsReceived = projects.reduce((sum, p) => sum + (p.starCount ?? 0), 0);
-      const totalForksReceived = projects.reduce((sum, p) => sum + (p.forkCount ?? 0), 0);
+      const totalStarsReceived = socialTotals[0]?.stars ?? 0;
+      const totalForksReceived = socialTotals[0]?.forks ?? 0;
 
       const [isFollowedByMe, isFollowingMe] = await Promise.all([
-        context.userId
-          ? Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: user._id }).then(Boolean)
+        viewerId
+          ? Follow.exists({ followerId: new mongoose.Types.ObjectId(viewerId), followingId: user._id }).then(Boolean)
           : Promise.resolve(false),
-        context.userId
-          ? Follow.exists({ followerId: user._id, followingId: new mongoose.Types.ObjectId(context.userId) }).then(Boolean)
+        viewerId
+          ? Follow.exists({ followerId: user._id, followingId: new mongoose.Types.ObjectId(viewerId) }).then(Boolean)
           : Promise.resolve(false),
       ]);
 
-      const isBlockedByMe = context.userId && !isOwner
-        ? await hasBlocked(context.userId, user._id.toString())
+      const isBlockedByMe = viewerId && !isOwner
+        ? await hasBlocked(viewerId, user._id.toString())
         : false;
 
       // Resolve showcasedBadges with rarity data — hidden if owner disabled visibility
@@ -220,10 +233,11 @@ export const userResolvers = {
         showcasedBadges,
         showcasePublic: showcaseVisible,
         stats: { minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0, syncedLines: user.stats?.syncedLines ?? 0, aiSyncedLines: user.stats?.aiSyncedLines ?? 0, aiWordsSynced: user.stats?.aiWordsSynced ?? 0 },
-        streak: { current: user.streak?.current ?? 0, longest: user.streak?.longest ?? 0, lastActiveDate: user.streak?.lastActiveDate ?? null },
+        streak: getStreakView(user.streak),
         progression: { xp: user.progression?.xp ?? 0, level: user.progression?.level ?? 0 },
         lastIp: user.lastIp,
         lastOnlineAt: user.lastOnlineAt,
+        asVisitor: !!asVisitor,
       };
     },
 
@@ -265,7 +279,7 @@ export const userResolvers = {
           avatarUrl: u.avatarUrl ?? null,
           badges: u.badges ?? [],
           stats: { minutesSynced: u.stats?.minutesSynced ?? 0, secondsSynced: u.stats?.secondsSynced ?? 0, wordsSynced: u.stats?.wordsSynced ?? 0, karaokeLines: u.stats?.karaokeLines ?? 0, syncedLines: u.stats?.syncedLines ?? 0, aiSyncedLines: u.stats?.aiSyncedLines ?? 0, aiWordsSynced: u.stats?.aiWordsSynced ?? 0 },
-          streak: { current: u.streak?.current ?? 0, longest: u.streak?.longest ?? 0, lastActiveDate: u.streak?.lastActiveDate ?? null },
+          streak: getStreakView(u.streak),
           progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },
           projectCount: pcMap.get(u._id.toString()) ?? 0,
           totalStarsReceived: u.social?.totalStarsReceived ?? 0,
@@ -278,22 +292,13 @@ export const userResolvers = {
     },
 
     badgeDefinitions: async (_root: unknown, _args: unknown, context: Context) => {
-      await requirePermission(context, 'badges.manage');
-      const defs = await BadgeDefinition.find().lean<IBadgeDefinition[]>();
-      const [totalUsers, holderCounts] = await Promise.all([
-        User.countDocuments({ isDeleted: { $ne: true } }),
-        User.aggregate<{ _id: string; count: number }>([
-          { $unwind: '$badges' },
-          { $group: { _id: '$badges.id', count: { $sum: 1 } } },
-        ]),
-      ]);
-      const hcMap = new Map<string, number>(holderCounts.map(r => [r._id, r.count]));
-      return defs.map(d => {
-        const holderCount = hcMap.get(d.id) ?? 0;
-        const holderPct = totalUsers > 0 ? parseFloat(((holderCount / totalUsers) * 100).toFixed(1)) : 0;
-        return { ...d, holderCount, holderPct };
-      });
+      // Staff-wide read: proposers without badges.manage need the list to propose edits.
+      await requireStaff(context);
+      return listBadgeDefsWithHolders();
     },
+
+    // Display fields only (no condition/XP internals) — open to every viewer.
+    publicBadgeDefinitions: () => listPublicBadgeDefs(),
 
     userShowcase: async (_root: unknown, { accountName }: { accountName: string }, _context: Context) => {
       const user = await User.findOne({ accountName: accountName.toLowerCase() })
@@ -751,7 +756,8 @@ export const userResolvers = {
     badges:          (user: IUser) => user.badges ?? [],
     showcasedBadges: (user: IUser) => user.showcasedBadges ?? [],
     stats:           (user: IUser) => ({ minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0, syncedLines: user.stats?.syncedLines ?? 0, aiSyncedLines: user.stats?.aiSyncedLines ?? 0, aiWordsSynced: user.stats?.aiWordsSynced ?? 0 }),
-    streak:          (user: IUser) => ({ current: user.streak?.current ?? 0, longest: user.streak?.longest ?? 0, lastActiveDate: user.streak?.lastActiveDate ?? null }),
+    showcasePublic:  (user: IUser) => user.showcasePublic !== false,
+    streak:          (user: IUser) => getStreakView(user.streak),
     progression:     (user: IUser) => ({ xp: user.progression?.xp ?? 0, level: user.progression?.level ?? 0 }),
     showcaseSlots:   (user: IUser) => getShowcaseSlots(user.progression?.level ?? 0),
 
@@ -941,11 +947,24 @@ export const userResolvers = {
   },
 };
 
+type PublicUserParent = IUser & { id?: string; asVisitor?: boolean };
+type UserFieldResolver<R> = (user: PublicUserParent, args: unknown, context: Context) => Promise<R>;
+
+/**
+ * For `publicProfile(asVisitor: true)` the privacy-sensitive field resolvers run
+ * with an anonymous viewer, so the owner's preview matches what visitors get.
+ */
+function asViewer<R>(resolver: UserFieldResolver<R>): UserFieldResolver<R> {
+  return (user, args, context) =>
+    resolver(user, args, user.asVisitor ? { ...context, userId: null } : context);
+}
+
 // PublicUser reuses the same field resolvers as User (privacy/permission logic is identical)
 export const publicUserResolvers = {
-  showFollowers: userResolvers.User.showFollowers,
-  miniProfileBadgeIds: userResolvers.User.miniProfileBadgeIds,
-  lastOnlineAt: userResolvers.User.lastOnlineAt,
-  country: userResolvers.User.country,
+  showFollowers: asViewer(userResolvers.User.showFollowers),
+  miniProfileBadgeIds: asViewer(userResolvers.User.miniProfileBadgeIds),
+  lastOnlineAt: asViewer(userResolvers.User.lastOnlineAt),
+  country: asViewer(userResolvers.User.country),
+  activityHeatmap: (user: { id: string }) => getPublicActivityHeatmap(user.id),
 };
 

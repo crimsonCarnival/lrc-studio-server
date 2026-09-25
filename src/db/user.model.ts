@@ -70,6 +70,9 @@ export interface IUserStreak {
   current: number;
   longest: number;
   lastActiveDate?: Date | null;
+  // UTC day ('YYYY-MM-DD') for which the streak-ending warning was already
+  // sent. Makes the streak-warning job idempotent across runs and restarts.
+  warnedFor?: string | null;
 }
 
 export interface IUserProgression {
@@ -203,6 +206,7 @@ const streakSchema = new mongoose.Schema<IUserStreak>(
     current: { type: Number, default: 0, min: 0 },
     longest: { type: Number, default: 0, min: 0 },
     lastActiveDate: { type: Date, default: null },
+    warnedFor: { type: String, default: null },
   },
   { _id: false },
 );
@@ -367,6 +371,9 @@ userSchema.index({ accountName: "text", email: "text" });
 
 // Soft-delete filter support
 userSchema.index({ isDeleted: 1 });
+
+// Streak-warning job: range scan over users last active yesterday (UTC)
+userSchema.index({ "streak.lastActiveDate": 1 });
 
 // Leaderboard: efficient rank ordering; compound with isDeleted for filtered sort
 userSchema.index({ rankScore: -1, isDeleted: 1 });

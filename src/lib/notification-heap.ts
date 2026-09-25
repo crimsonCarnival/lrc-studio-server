@@ -6,7 +6,7 @@ import type { INotification } from '../modules/notifications/notification.model.
 const PRIORITY: Record<string, number> = {
   system: 0, ban: 0, unban: 0, role_changed: 0, admin_granted: 0,
   request_reviewed: 1, request_submitted: 1,
-  badge_awarded: 2, xp_changed: 2,
+  badge_awarded: 2, xp_changed: 2, streak_warning: 2,
   follow: 3, reaction: 3,
   star: 4, fork: 4,
   admin: 4, verify_email: 4, set_password: 4, password_changed: 4,
@@ -46,6 +46,14 @@ export async function loadHeap(userId: string): Promise<void> {
 
 export function enqueueNotif(userId: string, notif: INotification): void {
   getOrCreate(userId).enqueue(notif)
+}
+
+// For batch senders (cron jobs): only touch heaps that are already loaded.
+// Offline users get no heap (eviction only runs on socket disconnect, so an
+// eagerly created heap would never be freed); their next read falls back to
+// loadHeap from the DB, which includes the new notification.
+export function enqueueNotifIfLoaded(userId: string, notif: INotification): void {
+  heaps.get(userId)?.enqueue(notif)
 }
 
 // Non-destructive: returns top N by priority without dequeuing.

@@ -5,6 +5,9 @@ import { recomputeTrendingScores } from '../jobs/trending.job.js';
 import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js';
 import { syncRolePermissions } from '../modules/admin/admin.service.js';
 import { sweepJobs } from '../modules/asr/job.store.js';
+import { sendStreakWarnings } from '../jobs/streak-warning.job.js';
+import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
+import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 
 /**
  * Lightweight cron-like scheduler using setInterval.
@@ -17,6 +20,7 @@ import { sweepJobs } from '../modules/asr/job.store.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const STREAK_WARNING_TICK_MS = 15 * 60 * 1000;
 
 /** Returns milliseconds until next Sunday 02:00 UTC. */
 function msUntilNextSunday0200(): number {
@@ -57,12 +61,18 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
 
   let trendingTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Sync role permissions on startup
+  // Sync role permissions and seed code-defined defaults on startup
   fastify.addHook('onReady', async () => {
     await Promise.allSettled([
       syncRolePermissions()
         .then(() => fastify.log.info('[startup] Role permissions synced'))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to sync role permissions')),
+      seedBuiltinBadges()
+        .then((n) => fastify.log.info(`[startup] Built-in badges seeded (${n} inserted)`))
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed built-in badges')),
+      seedAddictionLevels()
+        .then((n) => fastify.log.info(`[startup] Addiction levels seeded (${n} inserted)`))
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed addiction levels')),
     ]);
   });
 
@@ -81,7 +91,25 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
     trendingTimer = setInterval(runTrending, HOUR_MS);
   });
 
+  // Streak-ending warnings. Ticks every 15 min; the job itself no-ops before
+  // STREAK_WARNING_HOUR_UTC and is idempotent per user per UTC day, so frequent
+  // ticks only bound the send delay (<= 15 min) and survive restarts.
+  let streakWarningTimer: ReturnType<typeof setInterval> | null = null;
+  fastify.addHook('onReady', async () => {
+    const runStreakWarnings = async () => {
+      try {
+        const sent = await sendStreakWarnings();
+        if (sent > 0) fastify.log.info(`[cron] streak warnings sent: ${sent}`);
+      } catch (err) {
+        fastify.log.error({ err }, '[cron] sendStreakWarnings failed');
+      }
+    };
+    void runStreakWarnings();
+    streakWarningTimer = setInterval(runStreakWarnings, STREAK_WARNING_TICK_MS);
+  });
+
   fastify.addHook('onClose', async () => {
+    if (streakWarningTimer !== null) clearInterval(streakWarningTimer);
     if (initialTimer !== null) clearTimeout(initialTimer);
     if (weeklyTimer !== null) clearInterval(weeklyTimer);
     if (trendingTimer !== null) clearInterval(trendingTimer);

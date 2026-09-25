@@ -7,6 +7,7 @@ export interface INotificationPrefs {
   fork: boolean;
   badge_awarded: boolean;
   xp_changed: boolean;
+  streak_warning: boolean;
 }
 
 export interface IUserPreferences {
@@ -18,6 +19,9 @@ export interface IUserPreferences {
   defaultProjectPrivacy: 'public' | 'private';
   miniProfileBadgesEnabled: boolean;
   miniProfileBadgeIds: string[];
+  // Privacy-by-default: the activity heatmap reveals when a user is active,
+  // so it is only exposed on the public profile after an explicit opt-in.
+  showActivityHeatmap: boolean;
   notifications: INotificationPrefs;
 }
 
@@ -28,6 +32,7 @@ const notifPrefsSchema = new mongoose.Schema<INotificationPrefs>({
   fork:          { type: Boolean, default: true },
   badge_awarded: { type: Boolean, default: true },
   xp_changed:    { type: Boolean, default: true },
+  streak_warning: { type: Boolean, default: true },
 }, { _id: false });
 
 const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
@@ -39,7 +44,8 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   defaultProjectPrivacy:    { type: String, enum: ['public', 'private'], default: 'public' },
   miniProfileBadgesEnabled: { type: Boolean, default: true },
   miniProfileBadgeIds:      { type: [String], default: [] },
-  notifications:            { type: notifPrefsSchema, default: () => ({}) },
+  showActivityHeatmap:      { type: Boolean, default: false },
+  notifications:           { type: notifPrefsSchema, default: () => ({}) },
 }, { timestamps: true, collection: 'user_preferences' });
 
 export default mongoose.model<IUserPreferences>('UserPreferences', userPreferencesSchema);

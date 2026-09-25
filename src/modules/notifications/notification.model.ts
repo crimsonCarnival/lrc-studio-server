@@ -11,6 +11,7 @@ const NOTIFICATION_TYPES = [
   'badge_awarded',
   'request_submitted', 'request_reviewed',
   'xp_changed', 'role_changed',
+  'streak_warning',
 ] as const;
 
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
@@ -36,7 +37,8 @@ const notificationSchema = new mongoose.Schema(
     actorCount:   { type: Number, default: 0 },
     body:         { type: String, default: null },
     // Structured payload for notifications that render before -> after changes
-    // (xp_changed: { delta, before, after }; role_changed: { from, to }).
+    // (xp_changed: { delta, before, after }; role_changed: { from, to };
+    // streak_warning: { current, day }).
     meta:         { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true, collection: 'notifications' }

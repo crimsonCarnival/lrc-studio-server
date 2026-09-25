@@ -3,7 +3,7 @@ import type { FlattenMaps } from 'mongoose';
 import Notification, { type INotification, type NotificationType } from './notification.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import Follow from '../../db/follow.model.js';
-import { enqueueNotif, peekNotifs, loadHeap, clearHeap } from '../../lib/notification-heap.js';
+import { enqueueNotif, enqueueNotifIfLoaded, peekNotifs, loadHeap, clearHeap } from '../../lib/notification-heap.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 
 export type NotificationDoc = FlattenMaps<INotification> & { _id: mongoose.Types.ObjectId };
@@ -198,6 +198,32 @@ export async function notifyRoleChanged(userId: string, from: string, to: string
     meta: { from, to },
   });
   enqueueNotif(userId, notification.toObject() as unknown as INotification);
+  emitToUser(userId, 'notification:push', notification.toObject());
+}
+
+export interface StreakWarningParams {
+  userId: string;
+  current: number;
+  /** UTC day ('YYYY-MM-DD') on whose 00:00 UTC rollover the streak ends. */
+  day: string;
+  /** Most recently updated project, used as the "continue working" link. */
+  publicId: string | null;
+  projectTitle: string | null;
+}
+
+// Streak about to end. Preference and idempotency checks are done by the
+// streak-warning job in batch; this only creates and delivers.
+export async function notifyStreakWarning(params: StreakWarningParams): Promise<void> {
+  const { userId, current, day, publicId, projectTitle } = params;
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(userId),
+    type: 'streak_warning',
+    sticky: false,
+    body: null,
+    publicId, projectTitle, actors: [], actorCount: 0, read: false,
+    meta: { current, day },
+  });
+  enqueueNotifIfLoaded(userId, notification.toObject() as unknown as INotification);
   emitToUser(userId, 'notification:push', notification.toObject());
 }
 
