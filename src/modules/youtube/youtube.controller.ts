@@ -1,27 +1,35 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { checkVideoAvailability, fetchEmbeddability, lookupCountry } from './youtube.service.js';
+import type { YoutubeAvailability } from './youtube.service.js';
 
-async function fetchEmbeddability(videoIds: string[], apiKey: string): Promise<Map<string, boolean>> {
-  const map = new Map<string, boolean>();
-  if (!videoIds.length) return map;
-  const params = new URLSearchParams({ part: 'status', id: videoIds.join(','), key: apiKey });
+/**
+ * Shared by both routes. Returns the status, or null after replying with
+ * 400 `invalid_id` / 502 `check_failed` (never the upstream error text).
+ */
+async function resolveAvailability(request: FastifyRequest, reply: FastifyReply): Promise<YoutubeAvailability | null> {
+  if (request.validationError) {
+    reply.code(400).send({ error: 'invalid_id', code: 'invalid_id' });
+    return null;
+  }
+  const { videoId } = request.query as { videoId: string };
   try {
-    const res = await fetch('https://www.googleapis.com/youtube/v3/videos?' + params.toString());
-    if (!res.ok) return map;
-    const data = await res.json() as { items?: Array<{ id: string; status: { embeddable: boolean } }> };
-    for (const item of data.items || []) {
-      map.set(item.id, item.status?.embeddable ?? true);
-    }
-  } catch { /* non-fatal — default to embeddable */ }
-  return map;
+    return await checkVideoAvailability(videoId, await lookupCountry(request.ip));
+  } catch (error) {
+    request.log.warn({ err: error, videoId }, 'YouTube availability check failed');
+    reply.code(502).send({ error: 'check_failed', code: 'check_failed' });
+    return null;
+  }
 }
 
+export async function checkAvailability(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const status = await resolveAvailability(request, reply);
+  if (status) return reply.send({ status });
+}
+
+/** @deprecated Legacy contract `{ embeddable }` kept for cached clients; use GET /youtube/availability. */
 export async function checkEmbed(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const videoId = (request.query as Record<string, string>).videoId;
-  if (!videoId) return reply.code(400).send({ error: 'Missing videoId' });
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return reply.code(500).send({ error: 'YouTube API key not configured' });
-  const map = await fetchEmbeddability([videoId], apiKey);
-  return reply.send({ embeddable: map.get(videoId) ?? true });
+  const status = await resolveAvailability(request, reply);
+  if (status) return reply.send({ embeddable: status === 'available', status });
 }
 
 export async function searchYoutube(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -91,6 +99,6 @@ export async function searchYoutube(request: FastifyRequest, reply: FastifyReply
     return reply.send({ results: items });
   } catch (error) {
     request.log.error(error);
-    return reply.code(500).send({ error: 'Failed to search YouTube', details: (error as Error).message });
+    return reply.code(500).send({ error: 'Failed to search YouTube' });
   }
 }
