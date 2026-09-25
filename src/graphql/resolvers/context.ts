@@ -6,4 +6,6 @@ export interface Context extends MercuriusContext {
   ip?: string;
   tokenExpired?: boolean;
   socketId?: string;
+  /** True when the caller holds a valid admin sudo grant bound to userId. */
+  hasSudo?: boolean;
 }

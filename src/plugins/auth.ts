@@ -45,6 +45,20 @@ function signAdminSudo(userId: string): string {
   return jwt.sign({ scope: 'admin-sudo' }, getSudoSecret(), { subject: userId, expiresIn: ADMIN_SUDO_TTL_SECONDS });
 }
 
+/**
+ * True if `token` is a valid, unexpired admin sudo grant bound to `userId`.
+ * Single source of truth for the requireSudo decorator and the GraphQL context.
+ */
+export function verifyAdminSudo(token: string | undefined, userId: string | undefined | null): boolean {
+  if (!token || !userId) return false;
+  try {
+    const decoded = jwt.verify(token, getSudoSecret()) as JwtPayload;
+    return decoded.scope === 'admin-sudo' && !!decoded.sub && decoded.sub === userId;
+  } catch {
+    return false;
+  }
+}
+
 function signAccess(payload: Record<string, unknown>): string {
   const opts: SignOptions = {
     expiresIn: ACCESS_EXPIRY as SignOptions['expiresIn'],
@@ -267,18 +281,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   // Gate for destructive admin actions. Must run AFTER requireAdmin (which sets
   // request.userId). Requires a valid, unexpired sudo grant bound to this user.
   fastify.decorate('requireSudo', async function (request: FastifyRequest, reply: FastifyReply) {
-    const token = request.cookies.adminSudo;
-    if (!token) {
-      reply.code(403).send({ error: 'sudo_required' });
-      return;
-    }
-    try {
-      const decoded = jwt.verify(token, getSudoSecret()) as JwtPayload;
-      if (decoded.scope !== 'admin-sudo' || !decoded.sub || decoded.sub !== request.userId) {
-        reply.code(403).send({ error: 'sudo_required' });
-        return;
-      }
-    } catch {
+    if (!verifyAdminSudo(request.cookies.adminSudo, request.userId)) {
       reply.code(403).send({ error: 'sudo_required' });
     }
   });

@@ -28,3 +28,18 @@ export async function requirePermission(context: Context, required: Permission):
   }
   return { userId: context.userId, role: user.role, permissions: user.permissions ?? [] };
 }
+
+/**
+ * Throws 401 if unauthenticated, 403 if the user holds no permission at all.
+ * Used for staff-wide reads that back the proposal (staff request) flow, where
+ * a staff member without the manage permission still needs to see the items
+ * they are proposing changes to. Mutations must keep using requirePermission.
+ */
+export async function requireStaff(context: Context): Promise<AuthedStaff> {
+  if (!context.userId) throw Object.assign(new Error('Unauthorized'), { status: 401 });
+  const user = await User.findById(context.userId).select('role permissions').lean<IUser>();
+  if (!user || (user.permissions ?? []).length === 0) {
+    throw Object.assign(new Error('Forbidden'), { status: 403 });
+  }
+  return { userId: context.userId, role: user.role, permissions: user.permissions };
+}

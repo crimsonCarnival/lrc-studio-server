@@ -6,7 +6,7 @@ import {
   deleteLevel,
 } from '../../modules/stats/addiction-level.service.js';
 import { Context } from './context.js';
-import { requirePermission } from './auth-guards.js';
+import { requirePermission, requireStaff } from './auth-guards.js';
 import { logAdminAction } from '../../modules/admin/admin.service.js';
 
 export const statsResolvers = {
@@ -17,7 +17,8 @@ export const statsResolvers = {
     },
 
     adminAddictionLevels: async (_root: unknown, _args: unknown, context: Context) => {
-      await requirePermission(context, 'levels.manage');
+      // Staff-wide read: proposers without levels.manage need the list to propose edits.
+      await requireStaff(context);
       return getAllLevels();
     },
   },

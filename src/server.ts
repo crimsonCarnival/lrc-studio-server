@@ -7,7 +7,7 @@ import cors from './plugins/cors.js';
 import socket from './plugins/socket.js';
 import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rateLimit.js';
-import auth from './plugins/auth.js';
+import auth, { verifyAdminSudo } from './plugins/auth.js';
 import mercurius from 'mercurius';
 import { NoSchemaIntrospectionCustomRule } from 'graphql';
 import { createDepthLimitRule } from './graphql/depth-limit.js';
@@ -80,7 +80,10 @@ async function build() {
         bannedUserId: (request as FastifyRequest & { bannedUserId?: string }).bannedUserId,
         ip: request.ip,
         tokenExpired: (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired ?? false,
-        socketId: request.headers['x-socket-id'] as string | undefined
+        socketId: request.headers['x-socket-id'] as string | undefined,
+        // Resolved per request from the httpOnly adminSudo cookie; resolvers that
+        // gate sudo-protected actions check this flag, never the raw token.
+        hasSudo: verifyAdminSudo(request.cookies.adminSudo, request.userId),
       };
     },
     graphiql: process.env.NODE_ENV === 'development',
