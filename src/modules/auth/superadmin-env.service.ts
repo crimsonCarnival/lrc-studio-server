@@ -7,11 +7,11 @@ import { getEnv } from '../../config/env.js';
 /**
  * Env-based superadmin bootstrap.
  *
- * `SUPERADMIN_EMAIL` is a GRANT-ONLY mechanism: if set, the user with that
- * email (case-insensitive, exact match — never a pattern) is promoted to
- * `superadmin` if they aren't already. It intentionally does NOT demote a
- * current superadmin when the env var is unset, empty, or later points at a
- * different email. Auto-demoting based on an env var is dangerous: a
+ * `SUPERADMIN_EMAIL` is a GRANT-ONLY mechanism: if set, every user whose
+ * email exactly (case-insensitively) matches one entry in the comma-separated
+ * list is promoted to `superadmin` if not already. It intentionally does NOT
+ * demote a current superadmin when the env var is unset, empty, or later
+ * drops/changes an entry. Auto-demoting based on an env var is dangerous: a
  * misconfigured/rolled-back deploy could silently lock out (or hand over,
  * mid-incident) the real admin. Revocation stays a manual, explicit
  * operation via `scripts/grant-role.ts <email> admin` (or another role).
@@ -20,25 +20,28 @@ import { getEnv } from '../../config/env.js';
  * is operator-controlled, not user input):
  *   1. Startup sync (`syncSuperadminEmailGrant`, wired in plugins/cron.ts)
  *      — covers users who already exist when the server boots.
- *   2. Immediately on successful registration/Google sign-up for that email
- *      (`grantSuperadminIfEnvMatch` called directly from
+ *   2. Immediately on successful registration/Google sign-up for a matching
+ *      email (`grantSuperadminIfEnvMatch` called directly from
  *      auth.tx.service.ts#registerAtomically and google.service.ts) — covers
  *      a brand-new account that doesn't exist yet at startup, so it isn't
  *      left as a plain user until the next restart.
  */
 
-function normalizedSuperadminEmail(): string | null {
+/** Parses SUPERADMIN_EMAIL into a deduped set of trimmed, lowercased addresses. Empty entries (",,", trailing comma) are dropped. */
+function normalizedSuperadminEmails(): Set<string> {
   const raw = getEnv().SUPERADMIN_EMAIL;
-  if (!raw) return null;
-  const trimmed = raw.trim().toLowerCase();
-  return trimmed.length > 0 ? trimmed : null;
+  if (!raw) return new Set();
+  const emails = raw
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0);
+  return new Set(emails);
 }
 
-/** True iff `email` case-insensitively equals the configured SUPERADMIN_EMAIL. No-op (false) when unset/empty. */
+/** True iff `email` case-insensitively equals one entry in the configured SUPERADMIN_EMAIL list. No-op (false) when unset/empty. */
 export function isSuperadminEmail(email: string | null | undefined): boolean {
-  const target = normalizedSuperadminEmail();
-  if (!target || !email) return false;
-  return email.trim().toLowerCase() === target;
+  if (!email) return false;
+  return normalizedSuperadminEmails().has(email.trim().toLowerCase());
 }
 
 /**
@@ -83,17 +86,17 @@ export async function grantSuperadminIfEnvMatch(user: IUser, session?: ClientSes
 }
 
 /**
- * Startup job: idempotently promotes the existing user (if any) whose email
- * matches SUPERADMIN_EMAIL. No-op if the env var is unset/empty, or if no
- * user with that email exists yet (a later registration/Google sign-up with
- * that email is caught by `grantSuperadminIfEnvMatch` directly).
+ * Startup job: idempotently promotes every existing user whose email matches
+ * an entry in SUPERADMIN_EMAIL. No-op if the env var is unset/empty. A listed
+ * email with no matching user yet is fine — a later registration/Google
+ * sign-up with that email is caught by `grantSuperadminIfEnvMatch` directly.
  */
 export async function syncSuperadminEmailGrant(): Promise<void> {
-  const target = normalizedSuperadminEmail();
-  if (!target) return;
+  const targets = normalizedSuperadminEmails();
+  if (targets.size === 0) return;
 
-  const user = await User.findOne({ email: target });
-  if (!user) return;
-
-  await grantSuperadminIfEnvMatch(user);
+  const users = await User.find({ email: { $in: [...targets] } });
+  for (const user of users) {
+    await grantSuperadminIfEnvMatch(user);
+  }
 }
