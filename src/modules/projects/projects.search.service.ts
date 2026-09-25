@@ -111,13 +111,26 @@ async function searchWithRegex(
   return { projects, total };
 }
 
+export const SEARCH_QUERY_MAX_LENGTH = 100;
+const SEARCH_LIMIT_MAX = 50;
+const SEARCH_SORTS: readonly SearchSort[] = ['RELEVANCE', 'STARS', 'NEWEST'];
+
 export async function searchProjects(
-  query: string,
-  sortBy: SearchSort = 'RELEVANCE',
-  offset: number = 0,
-  limit: number = 20,
+  rawQuery: string,
+  rawSortBy: SearchSort = 'RELEVANCE',
+  rawOffset: number = 0,
+  rawLimit: number = 20,
   userId?: string
 ): Promise<{ projects: unknown[]; total: number }> {
+  // Normalize untrusted input here so every caller gets the same bounds: the query is
+  // trimmed and capped (the client input caps at the same length), offset/limit are
+  // clamped to non-negative integers ($skip rejects negatives), and sort is whitelisted.
+  const query = String(rawQuery ?? '').trim().slice(0, SEARCH_QUERY_MAX_LENGTH);
+  if (!query) return { projects: [], total: 0 };
+  const sortBy: SearchSort = SEARCH_SORTS.includes(rawSortBy) ? rawSortBy : 'RELEVANCE';
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+  const limit = Number.isFinite(rawLimit) ? Math.min(SEARCH_LIMIT_MAX, Math.max(1, Math.floor(rawLimit))) : 20;
+
   try {
     return await searchWithAtlas(query, sortBy, offset, limit, userId);
   } catch {

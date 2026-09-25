@@ -1,8 +1,10 @@
 import mongoose from 'mongoose';
 import Activity, { type ActivityType } from '../../db/activity.model.js';
 import Follow from '../../db/follow.model.js';
+import HeatmapDay, { type IHeatmapDay } from '../../db/heatmap-day.model.js';
 import User from '../../db/user.model.js';
 import { enqueueFanOut } from './fan-out.queue.js';
+import { getPreferences } from '../user-preferences/user-preferences.service.js';
 
 export interface WriteActivityParams {
   actorId: string;
@@ -95,19 +97,99 @@ export interface ActivityHeatmapDay {
   count: number;
 }
 
-// Aggregates activity counts by calendar date (UTC), bounded to the 90-day TTL window.
+const HEATMAP_WINDOW_DAYS = 365;
+const DAY_MS = 86400000;
+
+// Manual saves are cheap to spam (Ctrl+S). Capping their per-day contribution
+// keeps one save-happy session from pinning the day at the top legend bucket
+// ("10+") on its own; creations are already bounded by the project quota + reCAPTCHA.
+export const MAX_MANUAL_SAVES_PER_DAY = 5;
+
+export type HeatmapEventKind = 'project_created' | 'manual_save';
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(Math.floor(date.getTime() / DAY_MS) * DAY_MS);
+}
+
+function isDuplicateKeyError(err: unknown): boolean {
+  return (err as { code?: number } | null)?.code === 11000;
+}
+
+/**
+ * Counts a private authoring event toward the owner's heatmap. Writes only to
+ * the heatmap_days counters — never to `activities` — so it can't reach the
+ * social feed. One upsert per event; manual saves are clamped server-side.
+ */
+export async function recordHeatmapEvent(
+  userId: string,
+  kind: HeatmapEventKind,
+  now: Date = new Date()
+): Promise<void> {
+  const filter = { userId: new mongoose.Types.ObjectId(userId), day: startOfUtcDay(now) };
+  // Pipeline form so the cap is applied atomically in the same write.
+  const update = kind === 'project_created'
+    ? { $inc: { projectsCreated: 1 } }
+    : [{
+        $set: {
+          projectsCreated: { $ifNull: ['$projectsCreated', 0] },
+          manualSaves: {
+            $min: [{ $add: [{ $ifNull: ['$manualSaves', 0] }, 1] }, MAX_MANUAL_SAVES_PER_DAY],
+          },
+        },
+      }];
+  try {
+    await HeatmapDay.updateOne(filter, update, { upsert: true });
+  } catch (err) {
+    // Two concurrent upserts creating the same (user, day) doc: one loses on the
+    // unique index. The doc now exists, so a single retry takes the update path.
+    if (!isDuplicateKeyError(err)) throw err;
+    await HeatmapDay.updateOne(filter, update, { upsert: true });
+  }
+}
+
+// Merges two sources per UTC calendar date ($dateToString's default timezone):
+// social `activities` (365-day TTL, { actorId, createdAt } index) and private
+// authoring counters in heatmap_days ({ userId, day } index, ~400-day TTL).
+// Both are bounded to the same window starting at a UTC day boundary.
 export async function getUserActivityHeatmap(userId: string): Promise<ActivityHeatmapDay[]> {
-  const results = await Activity.aggregate([
-    { $match: { actorId: new mongoose.Types.ObjectId(userId) } },
-    {
-      $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-        count: { $sum: 1 },
+  const since = startOfUtcDay(new Date(Date.now() - HEATMAP_WINDOW_DAYS * DAY_MS));
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  const [socialDays, counterDays] = await Promise.all([
+    Activity.aggregate<ActivityHeatmapDay>([
+      { $match: { actorId: userObjectId, createdAt: { $gte: since } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 },
+        },
       },
-    },
-    { $project: { _id: 0, date: '$_id', count: 1 } },
-    { $sort: { date: 1 } },
+      { $project: { _id: 0, date: '$_id', count: 1 } },
+    ]),
+    HeatmapDay.find({ userId: userObjectId, day: { $gte: since } })
+      .select('day projectsCreated manualSaves -_id')
+      .lean<Pick<IHeatmapDay, 'day' | 'projectsCreated' | 'manualSaves'>[]>(),
   ]);
 
-  return results as ActivityHeatmapDay[];
+  const counts = new Map<string, number>();
+  for (const d of socialDays) counts.set(d.date, d.count);
+  for (const d of counterDays) {
+    const date = d.day.toISOString().slice(0, 10);
+    const n = (d.projectsCreated ?? 0) + (d.manualSaves ?? 0);
+    if (n > 0) counts.set(date, (counts.get(date) ?? 0) + n);
+  }
+
+  return [...counts.entries()]
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+/**
+ * Heatmap for a public profile. Returns null unless the owner opted in via
+ * preferences.showActivityHeatmap — enforced here, never by client hiding.
+ * Applies to the owner too, so "view as others" shows exactly what others see.
+ */
+export async function getPublicActivityHeatmap(userId: string): Promise<ActivityHeatmapDay[] | null> {
+  const prefs = await getPreferences(userId);
+  if (!prefs.showActivityHeatmap) return null;
+  return getUserActivityHeatmap(userId);
 }

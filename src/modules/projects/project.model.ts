@@ -33,6 +33,28 @@ export interface IProject extends Document {
 
 const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
 
+export const MAX_PROJECT_SINGERS = 20;
+export const MAX_SINGER_NAME_LENGTH = 60;
+
+// Song-level singer roster offered as choices when tagging sections/lines. Normalized
+// in a setter (not a validator) because metadata is written via findOneAndUpdate
+// without runValidators: trim, strip HTML, cap length, dedupe case-insensitively.
+const singersSetter = (v: unknown) => {
+  if (!Array.isArray(v)) return v;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of v) {
+    if (typeof raw !== 'string') continue;
+    const name = stripHtml(raw).trim().slice(0, MAX_SINGER_NAME_LENGTH);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+    if (out.length >= MAX_PROJECT_SINGERS) break;
+  }
+  return out;
+};
+
 // --- Subdocument: Editor State ---
 const stateSchema = new mongoose.Schema(
   {
@@ -60,6 +82,7 @@ const metadataSchema = new mongoose.Schema(
       set: (v: unknown) => (Array.isArray(v) ? v.map((t: unknown) => (typeof t === 'string' ? stripHtml(t).slice(0, 50) : t)) : v),
     },
     singerColors: { type: [String], default: [] },
+    singers: { type: [String], default: [], set: singersSetter },
     songName: { type: String, default: '', maxlength: 500, set: textSetter },
     songArtist: { type: String, default: '', maxlength: 500, set: textSetter },
     songAlbum: { type: String, default: '', maxlength: 500, set: textSetter },

@@ -52,6 +52,19 @@ const metadataSchema = {
     songLanguage: { type: 'string', maxLength: 10 },
     trackNumber: { type: ['integer', 'null'], minimum: 1, maximum: 999 },
     trackCount: { type: ['integer', 'null'], minimum: 1, maximum: 999 },
+    // Limits mirror MAX_PROJECT_SINGERS / MAX_SINGER_NAME_LENGTH in project.model.ts.
+    singers: {
+      type: 'array',
+      items: { type: 'string', maxLength: 60 },
+      maxItems: 20,
+    },
+    // Listed explicitly: Fastify's default AJV strips unknown props (removeAdditional),
+    // which silently dropped custom singer colors on every REST save.
+    singerColors: {
+      type: 'array',
+      items: { type: 'string', maxLength: 9, pattern: '^(#[0-9a-fA-F]{3,8})?$' },
+      maxItems: 20,
+    },
   },
   additionalProperties: false,
 };
@@ -95,6 +108,9 @@ export const patchProjectSchema = {
       readOnly: { type: 'boolean' },
       public: { type: 'boolean' },
       version: { type: 'integer', minimum: 0 },
+      // Explicit user save vs autosave; omitted = autosave. Intent only — the
+      // service decides from persisted state whether anything changed.
+      saveKind: { type: 'string', enum: ['manual', 'auto'] },
     },
     additionalProperties: false,
   },

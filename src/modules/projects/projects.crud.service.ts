@@ -11,7 +11,8 @@ import { getPreferences } from '../user-preferences/user-preferences.service.js'
 import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
-import { writeActivity } from '../activity/activity.service.js';
+import { writeActivity, recordHeatmapEvent } from '../activity/activity.service.js';
+import { isDeepStrictEqual } from 'node:util';
 import { recomputeSyncStats, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
 import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
@@ -80,7 +81,11 @@ interface UpdateProjectData {
   public?: boolean;
   coverImage?: string;
   version?: number;
+  /** Caller intent only ('manual' = explicit user save). Absent = autosave. Never proof of change. */
+  saveKind?: SaveKind;
 }
+
+export type SaveKind = 'manual' | 'auto';
 
 export async function createProject(
   rawData: unknown,
@@ -196,6 +201,10 @@ export async function createProject(
       deviceId: 'unknown',
       metadata: { publicId: result.publicId, title: title || '' },
     });
+    // Every create path (REST POST, GraphQL createProject, autosave auto-create,
+    // guest→account migration) funnels through here; forks use cloneProject and
+    // are already counted via their project_forked activity.
+    recordHeatmapEvent(userId, 'project_created').catch(() => {});
   }
 
   return result;
@@ -371,7 +380,7 @@ export async function updateProject(
   if (title !== undefined) projectUpdate.title = stripHtml(title).slice(0, 200);
   if (uploadId !== undefined) projectUpdate.uploadId = uploadId;
   if (state !== undefined) projectUpdate.state = state;
-  if (metadata !== undefined) projectUpdate.metadata = metadata;
+  if (metadata !== undefined) projectUpdate.metadata = preserveSingers(metadata, project.metadata);
   if (readOnly !== undefined) projectUpdate.readOnly = readOnly;
   if (data.public !== undefined) projectUpdate.public = data.public;
   if (data.coverImage !== undefined) projectUpdate.coverImage = sanitizeUrl(data.coverImage);
@@ -480,8 +489,14 @@ export async function patchProject(
   for (const key of allowed) {
     if (data[key] !== undefined) projectUpdate[key] = data[key];
   }
+  if (data.metadata !== undefined) projectUpdate.metadata = preserveSingers(data.metadata, project.metadata);
 
   const hasProjectUpdate = allowed.some(k => data[k] !== undefined);
+  // Only explicit saves are candidates for the heatmap; whether they changed
+  // anything is decided below from persisted state, never from the client.
+  const isManualSave = data.saveKind === 'manual' && !!userId;
+  let lyricsBefore: LyricsContent | null = null;
+  let lyricsAfter: LyricsContent | null = null;
 
   const result = await withTransaction(async (session) => {
     let updatedProject = project;
@@ -496,7 +511,9 @@ export async function patchProject(
 
     let updatedLyrics;
     if (data.lyrics !== undefined) {
+      if (isManualSave) lyricsBefore = await readLyricsContent(publicId, session);
       updatedLyrics = await patchLyricsWithSession(publicId, data.lyrics, session);
+      if (isManualSave) lyricsAfter = await readLyricsContent(publicId, session);
     } else {
       updatedLyrics = await Lyrics.findOne({ publicId }, null, { session });
     }
@@ -549,7 +566,35 @@ export async function patchProject(
     ]).then(() => triggerBadgeCheck(userId, 'sync_update')).catch(() => {});
   }
 
+  if (isManualSave && userId && (
+    projectContentChanged(project, updatedProject) || !isDeepStrictEqual(lyricsBefore, lyricsAfter)
+  )) {
+    recordHeatmapEvent(userId, 'manual_save').catch(() => {});
+  }
+
   return { project: pub as unknown as ProjectPublic };
+}
+
+// "Actual changes" for the heatmap = authored content. Excluded on purpose:
+// `state` (playback position / active line / saveTime move on every save),
+// and `public` / `readOnly` (visibility toggles; publishing has its own activity).
+const CONTENT_PROJECT_FIELDS = ['title', 'metadata', 'coverImage'] as const;
+
+type ProjectDocLike = { toObject(opts?: { depopulate?: boolean }): Record<string, unknown> };
+
+function projectContentChanged(before: ProjectDocLike, after: ProjectDocLike): boolean {
+  if (before === after) return false;
+  const a = before.toObject({ depopulate: true });
+  const b = after.toObject({ depopulate: true });
+  if (String(a.uploadId ?? '') !== String(b.uploadId ?? '')) return true;
+  return CONTENT_PROJECT_FIELDS.some((k) => !isDeepStrictEqual(a[k] ?? null, b[k] ?? null));
+}
+
+type LyricsContent = { editorMode?: string; language?: string | null; sections?: unknown[] };
+
+// Lean reads on both sides so defaults/casting can't make an unchanged doc look different.
+function readLyricsContent(publicId: string, session: mongoose.ClientSession): Promise<LyricsContent | null> {
+  return Lyrics.findOne({ publicId }, 'editorMode language sections -_id', { session }).lean<LyricsContent>().exec();
 }
 
 type LyricsDoc = mongoose.Document & { editorMode: string; language?: string | null; sections: unknown[]; lines?: unknown[] };
@@ -576,6 +621,23 @@ function assertValidLineTiming(line: { timestamp?: unknown; endTime?: unknown },
   if (typeof timestamp === 'number' && typeof endTime === 'number' && endTime <= timestamp) {
     throw Object.assign(new Error(`${context}: endTime must be greater than timestamp`), { statusCode: 422 });
   }
+}
+
+// Metadata is replaced wholesale by $set. Edit surfaces that don't know about
+// `singers` / `singerColors` (older clients, library/profile edit modals) send
+// metadata without them, which would silently wipe them — keep the stored values
+// unless the request sends the key.
+const PRESERVED_METADATA_ARRAYS = ['singers', 'singerColors'] as const;
+
+function preserveSingers(metadata: Record<string, unknown>, existing: unknown): Record<string, unknown> {
+  if (!metadata || typeof metadata !== 'object') return metadata;
+  let result = metadata;
+  for (const key of PRESERVED_METADATA_ARRAYS) {
+    if (key in metadata) continue;
+    const prev = (existing as Record<string, unknown> | null | undefined)?.[key];
+    if (Array.isArray(prev) && prev.length > 0) result = { ...result, [key]: [...prev] };
+  }
+  return result;
 }
 
 function assertValidSectionsTiming(sections: unknown[]): void {

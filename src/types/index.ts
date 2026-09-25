@@ -68,6 +68,7 @@ export interface ProjectMetadata {
   songLanguage?: string;
   trackNumber?: number | null;
   trackCount?: number | null;
+  singers?: string[];
 }
 
 export interface UploadInfo {

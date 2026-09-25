@@ -51,6 +51,7 @@ export const projectSchema = `
     genre: String
     tags: [String!]
     singerColors: [String!]
+    singers: [String!]
     songName: String
     songArtist: String
     songAlbum: String
@@ -107,6 +108,7 @@ export const projectSchema = `
     genre: String
     tags: [String!]
     singerColors: [String!]
+    singers: [String!]
     songName: String
     songArtist: String
     songAlbum: String
@@ -155,5 +157,13 @@ export const projectSchema = `
     coverImage: String
     state: ProjectStateInput
     lyrics: ProjectLyricsInput
+    # Explicit user save vs autosave (omitted = autosave). Intent only: the
+    # server decides from persisted state whether the save changed anything.
+    saveKind: SaveKind
+  }
+
+  enum SaveKind {
+    manual
+    auto
   }
 `;

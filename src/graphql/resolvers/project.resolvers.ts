@@ -80,8 +80,9 @@ export const projectResolvers = {
         { query: string; sortBy?: string; offset?: number; limit?: number },
       context: Context
     ) => {
-      if (!query.trim()) return { projects: [], total: 0 };
-      const result = await searchProjectsService(query, sortBy as SearchSort, offset, Math.min(limit, 50), context.userId ?? undefined);
+      // Input normalization (trim, length cap, offset/limit clamps) lives in the service.
+      const result = await searchProjectsService(query, sortBy as SearchSort, offset, limit, context.userId ?? undefined);
+      if (result.projects.length === 0) return result;
       if (!context.userId) return result;
       const blockedSet = await getBlockedSet(context.userId);
       if (blockedSet.size === 0) return result;
