@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import type { JwtPayload, SignOptions } from 'jsonwebtoken';
 import { getEnv } from '../config/env.js';
-import { hasPermission, type Permission } from '../shared/permissions.js';
+import { hasPermission, rankOf, ROLE_RANK, type Permission } from '../shared/permissions.js';
 
 interface CachedAuthUser {
   deletedAt?: Date | null;
@@ -274,6 +274,20 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
         return reply.code(403).send({ error: 'Insufficient permissions' });
       }
     };
+  });
+
+  // Gate for the permissions-management surface (editing role presets and
+  // individual staff permissions). Deliberately checks the literal `role`
+  // string rather than any permission — granting/revoking permissions IS the
+  // escalation surface this guards, so it cannot be gated by a permission
+  // itself (that would let a superadmin-granted permission bootstrap more
+  // permissions). rankOf() is a second, independent check as defense in depth.
+  fastify.decorate('requireSuperadmin', async function (request: FastifyRequest, reply: FastifyReply) {
+    const result = await resolveAndCheckBan(request, reply);
+    if (!result) return;
+    if (result.role !== 'superadmin' || rankOf(result.role) !== ROLE_RANK.superadmin) {
+      reply.code(403).send({ error: 'superadmin_required' });
+    }
   });
 
   fastify.decorate('signAdminSudo', signAdminSudo);

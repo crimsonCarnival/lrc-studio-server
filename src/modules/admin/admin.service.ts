@@ -13,10 +13,11 @@ import { sendBanEmail } from '../email/email.service.js';
 import Settings from '../settings/settings.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import type { IUser } from '../../db/user.model.js';
-import { ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole } from '../../shared/permissions.js';
+import { PERMISSIONS, ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole, type Permission, type Role } from '../../shared/permissions.js';
 import geoip from 'geoip-lite';
 import JobLog from '../../db/job-log.model.js';
 import { getOnlineUserIds } from '../../socket/presence.js';
+import RolePermissionsConfig from './rolePermissionsConfig.model.js';
 
 // Staff-protection: resolve the acting admin's rank. A null actor (system call)
 // is treated as top rank so internal automation isn't blocked.
@@ -352,7 +353,10 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
   const previousRole = user.role;
   user.role = newRole;
   // Role is descriptive; permissions are the authority — reseed them on change.
-  user.permissions = [...ROLE_PRESETS[newRole]];
+  // Uses the effective (DB-override-aware) preset, not the raw code constant,
+  // so a superadmin's edited mod/admin defaults take effect immediately.
+  const effectivePresets = await getEffectiveRolePresets();
+  user.permissions = [...effectivePresets[newRole as Role]];
   await user.save();
 
   // Notify the affected user of the role change with before -> after.
@@ -585,15 +589,152 @@ export async function adjustXP(
  * Ensures every user's permissions include at least the permissions their role
  * currently prescribes. Uses $addToSet so custom per-user overrides are never
  * removed. Called on server startup to pick up newly-added permissions.
+ * Uses the effective (DB-override-aware) presets so admin-edited role
+ * defaults are also backfilled onto existing users, not just the code ones.
  */
 export async function syncRolePermissions(): Promise<void> {
-  for (const [role, presetPerms] of Object.entries(ROLE_PRESETS)) {
+  const effectivePresets = await getEffectiveRolePresets();
+  for (const [role, presetPerms] of Object.entries(effectivePresets)) {
     if (presetPerms.length === 0) continue;
     await User.updateMany(
       { role, isDeleted: { $ne: true } },
       { $addToSet: { permissions: { $each: presetPerms } } }
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Role permission presets: superadmin-editable overrides of ROLE_PRESETS.
+// ---------------------------------------------------------------------------
+
+// Roles whose default permission set can be edited via the "Manage
+// permissions" UI. 'user' is always [] by design; 'superadmin' always holds
+// every permission (its ROLE_PRESETS value is `[...PERMISSIONS]`) — allowing
+// it to be edited here would let the UI shrink the one role that is supposed
+// to always have full access, so it's intentionally excluded.
+const EDITABLE_ROLES: readonly Role[] = ['mod', 'admin'];
+
+/**
+ * Resolves the currently-effective permission preset for every role: the
+ * DB-stored override when one exists for that role, otherwise the
+ * code-defined ROLE_PRESETS default. The code constants are never mutated —
+ * they remain the seed value and the fallback when no override is stored.
+ */
+export async function getEffectiveRolePresets(): Promise<Record<Role, Permission[]>> {
+  const config = await RolePermissionsConfig.findById('singleton').lean<{ mod?: string[]; admin?: string[] } | null>();
+  return {
+    user: [...ROLE_PRESETS.user] as Permission[],
+    mod: (config?.mod ?? ROLE_PRESETS.mod) as Permission[],
+    admin: (config?.admin ?? ROLE_PRESETS.admin) as Permission[],
+    superadmin: [...ROLE_PRESETS.superadmin] as Permission[],
+  };
+}
+
+/** Catalog for the "Manage permissions" page: every known permission + the effective preset per role. */
+export async function getPermissionsCatalog(): Promise<{ permissions: readonly Permission[]; presets: Record<Role, Permission[]> }> {
+  const presets = await getEffectiveRolePresets();
+  return { permissions: PERMISSIONS, presets };
+}
+
+/**
+ * Overwrites the default permission set assigned to `role` on future
+ * role-assignment/sync. Superadmin-only (enforced by the requireSuperadmin
+ * route hook; re-checked here since a bug here is a privilege-escalation
+ * hole). Every permission id is validated against the PERMISSIONS whitelist.
+ */
+export async function updateRolePreset(
+  role: string,
+  permissions: string[],
+  adminId: string,
+  actorIp?: string
+): Promise<Record<string, unknown>> {
+  if (!EDITABLE_ROLES.includes(role as Role)) {
+    return { error: 'This role\'s permission set cannot be edited', status: 400 };
+  }
+  const invalid = permissions.filter((p) => !(PERMISSIONS as readonly string[]).includes(p));
+  if (invalid.length > 0) {
+    return { error: `Unknown permission(s): ${invalid.join(', ')}`, status: 400 };
+  }
+  // Re-check literal superadmin status server-side (never trust the route
+  // hook alone — permission grants are the escalation surface this module
+  // guards). rankOf() is an extra belt-and-suspenders check on top of the
+  // exact role-string comparison.
+  const actor = await User.findById(adminId).select('role accountName').lean<IUser & { accountName?: string }>();
+  if (!actor || actor.role !== 'superadmin' || rankOf(actor.role) !== ROLE_RANK.superadmin) {
+    return { error: 'Forbidden', status: 403 };
+  }
+
+  const before = await getEffectiveRolePresets();
+  const deduped = Array.from(new Set(permissions)) as Permission[];
+
+  await RolePermissionsConfig.findByIdAndUpdate(
+    'singleton',
+    { $set: { [role]: deduped } },
+    { upsert: true }
+  );
+
+  await logAdminAction({
+    adminId,
+    adminName: actor.accountName || 'System',
+    ip: actorIp,
+    action: 'update_role_preset',
+    targetName: role,
+    details: `Before: [${before[role as Role].join(', ')}] -> After: [${deduped.join(', ')}]`,
+  });
+
+  return { success: true, presets: await getEffectiveRolePresets() };
+}
+
+/**
+ * Grants/revokes individual permissions for one staff member, overriding
+ * their role default. Superadmin-only. Never touches `role` or rank — only
+ * the `permissions` array — so this surface cannot be used to mint another
+ * superadmin or change anyone's staff-protection rank.
+ */
+export async function updateUserPermissions(
+  userId: string,
+  permissions: string[],
+  adminId: string,
+  actorIp?: string
+): Promise<Record<string, unknown>> {
+  const invalid = permissions.filter((p) => !(PERMISSIONS as readonly string[]).includes(p));
+  if (invalid.length > 0) {
+    return { error: `Unknown permission(s): ${invalid.join(', ')}`, status: 400 };
+  }
+
+  const actor = await User.findById(adminId).select('role accountName').lean<IUser & { accountName?: string }>();
+  if (!actor || actor.role !== 'superadmin' || rankOf(actor.role) !== ROLE_RANK.superadmin) {
+    return { error: 'Forbidden', status: 403 };
+  }
+
+  const user = await User.findById(userId);
+  if (!user) return { error: 'User not found', status: 404 };
+  // Same staff-protection invariant as every other admin mutation: can only
+  // act on a target strictly below the actor's rank. Since only rank 3
+  // (superadmin) can reach this function and rank 3 is reserved for the
+  // SUPERADMIN_EMAIL-based grant (never assignable here), this also means a
+  // superadmin can never edit another superadmin's permissions through this
+  // endpoint, and can never self-edit (self has equal rank).
+  if (rankOf(user.role) >= ROLE_RANK.superadmin) {
+    return { error: 'Cannot act on a user of equal or higher rank', status: 403 };
+  }
+
+  const before = [...(user.permissions ?? [])];
+  const deduped = Array.from(new Set(permissions));
+  user.permissions = deduped;
+  await user.save();
+
+  await logAdminAction({
+    adminId,
+    adminName: actor.accountName || 'System',
+    ip: actorIp,
+    action: 'update_user_permissions',
+    targetId: user._id.toString(),
+    targetName: user.accountName,
+    details: `Before: [${before.join(', ')}] -> After: [${deduped.join(', ')}]`,
+  });
+
+  return { success: true, user: user.toPublic() };
 }
 
 export async function logAdminAction({ adminId, adminName, action, targetId, targetName, details, ip }: {

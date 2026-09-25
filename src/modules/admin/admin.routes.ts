@@ -10,6 +10,8 @@ import {
   listUsersSchema,
   listLogsSchema,
   idParam,
+  updateRolePresetSchema,
+  updateUserPermissionsSchema,
 } from './admin.schema.js';
 
 export default async function adminRoutes(fastify: FastifyInstance): Promise<void> {
@@ -49,4 +51,14 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
   fastify.delete('/banned-devices/:id', { preHandler: [perm('network.block'), sudo], schema: { params: idParam } }, adminController.unblockDevice);
 
   fastify.post('/xp', { preHandler: [perm('xp.adjust'), sudo] }, adminController.adjustXP);
+
+  // Permissions management ("Manage permissions" page) — superadmin-only, not
+  // gated by any permission string. Granting/revoking permissions is itself
+  // the privilege-escalation surface, so it is gated on the literal `role`
+  // (requireSuperadmin) rather than on a permission that a superadmin could
+  // in principle hand out. Also requires a fresh sudo grant, same as every
+  // other destructive admin action.
+  fastify.get('/permissions', { preHandler: [fastify.requireSuperadmin] }, adminController.getPermissionsCatalog);
+  fastify.put('/permissions/roles/:role', { preHandler: [fastify.requireSuperadmin, sudo], schema: updateRolePresetSchema }, adminController.updateRolePreset);
+  fastify.put('/permissions/users/:id', { preHandler: [fastify.requireSuperadmin, sudo], schema: updateUserPermissionsSchema }, adminController.updateUserPermissions);
 }

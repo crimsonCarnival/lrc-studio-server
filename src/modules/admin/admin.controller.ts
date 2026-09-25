@@ -181,6 +181,27 @@ export async function unshadowBanUser(req: FastifyRequest, reply: FastifyReply):
   reply.send(result);
 }
 
+export async function getPermissionsCatalog(_req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await adminService.getPermissionsCatalog();
+  return reply.send(result);
+}
+
+export async function updateRolePreset(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { role } = req.params as { role: string };
+  const { permissions } = req.body as { permissions: string[] };
+  const result = await adminService.updateRolePreset(role, permissions, req.userId!, req.ip);
+  if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
+  return reply.send(result);
+}
+
+export async function updateUserPermissions(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { id } = req.params as { id: string };
+  const { permissions } = req.body as { permissions: string[] };
+  const result = await adminService.updateUserPermissions(id, permissions, req.userId!, req.ip);
+  if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
+  return reply.send(result);
+}
+
 export async function adjustXP(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { action, amount, target, userId, userIds } = req.body as Record<string, unknown>;
   if (!['grant', 'revoke'].includes(action as string)) return reply.code(400).send({ error: 'action must be grant or revoke' });

@@ -95,3 +95,31 @@ export const idParam = {
   properties: { id: { type: 'string', minLength: 1, maxLength: 24 } },
   required: ['id'],
 };
+
+export const updateRolePresetSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      permissions: { type: 'array', items: { type: 'string', maxLength: 64 }, maxItems: 64 },
+    },
+    required: ['permissions'],
+    additionalProperties: false,
+  },
+  params: {
+    type: 'object',
+    properties: { role: { type: 'string', enum: ['mod', 'admin'] } },
+    required: ['role'],
+  },
+};
+
+export const updateUserPermissionsSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      permissions: { type: 'array', items: { type: 'string', maxLength: 64 }, maxItems: 64 },
+    },
+    required: ['permissions'],
+    additionalProperties: false,
+  },
+  params: userIdParam,
+};

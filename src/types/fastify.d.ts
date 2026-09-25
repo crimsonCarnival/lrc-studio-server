@@ -22,6 +22,9 @@ declare module 'fastify' {
     // re-auth (short-lived grant), so a hijacked admin session alone is not
     // enough to ban/delete/change roles. See F24.
     requireSudo: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    // Gate for the permissions-management surface. Checks the literal `role`
+    // string (must be exactly 'superadmin'), never a permission — see auth.ts.
+    requireSuperadmin: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     signAdminSudo: (userId: string) => string;
   }
 
