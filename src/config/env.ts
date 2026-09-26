@@ -20,6 +20,15 @@ export interface Env {
   CLOUDINARY_API_SECRET?: string;
   YOUTUBE_API_KEY?: string;
   GENIUS_CLIENT_ACCESS_TOKEN?: string;
+  /**
+   * LyricFind is a licensed commercial API — no key means the provider is
+   * skipped entirely and the lyrics chain falls through to lyrics.ovh.
+   * See modules/genius/lyricfind.service.ts. LRCLIB (the primary provider)
+   * needs no configuration at all.
+   */
+  LYRICFIND_API_KEY?: string;
+  /** Display territory for LyricFind licensing checks. Defaults to 'US'. */
+  LYRICFIND_TERRITORY?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_REDIRECT_URI?: string;
@@ -72,6 +81,8 @@ export function loadEnv(): Env {
     CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
     YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY,
     GENIUS_CLIENT_ACCESS_TOKEN: process.env.GENIUS_CLIENT_ACCESS_TOKEN,
+    LYRICFIND_API_KEY: process.env.LYRICFIND_API_KEY,
+    LYRICFIND_TERRITORY: process.env.LYRICFIND_TERRITORY,
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
