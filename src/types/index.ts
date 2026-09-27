@@ -177,6 +177,10 @@ export interface ProjectListItem {
   public?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
+  forkedFrom?: { publicId?: string | null } | null;
+  forkCount?: number;
+  starCount?: number;
+  viewCount?: number;
 }
 
 // T documents the expected success payload shape for callers.

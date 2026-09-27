@@ -30,6 +30,7 @@ interface LeanProjectListItem {
   forkedFrom?: { publicId?: string | null } | null;
   forkCount?: number;
   starCount?: number;
+  viewCount?: number;
 }
 
 // Shape of aggregate lyrics metadata result
@@ -212,7 +213,7 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('publicId title metadata coverImage uploadId readOnly public createdAt updatedAt forkedFrom forkCount starCount')
+    .select('publicId title metadata coverImage uploadId readOnly public createdAt updatedAt forkedFrom forkCount starCount viewCount')
     .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist')
     .sort({ updatedAt: -1 })
     .limit(100)
@@ -307,6 +308,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       forkedFrom: s.forkedFrom?.publicId ? s.forkedFrom : null,
       forkCount: s.forkCount ?? 0,
       starCount: s.starCount ?? 0,
+      viewCount: s.viewCount ?? 0,
     };
   });
 }
