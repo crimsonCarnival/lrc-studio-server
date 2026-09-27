@@ -27,6 +27,7 @@ import { getBlockedSet } from '../../modules/blocks/block.service.js';
 import type { SearchSort } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
+import { registerProjectView } from '../../modules/projects/project-view.service.js';
 
 export const projectResolvers = {
   Query: {
@@ -337,10 +338,12 @@ export const projectResolvers = {
       return true;
     },
 
-    incrementProjectView: async (_: unknown, { id }: { id: string }) => {
-      await Project.updateOne({ publicId: id }, { $inc: { viewCount: 1 } });
-      return true;
-    },
+    // Policy (dedup, owner exclusion, public-only) lives in the service.
+    registerProjectView: async (
+      _: unknown,
+      { publicId }: { publicId: string },
+      ctx: Context
+    ) => registerProjectView({ publicId, userId: ctx.userId, deviceId: ctx.deviceId }),
 
     incrementProjectShare: async (_: unknown, { id }: { id: string }) => {
       await Project.updateOne({ publicId: id }, { $inc: { shareCount: 1 } });

@@ -78,7 +78,9 @@ export const rootSchema = `
     unsavePlaylist(playlistId: ID!): Boolean!
     setForksEnabled(publicId: ID!, enabled: Boolean!): Project!
     boostProject(publicId: ID!): Boolean!
-    incrementProjectView(id: ID!): Boolean!
+    # Null when no such project exists. A non-null result with counted: false
+    # means the view was seen but deliberately not counted.
+    registerProjectView(publicId: ID!): ProjectViewResult
     incrementProjectShare(id: ID!): Boolean!
     incrementPlaylistView(id: ID!): Boolean!
     incrementPlaylistShare(id: ID!): Boolean!

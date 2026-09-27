@@ -81,6 +81,7 @@ async function build() {
         ip: request.ip,
         tokenExpired: (request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired ?? false,
         socketId: request.headers['x-socket-id'] as string | undefined,
+        deviceId: request.headers['x-device-id'] as string | undefined,
         // Resolved per request from the httpOnly adminSudo cookie; resolvers that
         // gate sudo-protected actions check this flag, never the raw token.
         hasSudo: verifyAdminSudo(request.cookies.adminSudo, request.userId),
