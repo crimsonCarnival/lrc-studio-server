@@ -166,4 +166,14 @@ export const projectSchema = `
     manual
     auto
   }
+
+  """
+  Outcome of registering a view. \`counted\` is false when the view was seen but
+  deliberately not counted — the viewer already counted today, is the owner, the
+  project is private, or the caller had no stable identity.
+  """
+  type ProjectViewResult {
+    counted: Boolean!
+    viewCount: Int!
+  }
 `;
