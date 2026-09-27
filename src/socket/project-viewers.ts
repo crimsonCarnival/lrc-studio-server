@@ -25,6 +25,16 @@ export const MAX_PUBLIC_ID_LENGTH = 32;
 
 const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+/**
+ * Upper bound on distinct projects one socket may register as a viewer of.
+ * publicId is client-supplied and viewers:join requires no authentication, so
+ * without a cap a single connection could loop over millions of distinct
+ * valid-looking ids and grow both viewersByProject and projectsBySocket
+ * without bound. 20 is far above anything a real client reaches — the page
+ * watches one project at a time and leaves it on navigation.
+ */
+export const MAX_PROJECTS_PER_SOCKET = 20;
+
 /** Validates a client-supplied project id before it reaches a Map or a query. */
 export function isValidPublicId(value: unknown): value is string {
   return (
@@ -36,6 +46,12 @@ export function isValidPublicId(value: unknown): value is string {
 }
 
 export function addViewer(publicId: string, socketId: string, userId?: string): void {
+  const projects = projectsBySocket.get(socketId);
+  // Cap enforced per-socket, not globally: a socket already tracking its max
+  // and joining a new project is refused, but re-joining a project it already
+  // tracks (e.g. a duplicate viewers:join) must still succeed below.
+  if (projects && projects.size >= MAX_PROJECTS_PER_SOCKET && !projects.has(publicId)) return;
+
   let sockets = viewersByProject.get(publicId);
   if (!sockets) {
     sockets = new Map();
@@ -43,12 +59,12 @@ export function addViewer(publicId: string, socketId: string, userId?: string): 
   }
   sockets.set(socketId, userId ? { userId } : {});
 
-  let projects = projectsBySocket.get(socketId);
-  if (!projects) {
-    projects = new Set();
-    projectsBySocket.set(socketId, projects);
+  let socketProjects = projects;
+  if (!socketProjects) {
+    socketProjects = new Set();
+    projectsBySocket.set(socketId, socketProjects);
   }
-  projects.add(publicId);
+  socketProjects.add(publicId);
 }
 
 export function removeViewer(publicId: string, socketId: string): void {

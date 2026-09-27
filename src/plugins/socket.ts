@@ -107,7 +107,9 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     let hidden = 0;
 
     if (userIds.length > 0) {
-      const users = await User.find({ _id: { $in: userIds } })
+      // Same isDeleted/ban filter as join:admin — a soft-deleted or banned
+      // account's name and avatar must not reach the owner.
+      const users = await User.find({ _id: { $in: userIds }, isDeleted: { $ne: true }, 'ban.active': { $ne: true } })
         .select('accountName displayName avatarUrl')
         .lean<Array<{ _id: mongoose.Types.ObjectId; accountName?: string; displayName?: string | null; avatarUrl?: string | null }>>();
 
@@ -123,7 +125,11 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
       }));
 
       viewers = resolved.filter((v): v is NonNullable<typeof v> => v !== null);
-      hidden = resolved.length - viewers.length;
+      // Computed against userIds.length, not users.length/resolved.length: a
+      // hard-deleted account or stale registry entry that User.find doesn't
+      // return must still fold into anonymousCount rather than vanish from
+      // the total.
+      hidden = userIds.length - viewers.length;
     }
 
     io.to(room).emit('viewers:update', {
@@ -135,10 +141,18 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
 
   /** Schedule a coalesced roster emit. */
   function scheduleRoster(publicId: string): void {
+    // Synchronous room-size check: never arm a timer for a project nobody is
+    // watching. publicId is unauthenticated and client-supplied (viewers:join
+    // takes no auth), so without this a client can flood millions of distinct
+    // ids and each one would still mint a setTimeout — the async empty-room
+    // check inside emitRoster only guards after the timer has already fired.
+    if (!io.sockets.adapter.rooms.get(`project-owner:${publicId}`)?.size) return;
     if (rosterTimers.has(publicId)) return;
     rosterTimers.set(publicId, setTimeout(() => {
       rosterTimers.delete(publicId);
-      void emitRoster(publicId).catch(() => {});
+      void emitRoster(publicId).catch((err) => {
+        fastify.log.error({ err, publicId }, 'viewers roster emit failed');
+      });
     }, ROSTER_DEBOUNCE_MS));
   }
 
@@ -284,14 +298,25 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         const userId = socket.data.userId as string | undefined;
         if (!userId) return;
 
-        const project = await Project.findOne({ publicId })
-          .select('userId')
-          .lean<{ userId?: mongoose.Types.ObjectId | null }>();
-        if (!project?.userId || project.userId.toString() !== userId) return;
+        try {
+          const project = await Project.findOne({ publicId })
+            .select('userId')
+            .lean<{ userId?: mongoose.Types.ObjectId | null }>();
+          // Ownership failure stays a silent no-op — a client must not be able
+          // to probe which projects exist or who owns them via an error emit.
+          if (!project?.userId || project.userId.toString() !== userId) return;
 
-        socket.join(`project-owner:${publicId}`);
-        // Immediate, un-debounced: the owner just arrived and needs the current state.
-        await emitRoster(publicId).catch(() => {});
+          socket.join(`project-owner:${publicId}`);
+          // Immediate, un-debounced: the owner just arrived and needs the current state.
+          await emitRoster(publicId);
+        } catch (err) {
+          // A genuine failure (DB blip, etc.) — not an ownership mismatch — so
+          // it's logged rather than silently swallowed. Socket.IO does not
+          // catch rejections from async listeners and this process installs
+          // no unhandledRejection handler, so leaving this unguarded would
+          // crash the server on a single DB error.
+          fastify.log.error({ err, publicId }, 'viewers:watch failed');
+        }
       });
 
       socket.on('disconnect', async (reason) => {
