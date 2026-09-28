@@ -150,7 +150,7 @@ export async function getStats(): Promise<Record<string, unknown>> {
     // Names behind the "active today" count, for the dashboard tooltip. Capped
     // so a busy day cannot balloon the stats payload.
     User.find({ updatedAt: { $gte: yesterday } })
-      .select('accountName displayName')
+      .select('accountName displayName avatarUrl')
       .sort({ updatedAt: -1 })
       .limit(ACTIVE_USER_NAME_LIMIT)
       .lean(),
@@ -170,9 +170,9 @@ export async function getStats(): Promise<Record<string, unknown>> {
     failed: (jobLogs24h as { _id: string, count: number }[]).find(j => j._id === 'failed')?.count || 0,
   };
 
-  const activeUserNames = (activeUserSample as { accountName?: string; displayName?: string }[])
-    .map(u => u.displayName || u.accountName)
-    .filter((n): n is string => !!n);
+  const activeUsersSample = (activeUserSample as { accountName?: string; displayName?: string; avatarUrl?: string }[])
+    .map(u => ({ name: u.displayName || u.accountName || '', avatarUrl: u.avatarUrl || null }))
+    .filter(u => !!u.name);
 
   return {
     totalUsers,
@@ -180,7 +180,7 @@ export async function getStats(): Promise<Record<string, unknown>> {
     pendingAppeals,
     deletedUsers,
     activeUsers,
-    activeUserNames,
+    activeUsersSample,
     newSignups24h,
     newSignups7d,
     newSignups30d,
