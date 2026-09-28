@@ -9,6 +9,7 @@ export interface SaveMediaInput {
   uploadUrl?: string;
   title?: string;
   [key: string]: unknown;
+  sizeBytes?: number;
 }
 
 export interface UploadDoc {
