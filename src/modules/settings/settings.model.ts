@@ -140,9 +140,6 @@ const shortcutsSchema = sub({
   focusPlayback: { type: [shortcutString] },
 });
 
-const importSchema = sub({
-  expandRepeats: Boolean,
-});
 
 const autoSaveSchema = sub({
   enabled: Boolean,
@@ -170,7 +167,6 @@ const settingsSchema = new Schema(
     export: { type: exportSchema, default: () => ({}) },
     interface: { type: interfaceSchema, default: () => ({}) },
     shortcuts: { type: shortcutsSchema, default: () => ({}) },
-    import: { type: importSchema, default: () => ({}) },
     advanced: { type: advancedSchema, default: () => ({}) },
   },
   { timestamps: true, minimize: false, collection: 'settings' }

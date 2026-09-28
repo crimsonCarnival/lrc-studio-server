@@ -6,7 +6,6 @@ export const settingsBodySchema = {
     export: { type: 'object' },
     interface: { type: 'object' },
     shortcuts: { type: 'object' },
-    import: { type: 'object' },
     advanced: { type: 'object' },
   },
   additionalProperties: false,

@@ -5,7 +5,6 @@ export const settingsSchema = `
     export: ExportSettings
     interface: InterfaceSettings
     shortcuts: ShortcutsSettings
-    import: ImportSettings
     advanced: AdvancedSettings
   }
 
@@ -140,9 +139,6 @@ export const settingsSchema = `
     focusPlayback: [String!]
   }
 
-  type ImportSettings {
-    expandRepeats: Boolean
-  }
 
   type AdvancedSettings {
     autoSave: AutoSaveSettings
@@ -161,7 +157,6 @@ export const settingsSchema = `
     export: ExportSettingsInput
     interface: InterfaceSettingsInput
     shortcuts: ShortcutsSettingsInput
-    import: ImportSettingsInput
     advanced: AdvancedSettingsInput
   }
 
@@ -296,9 +291,6 @@ export const settingsSchema = `
     focusPlayback: [String!]
   }
 
-  input ImportSettingsInput {
-    expandRepeats: Boolean
-  }
 
   input AutoSaveSettingsInput {
     enabled: Boolean
