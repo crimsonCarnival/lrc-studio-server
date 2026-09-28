@@ -319,6 +319,14 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         }
       });
 
+      // Symmetric with viewers:watch. No ownership check needed or wanted —
+      // leaving a room you are not in is a harmless no-op, and requiring a DB
+      // lookup to drop a privilege would be backwards.
+      socket.on('viewers:unwatch', (publicId: unknown) => {
+        if (!isValidPublicId(publicId)) return;
+        socket.leave(`project-owner:${publicId}`);
+      });
+
       socket.on('disconnect', async (reason) => {
         fastify.log.info({ socketId: socket.id, reason }, 'socket disconnected');
 
