@@ -6,6 +6,7 @@ import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js'
 import { syncRolePermissions } from '../modules/admin/admin.service.js';
 import { sweepJobs } from '../modules/asr/job.store.js';
 import { sendStreakWarnings } from '../jobs/streak-warning.job.js';
+import { resetLapsedStreaks } from '../jobs/streak-lapse.job.js';
 import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { syncSuperadminEmailGrant } from '../modules/auth/superadmin-env.service.js';
@@ -99,6 +100,7 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
   // STREAK_WARNING_HOUR_UTC and is idempotent per user per UTC day, so frequent
   // ticks only bound the send delay (<= 15 min) and survive restarts.
   let streakWarningTimer: ReturnType<typeof setInterval> | null = null;
+  let streakLapseTimer: ReturnType<typeof setInterval> | null = null;
   fastify.addHook('onReady', async () => {
     const runStreakWarnings = async () => {
       try {
@@ -110,10 +112,25 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
     };
     void runStreakWarnings();
     streakWarningTimer = setInterval(runStreakWarnings, STREAK_WARNING_TICK_MS);
+
+    // Zero out streaks that have lapsed. updateStreak only rewrites
+    // streak.current when a user is active again, so without this the stored
+    // value keeps claiming a streak that getStreakView already reports as dead.
+    const runStreakLapse = async () => {
+      try {
+        const reset = await resetLapsedStreaks();
+        if (reset > 0) fastify.log.info(`[cron] lapsed streaks reset: ${reset}`);
+      } catch (err) {
+        fastify.log.error({ err }, '[cron] resetLapsedStreaks failed');
+      }
+    };
+    void runStreakLapse();
+    streakLapseTimer = setInterval(runStreakLapse, STREAK_WARNING_TICK_MS);
   });
 
   fastify.addHook('onClose', async () => {
     if (streakWarningTimer !== null) clearInterval(streakWarningTimer);
+    if (streakLapseTimer !== null) clearInterval(streakLapseTimer);
     if (initialTimer !== null) clearTimeout(initialTimer);
     if (weeklyTimer !== null) clearInterval(weeklyTimer);
     if (trendingTimer !== null) clearInterval(trendingTimer);
