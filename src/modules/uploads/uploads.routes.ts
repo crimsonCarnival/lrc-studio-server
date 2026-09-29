@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import * as uploadController from './uploads.controller.js';
-import { signatureSchema, createMediaSchema, updateMediaSchema, listMediaSchema } from './uploads.schema.js';
+import { signatureSchema, updateMediaSchema } from './uploads.schema.js';
 
 export default async function uploadRoutes(fastify: FastifyInstance): Promise<void> {
   // Guests (no token) can request a Cloudinary signature and save YouTube/Cloudinary media.
@@ -24,9 +24,8 @@ export default async function uploadRoutes(fastify: FastifyInstance): Promise<vo
       }
     }
   }, uploadController.coverSignature);
-  fastify.get('/media', { schema: listMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.listMedia);
-  fastify.get('/media/:id', { preHandler: [fastify.requireActiveUser] }, uploadController.getMedia);
-  fastify.post('/media', { schema: createMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.createMedia);
+  // Media reads and the create/delete writes are served by GraphQL
+  // (uploads / upload / saveMedia / deleteMedia). updateMedia has no GraphQL
+  // equivalent yet, so it stays here.
   fastify.patch('/media/:id', { schema: updateMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.updateMedia);
-  fastify.delete('/media/:id', { preHandler: [fastify.requireActiveUser] }, uploadController.deleteMedia);
 }
