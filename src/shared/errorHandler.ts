@@ -32,11 +32,11 @@ const STATUS_MESSAGES: Record<number, string> = {
 
 /**
  * Shared Fastify error handler. Previously duplicated (and drifting) across
- * server.ts, auth.routes.ts, and settings.routes.ts.
+ * server.ts, auth.routes.ts, and the since-retired settings.routes.ts.
  *
  * Mongoose ValidationError → 422 (syntactically valid request, semantically
- * invalid data), not 400 (malformed request) — settings.routes.ts used to map
- * it to 400.
+ * invalid data), not 400 (malformed request), which is what the old
+ * settings.routes.ts mapped it to.
  */
 export function handleFastifyError(error: HandledError, request: FastifyRequest, reply: FastifyReply): void {
   if (error.validation) {
