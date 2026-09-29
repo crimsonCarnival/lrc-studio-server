@@ -113,6 +113,8 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   return { users, nextCursor, hasMore, total };
 }
 
+const ACTIVE_USER_NAME_LIMIT = 25;
+
 export async function getStats(): Promise<Record<string, unknown>> {
   const [
     totalUsers,
@@ -138,12 +140,20 @@ export async function getStats(): Promise<Record<string, unknown>> {
   
   const [
     activeUsers,
+    activeUserSample,
     newSignups24h,
     newSignups7d,
     newSignups30d,
     jobLogs24h
   ] = await Promise.all([
     User.countDocuments({ updatedAt: { $gte: yesterday } }),
+    // Names behind the "active today" count, for the dashboard tooltip. Capped
+    // so a busy day cannot balloon the stats payload.
+    User.find({ updatedAt: { $gte: yesterday } })
+      .select('accountName displayName avatarUrl')
+      .sort({ updatedAt: -1 })
+      .limit(ACTIVE_USER_NAME_LIMIT)
+      .lean(),
     User.countDocuments({ createdAt: { $gte: yesterday } }),
     User.countDocuments({ createdAt: { $gte: sevenDaysAgo } }),
     User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
@@ -160,12 +170,17 @@ export async function getStats(): Promise<Record<string, unknown>> {
     failed: (jobLogs24h as { _id: string, count: number }[]).find(j => j._id === 'failed')?.count || 0,
   };
 
+  const activeUsersSample = (activeUserSample as { accountName?: string; displayName?: string; avatarUrl?: string }[])
+    .map(u => ({ name: u.displayName || u.accountName || '', avatarUrl: u.avatarUrl || null }))
+    .filter(u => !!u.name);
+
   return {
     totalUsers,
     bannedUsers,
     pendingAppeals,
     deletedUsers,
     activeUsers,
+    activeUsersSample,
     newSignups24h,
     newSignups7d,
     newSignups30d,
