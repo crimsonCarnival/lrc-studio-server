@@ -363,8 +363,17 @@ userSchema.pre(
   },
 );
 
-// Prevent duplicate Google account links
-userSchema.index({ "google.googleId": 1 }, { unique: true, sparse: true });
+// Prevent duplicate Google account links.
+//
+// This must be a PARTIAL index, not a sparse one. `sparse` only skips documents
+// where the field is absent — it still indexes explicit nulls. Since
+// `google.googleId` has `default: null`, Mongoose materialises the field on
+// every user, so a sparse unique index lets exactly one account hold null and
+// rejects every password registration after that with a duplicate-key 500.
+userSchema.index(
+  { "google.googleId": 1 },
+  { unique: true, partialFilterExpression: { "google.googleId": { $type: "string" } } },
+);
 
 // Enables $text search in admin user listing
 userSchema.index({ accountName: "text", email: "text" });
