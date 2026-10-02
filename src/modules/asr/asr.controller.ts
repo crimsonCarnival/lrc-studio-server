@@ -11,6 +11,13 @@ type StampBody = { lines: LineInput[]; uploadId?: string; youtubeUrl?: string; f
 
 export async function stampFromUpload(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { lines, uploadId, youtubeUrl, fuzzyTolerance } = request.body as StampBody;
+  // YouTube extraction is unreliable in production (bot-check, even with the
+  // PO-token sidecar and a JS runtime configured) — gated off here rather than
+  // left to fail mid-job. Server-side because the client hiding the option is
+  // UI-only; a direct POST must be rejected the same way. asr_youtube_disabled
+  // is a distinct code from asr_youtube_blocked (transient/retry) so the client
+  // can show "not supported, upload audio instead" rather than "try again".
+  if (youtubeUrl) return reply.code(422).send({ error: 'asr_youtube_disabled' });
   // JSON schema (oneOf) guarantees exactly one of uploadId / youtubeUrl is present.
   const result = await startStampJob({
     userId: request.userId as string,
