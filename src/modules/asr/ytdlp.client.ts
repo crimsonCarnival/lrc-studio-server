@@ -39,6 +39,16 @@ function extractorArgs(): string[] {
   return ['--plugin-dirs', './yt-dlp-plugins', '--extractor-args', `youtubepot-bgutilhttp:base_url=${potUrl}`];
 }
 
+// yt-dlp needs a JS runtime to solve YouTube's signature/n-param challenges;
+// without one it degrades and still lands on the bot-check error the PO-token
+// plugin above exists to avoid. render-build.sh downloads deno to ./deno,
+// same convention as YTDLP_PATH. DENO_PATH overrides for other environments.
+// Static, server-controlled value — never user input — so it's safe to place
+// directly in argv; no shell is involved (spawn(..., { shell: false })).
+function jsRuntimeArgs(): string[] {
+  return ['--js-runtimes', `deno:${process.env.DENO_PATH || './deno'}`];
+}
+
 function mapStderr(stderr: string): AsrError {
   if (/sign in to confirm|confirm you.{0,3}re not a bot|HTTP Error 403/i.test(stderr)) {
     return new AsrError('asr_youtube_blocked', 'yt-dlp blocked');
@@ -138,7 +148,7 @@ export async function extractYoutubeAudio(videoId: string, signal: AbortSignal):
   try {
     const url = canonicalUrl(videoId);
 
-    const probeOut = await runYtdlp([...extractorArgs(), '-J', '--no-playlist', url], { signal, maxBytes: MAX_PROBE_BYTES });
+    const probeOut = await runYtdlp([...extractorArgs(), ...jsRuntimeArgs(), '-J', '--no-playlist', url], { signal, maxBytes: MAX_PROBE_BYTES });
     let probe: Probe;
     try { probe = JSON.parse(probeOut.toString('utf8')) as Probe; }
     catch { throw new AsrError('asr_youtube_unavailable', 'unparseable probe'); }
@@ -151,7 +161,7 @@ export async function extractYoutubeAudio(videoId: string, signal: AbortSignal):
     }
     const { formatId, format } = pickAudioFormat(probe.formats ?? []);
 
-    const data = await runYtdlp([...extractorArgs(), '-f', formatId, '--no-playlist', '-o', '-', url], { signal, maxBytes: MAX_AUDIO_BYTES });
+    const data = await runYtdlp([...extractorArgs(), ...jsRuntimeArgs(), '-f', formatId, '--no-playlist', '-o', '-', url], { signal, maxBytes: MAX_AUDIO_BYTES });
     if (data.byteLength === 0) throw new AsrError('asr_youtube_unavailable', 'empty download');
     return { data, format };
   } finally {
