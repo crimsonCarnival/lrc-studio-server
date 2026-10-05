@@ -10,6 +10,7 @@ import { resetLapsedStreaks } from '../jobs/streak-lapse.job.js';
 import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { syncSuperadminEmailGrant } from '../modules/auth/superadmin-env.service.js';
+import { dropSupersededIndexes } from '../db/superseded-indexes.js';
 
 /**
  * Lightweight cron-like scheduler using setInterval.
@@ -78,6 +79,9 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
       syncSuperadminEmailGrant()
         .then(() => fastify.log.info('[startup] SUPERADMIN_EMAIL sync checked'))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to sync SUPERADMIN_EMAIL grant')),
+      dropSupersededIndexes()
+        .then((dropped) => { if (dropped.length > 0) fastify.log.info(`[startup] Superseded indexes dropped: ${dropped.join(', ')}`); })
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to drop superseded indexes')),
     ]);
   });
 
