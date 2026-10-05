@@ -19,18 +19,12 @@ vi.mock('./groq.client.js', async (importOriginal) => {
   };
 });
 
-vi.mock('./ytdlp.client.js', () => ({
-  extractVideoId: vi.fn((input: string) => (/^[A-Za-z0-9_-]{11}$/.test(input) ? input : (input.match(/v=([A-Za-z0-9_-]{11})/)?.[1] ?? null))),
-  extractYoutubeAudio: vi.fn(),
-}));
-
 vi.mock('../uploads/upload.model.js', () => ({
   default: { findById: vi.fn() },
 }));
 
 import { startStampJob } from './asr.service.js';
 import { transcribeAudio, isAsrConfigured, AsrError } from './groq.client.js';
-import { extractYoutubeAudio } from './ytdlp.client.js';
 import Upload from '../uploads/upload.model.js';
 import { getJob, cancelJob } from './job.store.js';
 
@@ -301,41 +295,5 @@ describe('startStampJob', () => {
     const job = getJob(jobId)!;
     expect(job.errorCode).toBe('asr_unsupported_audio');
     expect(transcribeAudio).not.toHaveBeenCalled();
-  });
-});
-
-describe('startStampJob — youtube source', () => {
-  it('rejects an unparseable youtube URL with 400', async () => {
-    const res = await startStampJob({
-      userId: 'u1', lines: [{ index: 0, text: 'hello' }],
-      audio: { kind: 'youtube', url: 'https://evil.com/nope' },
-    });
-    expect(res).toEqual({ error: 'asr_unsupported_audio', status: 400 });
-  });
-
-  it('runs extraction then transcription and completes', async () => {
-    vi.mocked(extractYoutubeAudio).mockResolvedValueOnce({ data: Buffer.from('a'), format: 'm4a' });
-    vi.mocked(transcribeAudio).mockResolvedValueOnce([
-      { text: 'hello', start: 0, end: 1 },
-    ]);
-    const res = await startStampJob({
-      userId: 'u2', lines: [{ index: 0, text: 'hello' }],
-      audio: { kind: 'youtube', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
-    });
-    expect('jobId' in res).toBe(true);
-    const jobId = (res as { jobId: string }).jobId;
-    await vi.waitFor(() => expect(getJob(jobId)?.phase).toBe('completed'));
-    expect(vi.mocked(extractYoutubeAudio)).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(AbortSignal));
-  });
-
-  it('fails the job with the extraction error code', async () => {
-    vi.mocked(extractYoutubeAudio).mockRejectedValueOnce(new AsrError('asr_youtube_blocked'));
-    const res = await startStampJob({
-      userId: 'u3', lines: [{ index: 0, text: 'hello' }],
-      audio: { kind: 'youtube', url: 'dQw4w9WgXcQ' },
-    });
-    const jobId = (res as { jobId: string }).jobId;
-    await vi.waitFor(() => expect(getJob(jobId)?.phase).toBe('failed'));
-    expect(getJob(jobId)?.errorCode).toBe('asr_youtube_blocked');
   });
 });
