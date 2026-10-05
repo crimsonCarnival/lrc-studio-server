@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import { parse as parseCookie } from 'cookie';
 import { setIO } from '../socket/socket.manager.js';
 import { initSocialGraph } from '../lib/social-graph.js';
 import { initRequestQueue } from '../modules/requests/request.queue.js';
@@ -25,15 +26,6 @@ import {
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 
-/** Parse a raw Cookie header string and return the value for a given name. */
-function parseCookie(header: string, name: string): string | undefined {
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
-  }
-  return undefined;
-}
 
 async function getMutualFollowIds(userId: string): Promise<string[]> {
   const userOid = new mongoose.Types.ObjectId(userId);
@@ -72,7 +64,7 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
   io.use((socket, next) => {
     try {
       const cookieHeader = socket.handshake.headers.cookie ?? '';
-      const token = parseCookie(cookieHeader, 'accessToken');
+      const token = parseCookie(cookieHeader).accessToken;
       if (token) {
         const decoded = jwt.verify(token, JWT_SECRET) as { sub?: string };
         if (decoded.sub) socket.data.userId = decoded.sub;
