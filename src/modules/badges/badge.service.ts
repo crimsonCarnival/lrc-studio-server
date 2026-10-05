@@ -12,6 +12,7 @@ import { getIO } from '../../socket/socket.manager.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { enqueueNotif } from '../../lib/notification-heap.js';
 import type { INotification } from '../notifications/notification.model.js';
+import { scheduleOnce } from '../../lib/job-queue.js';
 
 // ─── Builtin seed data ────────────────────────────────────────────────────────
 
@@ -628,25 +629,24 @@ export async function recomputeSyncStats(userId: string): Promise<{
 // ─── Coalesced stat refresh (call from save paths) ───────────────────────────
 
 // recomputeSyncStats walks every line and word of every project the user owns,
-// and autosave fires every few edits — so saves only arm a timer and one
-// recompute covers the whole burst. Later saves do not reset the timer, so a
-// refresh always lands within the window and always after the last save in it.
-// In-memory and single-instance, like the ASR job store: a restart drops pending
-// refreshes, which getProject's staleness check picks up on the next load.
-const SYNC_STATS_REFRESH_DELAY_MS = 60_000;
-const pendingStatsRefresh = new Map<string, NodeJS.Timeout>();
+// and autosave fires every few edits — so saves only queue a job and one
+// recompute covers the whole burst. A pending job is not rescheduled by later
+// saves, so a refresh always lands within the window and after the last save
+// in it. The job lives in the Mongo-backed queue: it survives a restart and
+// runs once no matter how many instances saw the saves.
+export const SYNC_STATS_REFRESH_JOB = 'sync-stats-refresh';
+const SYNC_STATS_REFRESH_DELAY = 'in 60 seconds';
 
 export function scheduleSyncStatsRefresh(userId: string): void {
-  if (pendingStatsRefresh.has(userId)) return;
-  const timer = setTimeout(() => {
-    pendingStatsRefresh.delete(userId);
-    recomputeSyncStats(userId)
-      .then(() => triggerBadgeCheck(userId, 'sync_update'))
-      .catch(() => {});
-  }, SYNC_STATS_REFRESH_DELAY_MS);
-  // Never hold the process open for a stats refresh.
-  timer.unref();
-  pendingStatsRefresh.set(userId, timer);
+  // Fire-and-forget, like every other post-save side effect. If the queue is
+  // down the refresh is skipped; getProject's staleness check recovers it on
+  // the next load.
+  scheduleOnce(SYNC_STATS_REFRESH_JOB, userId, { userId }, SYNC_STATS_REFRESH_DELAY).catch(() => {});
+}
+
+export async function runSyncStatsRefresh({ userId }: { userId: string }): Promise<void> {
+  await recomputeSyncStats(userId);
+  await triggerBadgeCheck(userId, 'sync_update');
 }
 
 // ─── XP Event logging (event-based system) ────────────────────────────────────

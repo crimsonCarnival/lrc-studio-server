@@ -6,6 +6,7 @@ vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Erro
 vi.mock('../auth/auth.service.js', () => ({ verifyRecaptcha: async () => true }));
 vi.mock('../badges/badge.service.js', () => ({
   recomputeSyncStats: async () => undefined,
+  scheduleSyncStatsRefresh: () => undefined,
   triggerBadgeCheck: async () => undefined,
   updateStreak: async () => undefined,
 }));
