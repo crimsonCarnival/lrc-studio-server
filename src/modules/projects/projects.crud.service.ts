@@ -13,7 +13,7 @@ import { logUserAction } from '../user_logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
 import { writeActivity, recordHeatmapEvent } from '../activity/activity.service.js';
 import { isDeepStrictEqual } from 'node:util';
-import { recomputeSyncStats, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
+import { recomputeSyncStats, scheduleSyncStatsRefresh, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
 import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
@@ -565,10 +565,8 @@ export async function patchProject(
   }
 
   if (data.lyrics !== undefined && userId) {
-    Promise.all([
-      recomputeSyncStats(userId),
-      updateStreak(userId),
-    ]).then(() => triggerBadgeCheck(userId, 'sync_update')).catch(() => {});
+    updateStreak(userId).catch(() => {});
+    scheduleSyncStatsRefresh(userId);
   }
 
   if (trackForHeatmap && userId && (

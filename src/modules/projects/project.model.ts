@@ -164,7 +164,8 @@ projectSchema.index({ 'metadata.tags': 1 });
 // Supports public project discovery and trending sorts
 projectSchema.index({ public: 1, starCount: -1 });
 projectSchema.index({ public: 1, createdAt: -1 });
-projectSchema.index({ public: 1, trendingScore: -1 });
+// createdAt is the explore sort's tiebreak — without it in the key the sort runs in memory
+projectSchema.index({ public: 1, trendingScore: -1, createdAt: -1 });
 projectSchema.index({ forksEnabled: 1 });
 
 export interface IProjectModel extends Model<IProject & IProjectMethods> {}

@@ -625,6 +625,30 @@ export async function recomputeSyncStats(userId: string): Promise<{
   return { minutesSynced, secondsSynced, wordsSynced, karaokeLines, syncedLines, aiSyncedLines, aiWordsSynced };
 }
 
+// ─── Coalesced stat refresh (call from save paths) ───────────────────────────
+
+// recomputeSyncStats walks every line and word of every project the user owns,
+// and autosave fires every few edits — so saves only arm a timer and one
+// recompute covers the whole burst. Later saves do not reset the timer, so a
+// refresh always lands within the window and always after the last save in it.
+// In-memory and single-instance, like the ASR job store: a restart drops pending
+// refreshes, which getProject's staleness check picks up on the next load.
+const SYNC_STATS_REFRESH_DELAY_MS = 60_000;
+const pendingStatsRefresh = new Map<string, NodeJS.Timeout>();
+
+export function scheduleSyncStatsRefresh(userId: string): void {
+  if (pendingStatsRefresh.has(userId)) return;
+  const timer = setTimeout(() => {
+    pendingStatsRefresh.delete(userId);
+    recomputeSyncStats(userId)
+      .then(() => triggerBadgeCheck(userId, 'sync_update'))
+      .catch(() => {});
+  }, SYNC_STATS_REFRESH_DELAY_MS);
+  // Never hold the process open for a stats refresh.
+  timer.unref();
+  pendingStatsRefresh.set(userId, timer);
+}
+
 // ─── XP Event logging (event-based system) ────────────────────────────────────
 
 export async function logXPEvent(

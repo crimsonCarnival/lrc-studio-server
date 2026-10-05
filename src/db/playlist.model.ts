@@ -41,6 +41,7 @@ const playlistSchema = new mongoose.Schema<IPlaylist>(
 
 playlistSchema.index({ userId: 1 });
 playlistSchema.index({ tags: 1 });
-playlistSchema.index({ isPublic: 1, trendingScore: -1 });
+// createdAt is the explore sort's tiebreak — without it in the key the sort runs in memory
+playlistSchema.index({ isPublic: 1, trendingScore: -1, createdAt: -1 });
 
 export default mongoose.model<IPlaylist>('Playlist', playlistSchema);
