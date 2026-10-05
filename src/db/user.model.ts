@@ -384,8 +384,10 @@ userSchema.index({ isDeleted: 1 });
 // Streak-warning job: range scan over users last active yesterday (UTC)
 userSchema.index({ "streak.lastActiveDate": 1 });
 
-// Leaderboard: efficient rank ordering; compound with isDeleted for filtered sort
-userSchema.index({ rankScore: -1, isDeleted: 1 });
+// Leaderboard: key order mirrors the resolver's sort (rankScore, then
+// stats.syncedLines as tiebreak) so it is index-provided; isDeleted trails so
+// the filter is answered from the key.
+userSchema.index({ rankScore: -1, 'stats.syncedLines': -1, isDeleted: 1 });
 
 userSchema.methods.verifyPassword = async function (
   this: IUser,
