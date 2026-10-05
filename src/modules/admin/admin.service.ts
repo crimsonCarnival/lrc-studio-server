@@ -146,12 +146,19 @@ export async function getStats(): Promise<Record<string, unknown>> {
     newSignups30d,
     jobLogs24h
   ] = await Promise.all([
-    User.countDocuments({ updatedAt: { $gte: yesterday } }),
+    // `updatedAt` bumps on any write to the document — a badge grant, an XP
+    // recompute, the hourly streak-lapse reset, even the fire-and-forget
+    // lastIp touch on every request — none of which mean the user did
+    // anything. `streak.lastActiveDate` is written only by updateStreak(),
+    // itself only called from genuine engagement (project create/fork/sync),
+    // so it's the one field on User that actually means "was active." Already
+    // indexed (see the streak-warning job).
+    User.countDocuments({ 'streak.lastActiveDate': { $gte: yesterday } }),
     // Names behind the "active today" count, for the dashboard tooltip. Capped
     // so a busy day cannot balloon the stats payload.
-    User.find({ updatedAt: { $gte: yesterday } })
+    User.find({ 'streak.lastActiveDate': { $gte: yesterday } })
       .select('accountName displayName avatarUrl')
-      .sort({ updatedAt: -1 })
+      .sort({ 'streak.lastActiveDate': -1 })
       .limit(ACTIVE_USER_NAME_LIMIT)
       .lean(),
     User.countDocuments({ createdAt: { $gte: yesterday } }),
