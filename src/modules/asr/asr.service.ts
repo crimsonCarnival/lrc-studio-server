@@ -1,25 +1,22 @@
 import { getIO } from '../../socket/socket.manager.js';
 import Upload from '../uploads/upload.model.js';
 import { transcribeAudio, AsrError, isAsrConfigured } from './groq.client.js';
-import { extractVideoId, extractYoutubeAudio } from './ytdlp.client.js';
 import { stampLines } from './align.service.js';
 import type { LineInput } from './align.service.js';
-import { createJob, setPhase, completeJob, failJob, getJob, setAudio } from './job.store.js';
+import { createJob, setPhase, completeJob, failJob, getJob } from './job.store.js';
 import type { AsrJobPhase } from './job.store.js';
 
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
 
 type AudioSource =
   | { kind: 'cloudinary'; uploadId: string }
-  | { kind: 'buffer'; data: Buffer; format: string }
-  | { kind: 'youtube'; url: string };
+  | { kind: 'buffer'; data: Buffer; format: string };
 
 // Internal to runJob: cloudinary carries the URL already validated in
-// startStampJob (TOCTOU); youtube carries the validated 11-char videoId.
+// startStampJob (TOCTOU).
 type ResolvedAudio =
   | { kind: 'cloudinary'; url: string }
-  | { kind: 'buffer'; data: Buffer; format: string }
-  | { kind: 'youtube'; videoId: string };
+  | { kind: 'buffer'; data: Buffer; format: string };
 
 type StartParams = { userId: string; lines: LineInput[]; fuzzyTolerance?: number; audio: AudioSource };
 
@@ -95,12 +92,6 @@ async function runJob(userId: string, jobId: string, lines: LineInput[], audio: 
       transition(userId, jobId, 'fetching_audio');
       const fetched = await fetchCloudinaryAudio(audio.url, signal);
       data = fetched.data; format = fetched.format;
-    } else if (audio.kind === 'youtube') {
-      transition(userId, jobId, 'extracting_audio');
-      const extracted = await extractYoutubeAudio(audio.videoId, signal);
-      data = extracted.data; format = extracted.format;
-      // Cache the audio buffer so the client can fetch it for waveform display.
-      setAudio(jobId, data, format);
     } else {
       data = audio.data; format = audio.format;
     }
@@ -134,10 +125,6 @@ export async function startStampJob(params: StartParams): Promise<{ jobId: strin
     if (!upload || upload.userId?.toString() !== userId) return { error: 'not_found', status: 404 };
     if (upload.source !== 'cloudinary' || !upload.uploadUrl) return { error: 'asr_unsupported_audio', status: 400 };
     resolved = { kind: 'cloudinary', url: upload.uploadUrl };
-  } else if (audio.kind === 'youtube') {
-    const videoId = extractVideoId(audio.url);
-    if (!videoId) return { error: 'asr_unsupported_audio', status: 400 };
-    resolved = { kind: 'youtube', videoId };
   } else {
     if (audio.data.byteLength > MAX_AUDIO_BYTES) return { error: 'asr_unsupported_audio', status: 400 };
     resolved = audio;

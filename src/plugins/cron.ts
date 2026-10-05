@@ -7,63 +7,20 @@ import { syncRolePermissions } from '../modules/admin/admin.service.js';
 import { sweepJobs } from '../modules/asr/job.store.js';
 import { sendStreakWarnings } from '../jobs/streak-warning.job.js';
 import { resetLapsedStreaks } from '../jobs/streak-lapse.job.js';
-import { seedBuiltinBadges } from '../modules/badges/badge.service.js';
+import { seedBuiltinBadges, runSyncStatsRefresh, SYNC_STATS_REFRESH_JOB } from '../modules/badges/badge.service.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { syncSuperadminEmailGrant } from '../modules/auth/superadmin-env.service.js';
 import { dropSupersededIndexes } from '../db/superseded-indexes.js';
+import { startJobQueue, runJobQueue, stopJobQueue, defineRecurring, defineOnce } from '../lib/job-queue.js';
 
 /**
- * Lightweight cron-like scheduler using setInterval.
- * Runs archiveDeletedUsers weekly on Sunday at 02:00 UTC.
- *
- * NOTE: node-cron and fastify-cron are not installed. If a proper cron library
- * is desired in the future, add `node-cron` to dependencies and replace this
- * implementation with: cron.schedule('0 2 * * 0', archiveDeletedUsers).
+ * Scheduled work. Recurring jobs run on the Mongo-backed job queue, so each
+ * fires once across all instances and keeps its schedule across restarts.
  */
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
-const STREAK_WARNING_TICK_MS = 15 * 60 * 1000;
-
-/** Returns milliseconds until next Sunday 02:00 UTC. */
-function msUntilNextSunday0200(): number {
-  const now = new Date();
-  const next = new Date(now);
-  // Find next Sunday (day 0) at 02:00 UTC
-  const daysUntilSunday = (7 - now.getUTCDay()) % 7 || 7; // at least 1 week if today is Sunday
-  next.setUTCDate(now.getUTCDate() + daysUntilSunday);
-  next.setUTCHours(2, 0, 0, 0);
-  return next.getTime() - now.getTime();
-}
 
 async function cronPlugin(fastify: FastifyInstance): Promise<void> {
-  let initialTimer: ReturnType<typeof setTimeout> | null = null;
-  let weeklyTimer: ReturnType<typeof setInterval> | null = null;
-
-  fastify.addHook('onReady', async () => {
-    const runAndReschedule = async () => {
-      try {
-        await archiveDeletedUsers();
-      } catch (err) {
-        fastify.log.error({ err }, '[cron] archiveDeletedUsers failed');
-      }
-    };
-
-    // Schedule first run at the next Sunday 02:00 UTC, then repeat weekly
-    const initialDelay = msUntilNextSunday0200();
-    fastify.log.info(
-      `[cron] archiveDeletedUsers scheduled in ${Math.round(initialDelay / 1000 / 60)} minutes`
-    );
-
-    initialTimer = setTimeout(() => {
-      initialTimer = null;
-      void runAndReschedule();
-      weeklyTimer = setInterval(runAndReschedule, WEEK_MS);
-    }, initialDelay);
-  });
-
-  let trendingTimer: ReturnType<typeof setInterval> | null = null;
-
   // Sync role permissions and seed code-defined defaults on startup
   fastify.addHook('onReady', async () => {
     await Promise.allSettled([
@@ -86,58 +43,51 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.addHook('onReady', async () => {
-    const runTrending = async () => {
-      try {
-        sweepJobs();
+    try {
+      await startJobQueue((err, jobName) => fastify.log.error({ err, jobName }, '[jobs] job failed'));
+
+      // Weekly, Sunday 02:00 UTC.
+      await defineRecurring('archive-deleted-users', '0 2 * * 0', archiveDeletedUsers);
+
+      // Heavy aggregations — the reason these must not run once per instance.
+      await defineRecurring('recompute-rankings', '1 hour', async () => {
         await recomputeTrendingScores();
         await recomputeLeaderboardRanking();
-      } catch (err) {
-        fastify.log.error({ err }, '[cron] recomputeTrendingScores failed');
-      }
-    };
-    // Fire without awaiting — heavy aggregation job, runs in background after server is up
-    void runTrending();
-    trendingTimer = setInterval(runTrending, HOUR_MS);
-  });
+      });
 
-  // Streak-ending warnings. Ticks every 15 min; the job itself no-ops before
-  // STREAK_WARNING_HOUR_UTC and is idempotent per user per UTC day, so frequent
-  // ticks only bound the send delay (<= 15 min) and survive restarts.
-  let streakWarningTimer: ReturnType<typeof setInterval> | null = null;
-  let streakLapseTimer: ReturnType<typeof setInterval> | null = null;
-  fastify.addHook('onReady', async () => {
-    const runStreakWarnings = async () => {
-      try {
+      // Streak-ending warnings. The job itself no-ops before
+      // STREAK_WARNING_HOUR_UTC and is idempotent per user per UTC day, so a
+      // frequent tick only bounds the send delay (<= 15 min).
+      await defineRecurring('streak-warnings', '15 minutes', async () => {
         const sent = await sendStreakWarnings();
-        if (sent > 0) fastify.log.info(`[cron] streak warnings sent: ${sent}`);
-      } catch (err) {
-        fastify.log.error({ err }, '[cron] sendStreakWarnings failed');
-      }
-    };
-    void runStreakWarnings();
-    streakWarningTimer = setInterval(runStreakWarnings, STREAK_WARNING_TICK_MS);
+        if (sent > 0) fastify.log.info(`[jobs] streak warnings sent: ${sent}`);
+      });
 
-    // Zero out streaks that have lapsed. updateStreak only rewrites
-    // streak.current when a user is active again, so without this the stored
-    // value keeps claiming a streak that getStreakView already reports as dead.
-    const runStreakLapse = async () => {
-      try {
+      // Zero out streaks that have lapsed. updateStreak only rewrites
+      // streak.current when a user is active again, so without this the stored
+      // value keeps claiming a streak that getStreakView already reports as dead.
+      await defineRecurring('streak-lapse', '15 minutes', async () => {
         const reset = await resetLapsedStreaks();
-        if (reset > 0) fastify.log.info(`[cron] lapsed streaks reset: ${reset}`);
-      } catch (err) {
-        fastify.log.error({ err }, '[cron] resetLapsedStreaks failed');
-      }
-    };
-    void runStreakLapse();
-    streakLapseTimer = setInterval(runStreakLapse, STREAK_WARNING_TICK_MS);
+        if (reset > 0) fastify.log.info(`[jobs] lapsed streaks reset: ${reset}`);
+      });
+
+      defineOnce(SYNC_STATS_REFRESH_JOB, runSyncStatsRefresh);
+
+      await runJobQueue();
+      fastify.log.info('[jobs] job queue started');
+    } catch (err) {
+      fastify.log.error({ err }, '[jobs] failed to start job queue — scheduled jobs are not running');
+    }
   });
+
+  // The ASR job store is a per-process Map, so its sweep has to run in every
+  // instance and cannot move to the shared queue.
+  const asrSweepTimer = setInterval(sweepJobs, HOUR_MS);
+  asrSweepTimer.unref();
 
   fastify.addHook('onClose', async () => {
-    if (streakWarningTimer !== null) clearInterval(streakWarningTimer);
-    if (streakLapseTimer !== null) clearInterval(streakLapseTimer);
-    if (initialTimer !== null) clearTimeout(initialTimer);
-    if (weeklyTimer !== null) clearInterval(weeklyTimer);
-    if (trendingTimer !== null) clearInterval(trendingTimer);
+    clearInterval(asrSweepTimer);
+    await stopJobQueue();
   });
 }
 
