@@ -4,6 +4,10 @@ import * as authService from '../auth/auth.service.js';
 import { getEnv } from '../../config/env.js';
 import { jwtTools } from '../../plugins/auth.js';
 import { createOtt } from '../auth/ott.service.js';
+import { resolveAllowedAppOrigin } from '../../config/allowed-origins.js';
+
+const escapeHtml = (v: string): string =>
+  v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 function callbackHtml(success: boolean, error?: string | null, appOrigin?: string | null, ott?: string | null): string {
   const payload = { type: 'google-callback', success, error: error || null, ott: ott || null };
@@ -24,18 +28,12 @@ function callbackHtml(success: boolean, error?: string | null, appOrigin?: strin
     window.location.replace(${JSON.stringify(redirectUrl)});
   }
 </script>
-<p>${success ? 'Connected! Redirecting...' : `Error: ${error || 'Unknown'}`}</p>
+<p>${success ? 'Connected! Redirecting...' : `Error: ${escapeHtml(error || 'Unknown')}`}</p>
 </body></html>`;
 }
 
 function resolveAppOrigin(requested: string | undefined): string | undefined {
-  if (!requested) return undefined;
-  const env = getEnv();
-  const allowed = new Set([
-    ...env.APP_URLS.map(u => new URL(u).origin),
-    new URL(env.CORS_ORIGIN.split(',')[0].trim()).origin,
-  ]);
-  try { return allowed.has(new URL(requested).origin) ? new URL(requested).origin : undefined; } catch { return undefined; }
+  return resolveAllowedAppOrigin(requested, getEnv());
 }
 
 export async function authorize(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -44,6 +42,12 @@ export async function authorize(req: FastifyRequest, reply: FastifyReply): Promi
   }
   const { appOrigin: rawOrigin } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
+  if (rawOrigin && !appOrigin) {
+    // Fail loudly: silently dropping it makes the callback post to the wrong
+    // origin, the browser discards the message, and the user just sees a hang.
+    req.log.warn({ appOrigin: rawOrigin }, '[google] appOrigin not in allowlist (APP_URL/CORS_ORIGIN)');
+    return reply.code(400).send({ error: 'origin_not_allowed' });
+  }
   const state = googleService.generateSignedState({ sub: req.userId!, action: 'connect', appOrigin });
   return reply.redirect(googleService.getAuthUrl(state));
 }
@@ -54,6 +58,12 @@ export async function authorizeLogin(req: FastifyRequest, reply: FastifyReply): 
   }
   const { appOrigin: rawOrigin, loginHint: rawHint, deviceId: rawDeviceId } = req.query as Record<string, string | undefined>;
   const appOrigin = resolveAppOrigin(rawOrigin);
+  if (rawOrigin && !appOrigin) {
+    // Fail loudly: silently dropping it makes the callback post to the wrong
+    // origin, the browser discards the message, and the user just sees a hang.
+    req.log.warn({ appOrigin: rawOrigin }, '[google] appOrigin not in allowlist (APP_URL/CORS_ORIGIN)');
+    return reply.code(400).send({ error: 'origin_not_allowed' });
+  }
   const loginHint = rawHint && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawHint) ? rawHint : undefined;
   const deviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim().length > 0 ? rawDeviceId.trim().slice(0, 256) : undefined;
   const state = googleService.generateSignedState({ action: 'login', appOrigin, deviceId, loginHint });
@@ -64,7 +74,9 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
   const { code, state, error } = req.query as Record<string, string | undefined>;
 
   if (error) {
-    return reply.type('text/html').send(callbackHtml(false, error));
+    req.log.warn({ googleError: error }, '[google] callback received error from Google');
+    const early = state ? googleService.verifySignedState(state) : null;
+    return reply.type('text/html').send(callbackHtml(false, error, early?.appOrigin));
   }
 
   if (!code || !state) {

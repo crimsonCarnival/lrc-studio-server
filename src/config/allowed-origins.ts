@@ -22,3 +22,41 @@ export function parseAllowedOrigins(raw: string | undefined): string[] {
     .map(value => value.replace(/\/+$/, ''))
     .filter(value => value.length > 0);
 }
+
+
+/**
+ * Reduces one configured URL/origin to its canonical `scheme://host[:port]`,
+ * or null when it is not a usable http(s) URL. Never throws: a single bad
+ * entry in APP_URL/CORS_ORIGIN must not take down an endpoint.
+ */
+export function toOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Origins the OAuth flow may hand an OTT back to (`appOrigin`). This is the
+ * union of every configured frontend origin: all of APP_URL and all of
+ * CORS_ORIGIN, since an origin trusted to make credentialed API calls is
+ * equally trusted to receive the sign-in result. Exact match only — never
+ * reflect the request, never wildcard a parent domain.
+ */
+export function buildAppOriginAllowlist(env: { APP_URLS: string[]; CORS_ORIGIN: string }): Set<string> {
+  const entries = [...parseAllowedOrigins(env.APP_URLS.join(',')), ...parseAllowedOrigins(env.CORS_ORIGIN)];
+  const origins = entries.map(toOrigin).filter((o): o is string => o !== null);
+  return new Set(origins);
+}
+
+/** Returns the canonical origin when `requested` is allowlisted, else undefined. */
+export function resolveAllowedAppOrigin(
+  requested: string | undefined,
+  env: { APP_URLS: string[]; CORS_ORIGIN: string },
+): string | undefined {
+  if (!requested) return undefined;
+  const origin = toOrigin(requested);
+  return origin && buildAppOriginAllowlist(env).has(origin) ? origin : undefined;
+}
