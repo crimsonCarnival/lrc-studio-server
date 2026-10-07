@@ -23,6 +23,7 @@ import {
   removeSocket as removeViewerSocket,
   getViewerSummary,
 } from '../socket/project-viewers.js';
+import { parseAllowedOrigins } from '../config/allowed-origins.js';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 
@@ -42,9 +43,7 @@ async function getMutualFollowIds(userId: string): Promise<string[]> {
 }
 
 async function socketPlugin(fastify: FastifyInstance): Promise<void> {
-  const origins = process.env.CORS_ORIGIN!
-    .split(',')
-    .map((o: string) => o.trim());
+  const origins = parseAllowedOrigins(process.env.CORS_ORIGIN);
 
   const io = new Server(fastify.server, {
     cors: {

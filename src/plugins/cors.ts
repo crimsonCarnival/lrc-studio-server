@@ -1,11 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import fastifyCors from '@fastify/cors';
+import { parseAllowedOrigins } from '../config/allowed-origins.js';
 
 async function corsPlugin(fastify: FastifyInstance): Promise<void> {
-  const origins = process.env.CORS_ORIGIN!
-    .split(',')
-    .map((o: string) => o.trim());
+  const origins = parseAllowedOrigins(process.env.CORS_ORIGIN);
 
   await fastify.register(fastifyCors, {
     origin: origins,
