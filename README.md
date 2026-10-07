@@ -1,8 +1,8 @@
 # LRC Studio — Server
 
-The backend for [LRC Studio](https://lrc-studio.vercel.app), a lyrics synchronization platform. A Fastify 5 API serving REST, GraphQL and WebSockets over MongoDB, plus the AI transcription pipeline that powers Auto Stamp.
+The backend for [LRC Studio](https://www.lrcstudio.app), a lyrics synchronization platform. A Fastify 5 API serving REST, GraphQL and WebSockets over MongoDB, plus the AI transcription pipeline that powers Auto Stamp.
 
-**[Live app](https://lrc-studio.vercel.app)** · [GitHub](https://github.com/crimsonCarnival/lrc-studio) · [Client README](../client/README.md)
+**[Live app](https://www.lrcstudio.app)** · [GitHub](https://github.com/crimsonCarnival/lrc-studio) · [Client README](../client/README.md)
 
 > Translations: [Español (Spanish)](docs/translations/README.es.md)
 
