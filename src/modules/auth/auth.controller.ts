@@ -26,11 +26,18 @@ const env = getEnv();
 const ACCESS_COOKIE_MAX_AGE = parseExpiry(env.JWT_ACCESS_EXPIRY, 30 * 60);
 const REFRESH_COOKIE_MAX_AGE = parseExpiry(env.JWT_REFRESH_EXPIRY, 24 * 60 * 60);
 
+// Scoping the session to a parent domain so www/m/admin share one login.
+// Unset means host-only, which is the tighter default — see env.COOKIE_DOMAIN.
+// A cookie's domain must match on clear as well as set, or the browser treats
+// it as a different cookie and logout silently leaves the original in place.
+const cookieDomain = env.COOKIE_DOMAIN || undefined;
+
 const cookieOptions: CookieSerializeOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   path: '/',
+  domain: cookieDomain,
 };
 
 // Readable by JS (not httpOnly) so the client can skip the `me` query entirely
@@ -41,6 +48,7 @@ const hintCookieOptions: CookieSerializeOptions = {
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   path: '/',
+  domain: cookieDomain,
 };
 
 function setAuthCookies(reply: FastifyReply, result: { accessToken?: string; refreshToken?: string }) {
@@ -57,6 +65,19 @@ function clearAuthCookies(reply: FastifyReply) {
   reply.clearCookie('accessToken', cookieOptions);
   reply.clearCookie('refreshToken', cookieOptions);
   reply.clearCookie('session_hint', hintCookieOptions);
+
+  // A cookie is identified by name + domain + path, so a clear carrying a
+  // domain does not touch a host-only cookie of the same name. Sessions issued
+  // before COOKIE_DOMAIN was introduced are host-only, and without this second
+  // pass logout would appear to succeed while leaving them in the browser.
+  // Harmless to send when COOKIE_DOMAIN is unset: it repeats the clear above.
+  if (cookieDomain) {
+    const hostOnly = { ...cookieOptions, domain: undefined };
+    const hostOnlyHint = { ...hintCookieOptions, domain: undefined };
+    reply.clearCookie('accessToken', hostOnly);
+    reply.clearCookie('refreshToken', hostOnly);
+    reply.clearCookie('session_hint', hostOnlyHint);
+  }
 }
 
 const VALID_DEVICE_PREFIXES = ['dv_fp_', 'dv_fallback_'];
