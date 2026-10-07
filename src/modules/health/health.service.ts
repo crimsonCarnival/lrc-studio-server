@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import mongoose from 'mongoose';
+import { isAsrConfigured } from '../asr/groq.client.js';
 
 type CheckStatus = 'ok' | 'degraded' | 'error';
 
@@ -19,11 +20,12 @@ export interface HealthResponse {
     database: ServiceCheck;
     google: ServiceCheck;
     youtube: ServiceCheck;
-    genius: ServiceCheck;
+    lyrics: ServiceCheck;
     cloudinary: ServiceCheck;
+    asr: ServiceCheck;
   };
   metrics: {
-    memory: { used: string; total: string; percentUsed: string };
+    memory: { rss: string; heapUsed: string; heapTotal: string; heapUtilization: string };
   };
 }
 
@@ -74,6 +76,35 @@ function checkConfigured(vars: string[]): ServiceCheck {
     : { status: 'degraded', responseTime: ms(start), message: 'not configured' };
 }
 
+/**
+ * The lyrics provider chain is LRCLIB -> LyricFind -> lyrics.ovh, and LRCLIB
+ * (the primary, and the only one returning synced LRC) needs no credentials at
+ * all. Lyrics lookup therefore never hard-fails on configuration, so this
+ * reports ok and names the optional providers rather than marking the whole
+ * service degraded over a key the feature does not require. The previous
+ * `genius` check gated on GENIUS_CLIENT_ACCESS_TOKEN, which only affects search.
+ */
+function checkLyrics(): ServiceCheck {
+  const start = performance.now();
+  const optional = [
+    process.env.GENIUS_CLIENT_ACCESS_TOKEN ? 'genius-search' : null,
+    process.env.LYRICFIND_API_KEY ? 'lyricfind' : null,
+  ].filter(Boolean);
+  return {
+    status: 'ok',
+    responseTime: ms(start),
+    message: `lrclib${optional.length ? `, ${optional.join(', ')}` : ''}`,
+  };
+}
+
+/** Auto Stamp. Degraded rather than error: the rest of the app works without it. */
+function checkAsr(): ServiceCheck {
+  const start = performance.now();
+  return isAsrConfigured()
+    ? { status: 'ok', responseTime: ms(start) }
+    : { status: 'degraded', responseTime: ms(start), message: 'GROQ_API_KEY not set' };
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const now = Date.now();
   if (cached && now - cachedAt < CACHE_TTL_MS) return cached;
@@ -81,10 +112,11 @@ export async function getHealth(): Promise<HealthResponse> {
   const database = await checkDatabase();
   const google = checkConfigured(['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']);
   const youtube = checkConfigured(['YOUTUBE_API_KEY']);
-  const genius = checkConfigured(['GENIUS_CLIENT_ACCESS_TOKEN']);
+  const lyrics = checkLyrics();
   const cloudinary = checkConfigured(['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET']);
+  const asr = checkAsr();
 
-  const allChecks = [database, google, youtube, genius, cloudinary];
+  const allChecks = [database, google, youtube, lyrics, cloudinary, asr];
   const status: CheckStatus =
     database.status === 'error'
       ? 'error'
@@ -93,7 +125,10 @@ export async function getHealth(): Promise<HealthResponse> {
         : 'ok';
 
   const mem = process.memoryUsage();
-  const percentUsed = ((mem.heapUsed / mem.heapTotal) * 100).toFixed(1);
+  // Heap utilisation, not container utilisation. V8 grows heapTotal on demand,
+  // so this sits near 90% on a healthy idle process and must not be read as
+  // memory pressure — rss is the number to watch against the instance limit.
+  const heapUtilization = ((mem.heapUsed / mem.heapTotal) * 100).toFixed(1);
 
   cached = {
     status,
@@ -101,9 +136,14 @@ export async function getHealth(): Promise<HealthResponse> {
     timestamp: new Date().toISOString(),
     uptime: formatUptime(Math.floor(process.uptime())),
     environment: process.env.NODE_ENV || 'development',
-    checks: { database, google, youtube, genius, cloudinary },
+    checks: { database, google, youtube, lyrics, cloudinary, asr },
     metrics: {
-      memory: { used: toMB(mem.heapUsed), total: toMB(mem.heapTotal), percentUsed: `${percentUsed}%` },
+      memory: {
+        rss: toMB(mem.rss),
+        heapUsed: toMB(mem.heapUsed),
+        heapTotal: toMB(mem.heapTotal),
+        heapUtilization: `${heapUtilization}%`,
+      },
     },
   };
   cachedAt = now;
