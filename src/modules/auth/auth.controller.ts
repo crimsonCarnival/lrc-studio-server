@@ -65,6 +65,19 @@ function clearAuthCookies(reply: FastifyReply) {
   reply.clearCookie('accessToken', cookieOptions);
   reply.clearCookie('refreshToken', cookieOptions);
   reply.clearCookie('session_hint', hintCookieOptions);
+
+  // A cookie is identified by name + domain + path, so a clear carrying a
+  // domain does not touch a host-only cookie of the same name. Sessions issued
+  // before COOKIE_DOMAIN was introduced are host-only, and without this second
+  // pass logout would appear to succeed while leaving them in the browser.
+  // Harmless to send when COOKIE_DOMAIN is unset: it repeats the clear above.
+  if (cookieDomain) {
+    const hostOnly = { ...cookieOptions, domain: undefined };
+    const hostOnlyHint = { ...hintCookieOptions, domain: undefined };
+    reply.clearCookie('accessToken', hostOnly);
+    reply.clearCookie('refreshToken', hostOnly);
+    reply.clearCookie('session_hint', hostOnlyHint);
+  }
 }
 
 const VALID_DEVICE_PREFIXES = ['dv_fp_', 'dv_fallback_'];
