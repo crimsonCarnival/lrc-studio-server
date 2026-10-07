@@ -30,7 +30,7 @@ function getClientSecret(): string { return process.env.GOOGLE_CLIENT_SECRET || 
 function getRedirectUri(): string { return process.env.GOOGLE_REDIRECT_URI || ''; }
 
 export function isGoogleConfigured(): boolean {
-  return !!(getClientId() && getClientSecret());
+  return !!(getClientId() && getClientSecret() && getRedirectUri());
 }
 
 export function generateSignedState(payload: { sub?: string; nonce?: string; action?: string; appOrigin?: string; deviceId?: string; loginHint?: string }): string {
@@ -98,6 +98,8 @@ export async function handleCallback(code: string, userId: string): Promise<Reco
 
   if (!tokenRes.ok) {
     const body = await tokenRes.json().catch(() => ({})) as Record<string, string>;
+    // Surfaces invalid_grant / invalid_client / redirect_uri_mismatch in the logs.
+    console.error('[google] token exchange failed', { status: tokenRes.status, error: body.error, description: body.error_description });
     return { error: body.error_description || 'Token exchange failed', status: 400 };
   }
 
@@ -155,6 +157,8 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
 
   if (!tokenRes.ok) {
     const body = await tokenRes.json().catch(() => ({})) as Record<string, string>;
+    // Surfaces invalid_grant / invalid_client / redirect_uri_mismatch in the logs.
+    console.error('[google] token exchange failed', { status: tokenRes.status, error: body.error, description: body.error_description });
     return { error: body.error_description || 'Token exchange failed', status: 400 };
   }
 
