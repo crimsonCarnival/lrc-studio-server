@@ -10,6 +10,14 @@ export interface Env {
   JWT_ISSUER?: string;
   JWT_AUDIENCE?: string;
   CORS_ORIGIN: string;
+  /**
+   * Parent domain for auth cookies, e.g. `.lrcstudio.app`. Set this only when
+   * more than one hostname of the same site must share a session (www + m +
+   * admin). Leaving it unset keeps cookies host-only, which is the tighter
+   * default: a host-only cookie is never sent to a sibling subdomain, so a
+   * takeover of one subdomain cannot replay the session on another.
+   */
+  COOKIE_DOMAIN?: string;
   APP_URL: string;
   APP_URLS: string[];
   PASSWORD_RESET_URL: string;
@@ -71,6 +79,7 @@ export function loadEnv(): Env {
     JWT_ISSUER: process.env.JWT_ISSUER,
     JWT_AUDIENCE: process.env.JWT_AUDIENCE,
     CORS_ORIGIN: corsOrigin,
+    COOKIE_DOMAIN: process.env.COOKIE_DOMAIN,
     APP_URL: primaryAppUrl,
     APP_URLS: appUrls,
     PASSWORD_RESET_URL: process.env.PASSWORD_RESET_URL ?? primaryAppUrl,

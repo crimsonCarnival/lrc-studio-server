@@ -4,6 +4,7 @@ import * as adminService from './admin.service.js';
 import * as authService from '../auth/auth.service.js';
 import { getIO } from '../../socket/socket.manager.js';
 import User from '../../db/user.model.js';
+import { getEnv } from '../../config/env.js';
 
 /** Issue the short-lived admin sudo grant cookie. (F24) */
 function setSudoCookie(req: FastifyRequest, reply: FastifyReply): void {
@@ -19,6 +20,9 @@ function setSudoCookie(req: FastifyRequest, reply: FastifyReply): void {
     // cookie was silently dropped on every retry. Match the other auth
     // cookies (accessToken/refreshToken) and use the root path.
     path: '/',
+    // Must match the session cookies' scope, otherwise sudo granted on
+    // admin.lrcstudio.app would not be presented back on a later request.
+    domain: getEnv().COOKIE_DOMAIN || undefined,
     maxAge: 5 * 60,
   });
 }

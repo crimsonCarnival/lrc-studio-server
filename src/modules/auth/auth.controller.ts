@@ -26,11 +26,18 @@ const env = getEnv();
 const ACCESS_COOKIE_MAX_AGE = parseExpiry(env.JWT_ACCESS_EXPIRY, 30 * 60);
 const REFRESH_COOKIE_MAX_AGE = parseExpiry(env.JWT_REFRESH_EXPIRY, 24 * 60 * 60);
 
+// Scoping the session to a parent domain so www/m/admin share one login.
+// Unset means host-only, which is the tighter default — see env.COOKIE_DOMAIN.
+// A cookie's domain must match on clear as well as set, or the browser treats
+// it as a different cookie and logout silently leaves the original in place.
+const cookieDomain = env.COOKIE_DOMAIN || undefined;
+
 const cookieOptions: CookieSerializeOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   path: '/',
+  domain: cookieDomain,
 };
 
 // Readable by JS (not httpOnly) so the client can skip the `me` query entirely
@@ -41,6 +48,7 @@ const hintCookieOptions: CookieSerializeOptions = {
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   path: '/',
+  domain: cookieDomain,
 };
 
 function setAuthCookies(reply: FastifyReply, result: { accessToken?: string; refreshToken?: string }) {
