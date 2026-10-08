@@ -31,13 +31,20 @@ export const rootSchema = `
     exploreStats: ExploreStats!
     publicProject(publicId: String!): Project
     projectReactions(publicId: String!): ProjectReactions!
-    leaderboard(limit: Int, offset: Int): LeaderboardResult!
+    leaderboard(
+      limit: Int
+      offset: Int
+      timeframe: LeaderboardTimeframe = ALL_TIME
+      sortBy: LeaderboardSort = RANK
+      sortDir: LeaderboardSortDirection = DESC
+    ): LeaderboardResult!
     badgeDefinitions: [BadgeDef!]!
     publicBadgeDefinitions: [PublicBadgeDef!]!
     userShowcase(accountName: String!): [ShowcasedBadge!]!
     myMusicLibrary: [MusicLibraryEntry!]!
     userContentStats: ContentStats!
     adminAddictionLevels: [AddictionLevel!]!
+    xpLevelCurve(maxLevel: Int): [XpLevelThreshold!]!
     myPreferences: UserPreferences!
   }
 
@@ -152,6 +159,27 @@ export const rootSchema = `
     notifications: NotificationPreferencesInput
   }
 
+  # Rolling windows measured back from "now", not calendar week/month.
+  enum LeaderboardTimeframe {
+    ALL_TIME
+    MONTH
+    WEEK
+  }
+
+  enum LeaderboardSort {
+    RANK
+    XP
+    PROJECTS
+    LINES
+    STARS
+    TIME_SYNCED
+  }
+
+  enum LeaderboardSortDirection {
+    ASC
+    DESC
+  }
+
   type LeaderboardUser {
     id: ID!
     accountName: String!
@@ -165,6 +193,8 @@ export const rootSchema = `
     totalStarsReceived: Int!
     totalForksReceived: Int!
     rankScore: Float!
+    # XP earned inside the requested window. Null for ALL_TIME.
+    periodXp: Int
   }
 
   type LeaderboardResult {
@@ -321,6 +351,15 @@ export const rootSchema = `
     description: LocalizedStringInput
     requirements: AddictionLevelRequirementsInput
     order: Int
+  }
+
+  # One row of the XP level curve, derived server-side from computeLevel's
+  # inverse so the admin dashboard never hardcodes the formula.
+  type XpLevelThreshold {
+    level: Int!
+    xpRequired: Int!
+    xpToNext: Int!
+    showcaseSlots: Int!
   }
 
   input AddictionLevelUpdateInput {

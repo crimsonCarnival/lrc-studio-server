@@ -8,6 +8,11 @@ import {
 import { Context } from './context.js';
 import { requirePermission, requireStaff } from './auth-guards.js';
 import { logAdminAction } from '../../modules/admin/admin.service.js';
+import { xpRequiredForLevel, getShowcaseSlots } from '../../modules/badges/badge.service.js';
+
+const XP_CURVE_DEFAULT_MAX_LEVEL = 50;
+const XP_CURVE_MIN_LEVEL = 1;
+const XP_CURVE_MAX_LEVEL = 200;
 
 export const statsResolvers = {
   Query: {
@@ -20,6 +25,34 @@ export const statsResolvers = {
       // Staff-wide read: proposers without levels.manage need the list to propose edits.
       await requireStaff(context);
       return getAllLevels();
+    },
+
+    // Admin dashboard reference table for the XP economy. Derived from the real
+    // server formula (xpRequiredForLevel is the inverse of computeLevel), so the
+    // client never has to restate the curve and cannot drift from it.
+    xpLevelCurve: async (
+      _root: unknown,
+      { maxLevel }: { maxLevel?: number | null },
+      context: Context
+    ): Promise<{ level: number; xpRequired: number; xpToNext: number; showcaseSlots: number }[]> => {
+      // Staff-wide read, matching adminAddictionLevels: reference data only, no
+      // per-user information, but not something to expose to every visitor.
+      await requireStaff(context);
+
+      const requested = Number.isFinite(maxLevel) ? Math.floor(maxLevel as number) : XP_CURVE_DEFAULT_MAX_LEVEL;
+      const cap = Math.min(Math.max(requested, XP_CURVE_MIN_LEVEL), XP_CURVE_MAX_LEVEL);
+
+      const rows = [];
+      for (let level = 1; level <= cap; level++) {
+        const xpRequired = xpRequiredForLevel(level);
+        rows.push({
+          level,
+          xpRequired,
+          xpToNext: xpRequiredForLevel(level + 1) - xpRequired,
+          showcaseSlots: getShowcaseSlots(level),
+        });
+      }
+      return rows;
     },
   },
 

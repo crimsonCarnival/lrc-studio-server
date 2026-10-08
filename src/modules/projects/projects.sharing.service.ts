@@ -143,6 +143,12 @@ export async function cloneProject(
         forkedpublicId: newProject.publicId,
         userId: newUserId,
       }], { session }),
+      // A fork is a new project for the forker, so the denormalized leaderboard
+      // counter has to move here too — createProject never runs for this path.
+      // In the transaction alongside forkCount so a rollback (e.g. the
+      // duplicate-key already_forked race below) leaves no phantom increment.
+      // Reconciled hourly by the leaderboard-ranking job regardless.
+      User.updateOne({ _id: newUserId }, { $inc: { projectCount: 1 } }, { session }),
     ]);
 
     const ownerIdField = sourceProject.userId as unknown as { _id?: { toString(): string } } | { toString(): string } | null;

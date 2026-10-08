@@ -784,10 +784,25 @@ export function computeLevel(xp: number): number {
   return Math.floor(Math.sqrt(xp / 100));
 }
 
+/**
+ * Inverse of `computeLevel`: the minimum XP total that reaches `level`.
+ *
+ * Single source of truth for the level curve — the admin dashboard reads it
+ * through the `xpLevelCurve` query rather than hardcoding `level² × 100`, so
+ * changing `computeLevel` here cannot silently desync the UI.
+ */
+export function xpRequiredForLevel(level: number): number {
+  const l = Math.max(0, Math.floor(level));
+  return l * l * 100;
+}
+
 export function computeXPFromStats(
   badgeXp: number,
   stats: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number },
-  social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number }
+  social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number },
+  // Manual admin adjustments. Folded into the derived total so that
+  // recomputeXP, which overwrites progression.xp, does not erase them.
+  bonusXp = 0
 ): number {
   const mins = stats?.minutesSynced ?? 0;
   const words = stats?.wordsSynced ?? 0;
@@ -804,7 +819,7 @@ export function computeXPFromStats(
                       forks * XP_COEFFICIENTS.forksReceived +
                       followers * XP_COEFFICIENTS.followerCount;
 
-  return Math.max(0, Math.floor(badgeXp + craftXp + communityXp));
+  return Math.max(0, Math.floor(badgeXp + craftXp + communityXp + bonusXp));
 }
 
 export function getShowcaseSlots(level: number): number {
@@ -825,7 +840,7 @@ type LeanUserXP = Pick<IUser, 'badges' | 'stats' | 'social'>;
 export async function recomputeXP(userId: string): Promise<number> {
   const user = await User.findById(userId)
     .select('badges stats social progression')
-    .lean<LeanUserXP & { progression?: { xp?: number } }>();
+    .lean<LeanUserXP & { progression?: { xp?: number; bonusXp?: number } }>();
   if (!user) return 0;
 
   const earnedBadgeIds: string[] = (user.badges ?? []).map((b: IUserBadge) => b.id);
@@ -845,7 +860,9 @@ export async function recomputeXP(userId: string): Promise<number> {
     }
   }
 
-  const newXp = computeXPFromStats(badgeXp, user.stats ?? {}, user.social);
+  // bonusXp carries manual admin grants/revokes. Without it this overwrite
+  // would discard every admin XP adjustment the next time a badge changed.
+  const newXp = computeXPFromStats(badgeXp, user.stats ?? {}, user.social, user.progression?.bonusXp ?? 0);
   const newLevel = computeLevel(newXp);
   const oldXp = user.progression?.xp ?? 0;
   const delta = newXp - oldXp;

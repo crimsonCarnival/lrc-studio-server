@@ -78,6 +78,19 @@ export interface IUserStreak {
 export interface IUserProgression {
   xp: number;
   level: number;
+  // Manual admin XP adjustments, kept separate from the derived total.
+  //
+  // `progression.xp` is DERIVED: recomputeXP() recalculates it from badges +
+  // stats + social on every badge grant/revoke (including auto-grants from
+  // triggerBadgeCheck) and overwrites whatever was there. An admin grant that
+  // only touched `progression.xp` was therefore erased the next time the user
+  // earned or lost a badge. Admin adjustments accumulate here instead, and
+  // computeXPFromStats() folds `bonusXp` into the derived total, so they
+  // survive every recompute. Intentionally unsigned-free (no `min`): a revoke
+  // must be able to push the bonus negative to offset derived XP.
+  bonusXp: number;
+  // Written by logXPEvent()/recomputeXP() for indexing and audit ordering.
+  lastXpEventAt?: Date | null;
 }
 
 export interface IUser extends Document {
@@ -126,6 +139,12 @@ export interface IUser extends Document {
   progression?: IUserProgression;
   // Shadow ban subdoc (admin-only, never exposed to users)
   shadowBan?: IShadowBan;
+  // Denormalized count of projects owned by this user. Needed because the
+  // leaderboard sorts by it and a per-user Project aggregation cannot be
+  // index-sorted or paginated. Kept live by $inc on project create/clone/delete
+  // and reconciled hourly by the leaderboard-ranking job, which already
+  // aggregates the authoritative counts.
+  projectCount?: number;
 
   verifyPassword(plain: string): Promise<boolean>;
   toPublic(): Record<string, unknown>;
@@ -215,6 +234,12 @@ const progressionSchema = new mongoose.Schema<IUserProgression>(
   {
     xp: { type: Number, default: 0, min: 0 },
     level: { type: Number, default: 0, min: 0 },
+    // No `min` — see IUserProgression.bonusXp: revokes may drive it negative.
+    bonusXp: { type: Number, default: 0 },
+    // logXPEvent() and recomputeXP() have always written this path, but it was
+    // never declared here, so Mongoose strict mode silently dropped it and any
+    // reader got `undefined`. Declared so those writes actually land.
+    lastXpEventAt: { type: Date, default: null },
   },
   { _id: false },
 );
@@ -348,6 +373,8 @@ const userSchema = new mongoose.Schema<IUser>(
     shadowBan: { type: shadowBanSchema, default: () => ({ feed: false, search: false, reason: null, appliedAt: null, appliedBy: null }) },
     // Computed weighted-percentile score (0–1000), written by leaderboard-ranking job hourly
     rankScore: { type: Number, default: 0, min: 0 },
+    // Denormalized owned-project count — see IUser.projectCount
+    projectCount: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true, collection: "users" },
 );
@@ -384,10 +411,31 @@ userSchema.index({ isDeleted: 1 });
 // Streak-warning job: range scan over users last active yesterday (UTC)
 userSchema.index({ "streak.lastActiveDate": 1 });
 
-// Leaderboard: key order mirrors the resolver's sort (rankScore, then
-// stats.syncedLines as tiebreak) so it is index-provided; isDeleted trails so
-// the filter is answered from the key.
-userSchema.index({ rankScore: -1, 'stats.syncedLines': -1, isDeleted: 1 });
+// ─── Leaderboard sort indexes ────────────────────────────────────────────────
+//
+// One index per sortable leaderboard column. Key order mirrors the resolver's
+// sort exactly so the sort is index-provided rather than a blocking in-memory
+// sort, and every one ends the sort portion with `_id` because the resolver
+// appends `_id` as the final tiebreak — without it, offset pagination over
+// equal values is non-deterministic and rows can duplicate or vanish between
+// pages.
+//
+// `isDeleted` trails each one *after* `_id`: it is not part of the sort (so it
+// cannot disturb the index-provided ordering, which only requires the sort keys
+// to be a prefix) but it lets the `isDeleted: { $ne: true }` filter be answered
+// from the index key instead of fetching every document.
+//
+// A single index serves both sort directions, because `sortDir: ASC` reverses
+// *every* key including the `_id` tiebreak, which is exactly a backward scan of
+// the same index. That is why there is one index per column, not two.
+userSchema.index({ rankScore: -1, 'stats.syncedLines': -1, _id: 1, isDeleted: 1 });
+userSchema.index({ 'progression.xp': -1, _id: 1, isDeleted: 1 });
+userSchema.index({ projectCount: -1, _id: 1, isDeleted: 1 });
+userSchema.index({ 'stats.syncedLines': -1, _id: 1, isDeleted: 1 });
+userSchema.index({ 'social.totalStarsReceived': -1, _id: 1, isDeleted: 1 });
+// secondsSynced is always 0..59 (recomputeSyncStats stores the remainder), so
+// (minutesSynced, secondsSynced) is equivalent to a sort by total seconds.
+userSchema.index({ 'stats.minutesSynced': -1, 'stats.secondsSynced': -1, _id: 1, isDeleted: 1 });
 
 userSchema.methods.verifyPassword = async function (
   this: IUser,
