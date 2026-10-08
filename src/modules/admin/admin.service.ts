@@ -548,23 +548,37 @@ export async function adjustXP(
   const delta = action === 'grant' ? capped : -capped;
   let affected = 0;
 
-  // Manual admin grants/revokes are applied directly to progression.xp and
-  // must NOT be followed by recomputeXP() — that function derives xp purely
-  // from stats/badges and would silently overwrite (discard) this delta.
+  // Manual admin grants/revokes accumulate in progression.bonusXp, NOT only in
+  // progression.xp.
+  //
+  // progression.xp is a DERIVED total: recomputeXP() recalculates it from
+  // badges + stats + social and overwrites it, and it runs on every badge
+  // grant/revoke — including the automatic ones from triggerBadgeCheck. An
+  // adjustment written only to progression.xp was therefore erased the next
+  // time the user earned or lost any badge. computeXPFromStats() folds bonusXp
+  // into the derived total, so parking the delta there makes it survive every
+  // recompute. progression.xp is still moved here as well so the new total (and
+  // level, and the notification) are correct immediately without paying for a
+  // full recompute per user.
+  //
   // `notify` is set for targeted grants (user/users) so each affected user gets
   // a real-time before -> after notification. Skipped for target 'all' to avoid
   // a write storm of one notification per user across the whole user base.
   const applyDelta = async (ids: string[], notify = false) => {
     if (!ids.length) return;
-    await User.updateMany({ _id: { $in: ids } }, { $inc: { 'progression.xp': delta } });
-    const updated = await User.find({ _id: { $in: ids } }).select('_id progression.xp').lean<{ _id: mongoose.Types.ObjectId; progression?: { xp?: number } }[]>();
+    await User.updateMany({ _id: { $in: ids } }, { $inc: { 'progression.xp': delta, 'progression.bonusXp': delta } });
+    const updated = await User.find({ _id: { $in: ids } }).select('_id progression.xp progression.bonusXp').lean<{ _id: mongoose.Types.ObjectId; progression?: { xp?: number; bonusXp?: number } }[]>();
     await Promise.all(updated.map((u) => {
       // Post-$inc value; recover the pre-action value to report before -> after.
       const rawAfter = u.progression?.xp ?? 0;
       const before = rawAfter - delta;
       const after = Math.max(0, rawAfter);
+      // Apply the same clamp to bonusXp, or a revoke that bottomed the total out
+      // at 0 would leave a bonus more negative than the total it explains, and
+      // the next recomputeXP would re-apply the over-subtraction.
+      const bonusAfter = (u.progression?.bonusXp ?? 0) + (after - rawAfter);
       if (notify) notifyXpChanged(u._id.toString(), delta, before, after).catch(() => {});
-      return User.updateOne({ _id: u._id }, { 'progression.xp': after, 'progression.level': computeLevel(after) });
+      return User.updateOne({ _id: u._id }, { 'progression.xp': after, 'progression.bonusXp': bonusAfter, 'progression.level': computeLevel(after) });
     }));
   };
 
