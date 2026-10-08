@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
-import type { IUser, IUserBadge } from '../../db/user.model.js';
+import type { IUser, IUserBadge, IUserStats } from '../../db/user.model.js';
+import XPEvent from '../../modules/progression/xp-event.model.js';
 import Project from '../../modules/projects/project.model.js';
 import Playlist from '../../db/playlist.model.js';
 import type { IProject } from '../../modules/projects/project.model.js';
@@ -70,6 +71,140 @@ async function isSelfOrAdmin(user: IUser, context: Context): Promise<boolean> {
   if (selfId && context.userId === selfId) return true;
   const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
   return hasPermission(requester?.permissions, 'users.view');
+}
+
+// ─── Leaderboard ──────────────────────────────────────────────────────────────
+
+export type LeaderboardTimeframe = 'ALL_TIME' | 'MONTH' | 'WEEK';
+export type LeaderboardSort = 'RANK' | 'XP' | 'PROJECTS' | 'LINES' | 'STARS' | 'TIME_SYNCED';
+export type LeaderboardSortDirection = 'ASC' | 'DESC';
+
+export interface LeaderboardArgs {
+  limit?: number;
+  offset?: number;
+  timeframe?: LeaderboardTimeframe;
+  sortBy?: LeaderboardSort;
+  sortDir?: LeaderboardSortDirection;
+}
+
+export interface LeaderboardUserView {
+  id: string;
+  accountName?: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  badges: IUserBadge[];
+  stats: Required<IUserStats>;
+  streak: ReturnType<typeof getStreakView>;
+  progression: { xp: number; level: number };
+  projectCount: number;
+  totalStarsReceived: number;
+  totalForksReceived: number;
+  rankScore: number;
+  periodXp: number | null;
+}
+
+export interface LeaderboardResultView {
+  users: LeaderboardUserView[];
+  total: number;
+  hasMore: boolean;
+}
+
+/** One $facet output document from the period (WEEK/MONTH) pipeline. */
+interface LeaderboardFacet {
+  rows: { periodXp: number; user: IUser }[];
+  total: { count: number }[];
+}
+
+/**
+ * Sortable column -> the User field path(s) it sorts by, in key order.
+ * Every entry is backed by a dedicated compound index on User (see
+ * db/user.model.ts); keep the two in step when adding a column.
+ *
+ * TIME_SYNCED sorts by (minutesSynced, secondsSynced) rather than a derived
+ * total-seconds field because recomputeSyncStats stores secondsSynced as the
+ * remainder (always 0..59), which makes the pair equivalent to total seconds.
+ */
+const LEADERBOARD_SORT_FIELDS: Record<LeaderboardSort, readonly string[]> = {
+  RANK: ['rankScore', 'stats.syncedLines'],
+  XP: ['progression.xp'],
+  PROJECTS: ['projectCount'],
+  LINES: ['stats.syncedLines'],
+  STARS: ['social.totalStarsReceived'],
+  TIME_SYNCED: ['stats.minutesSynced', 'stats.secondsSynced'],
+};
+
+/**
+ * Builds the sort document for a leaderboard page.
+ *
+ * `_id` is appended as the final key in every case, and that is load-bearing,
+ * not cosmetic: the client pages with `offset`, and offset pagination over a
+ * sort with ties has no defined order within a tie group, so rows can be
+ * repeated or skipped entirely between two pages. `_id` is unique, so it makes
+ * the total order deterministic.
+ *
+ * ASC reverses every key, tiebreaks included, which is exactly a backward scan
+ * of the same index — so one index per column serves both directions.
+ *
+ * @param prefix  path prefix for the user fields (the aggregation path keeps
+ *                them under the looked-up `user` document).
+ * @param xpField field holding XP for this path — `progression.xp` all-time,
+ *                the windowed `periodXp` for WEEK/MONTH.
+ */
+function buildLeaderboardSort(
+  sortBy: LeaderboardSort,
+  dir: 1 | -1,
+  prefix = '',
+  xpField?: string
+): Record<string, 1 | -1> {
+  const sort: Record<string, 1 | -1> = {};
+  if (sortBy === 'XP' && xpField) {
+    sort[xpField] = dir;
+  } else {
+    for (const field of LEADERBOARD_SORT_FIELDS[sortBy] ?? LEADERBOARD_SORT_FIELDS.RANK) {
+      sort[`${prefix}${field}`] = dir;
+    }
+  }
+  sort._id = dir;
+  return sort;
+}
+
+/**
+ * `projectCount` is read from the denormalized `User.projectCount`, NOT from a
+ * per-page Project aggregation as it was before.
+ *
+ * The aggregation was marginally fresher, but it produced the number *shown*
+ * while a different number (the denormalized field) produced the *ordering* —
+ * so with PROJECTS sorting, a row could legitimately display a lower count than
+ * the row beneath it and read as a bug. The displayed value agreeing with the
+ * visible ordering is worth more than up-to-the-second accuracy here, and the
+ * field is kept live by $inc on project create/clone/delete and reconciled
+ * hourly from the authoritative aggregation by the leaderboard-ranking job.
+ * It also saves an extra round trip per page on every timeframe.
+ */
+function toLeaderboardUser(u: IUser, periodXp: number | null): LeaderboardUserView {
+  return {
+    id: u._id.toString(),
+    accountName: u.accountName,
+    displayName: u.displayName ?? null,
+    avatarUrl: u.avatarUrl ?? null,
+    badges: u.badges ?? [],
+    stats: {
+      minutesSynced: u.stats?.minutesSynced ?? 0,
+      secondsSynced: u.stats?.secondsSynced ?? 0,
+      wordsSynced: u.stats?.wordsSynced ?? 0,
+      karaokeLines: u.stats?.karaokeLines ?? 0,
+      syncedLines: u.stats?.syncedLines ?? 0,
+      aiSyncedLines: u.stats?.aiSyncedLines ?? 0,
+      aiWordsSynced: u.stats?.aiWordsSynced ?? 0,
+    },
+    streak: getStreakView(u.streak),
+    progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },
+    projectCount: u.projectCount ?? 0,
+    totalStarsReceived: u.social?.totalStarsReceived ?? 0,
+    totalForksReceived: u.social?.totalForksReceived ?? 0,
+    rankScore: u.rankScore ?? 0,
+    periodXp,
+  };
 }
 
 export const userResolvers = {
@@ -250,43 +385,97 @@ export const userResolvers = {
         : results;
     },
 
-    leaderboard: async (_root: unknown, { limit = 25, offset = 0 }: { limit?: number; offset?: number }) => {
-      const cap = Math.min(limit, 50);
-      const [users, total] = await Promise.all([
-        User.find({ isDeleted: { $ne: true } })
-          .sort({ rankScore: -1, 'stats.syncedLines': -1 })
-          .skip(offset)
-          .limit(cap + 1)
-          .select('_id accountName displayName avatarUrl badges stats streak progression social rankScore')
-          .lean<IUser[]>(),
-        User.countDocuments({ isDeleted: { $ne: true } }),
-      ]);
+    leaderboard: async (
+      _root: unknown,
+      { limit = 25, offset = 0, timeframe = 'ALL_TIME', sortBy = 'RANK', sortDir = 'DESC' }: LeaderboardArgs
+    ): Promise<LeaderboardResultView> => {
+      const cap = Math.max(1, Math.min(limit ?? 25, 50));
+      const skip = Math.max(0, offset ?? 0);
+      const dir: 1 | -1 = sortDir === 'ASC' ? 1 : -1;
 
-      const hasMore = users.length > cap;
-      const page = users.slice(0, cap);
+      // ── ALL_TIME: indexed find, no XP window ──────────────────────────────
+      if (timeframe === 'ALL_TIME') {
+        const [users, total] = await Promise.all([
+          User.find({ isDeleted: { $ne: true } })
+            .sort(buildLeaderboardSort(sortBy, dir))
+            .skip(skip)
+            .limit(cap + 1)
+            .select('_id accountName displayName avatarUrl badges stats streak progression social rankScore projectCount')
+            .lean<IUser[]>(),
+          User.countDocuments({ isDeleted: { $ne: true } }),
+        ]);
 
-      const projectCounts = await Project.aggregate<{ _id: mongoose.Types.ObjectId; count: number }>([
-        { $match: { userId: { $in: page.map(u => u._id) } } },
-        { $group: { _id: '$userId', count: { $sum: 1 } } },
-      ]);
-      const pcMap = new Map<string, number>(projectCounts.map(r => [r._id.toString(), r.count]));
+        const hasMore = users.length > cap;
+        return {
+          users: users.slice(0, cap).map((u) => toLeaderboardUser(u, null)),
+          total,
+          hasMore,
+        };
+      }
+
+      // ── WEEK / MONTH: XP earned inside a ROLLING window ───────────────────
+      // Deliberately rolling (now − 7d / now − 30d), not a calendar week or
+      // calendar month: a calendar board resets to near-empty every Monday /
+      // 1st of the month, and the reset time would be timezone-dependent for a
+      // global user base. A rolling window always covers a full period.
+      //
+      // Users with no XP movement in the window are legitimately absent — this
+      // board ranks activity in the period, not lifetime standing, so `total`
+      // counts only users who moved.
+      const windowDays = timeframe === 'WEEK' ? 7 : 30;
+      const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
+      // In this path the user fields live under the looked-up `user` doc; the
+      // period XP total is top-level, and `_id` is the userId from $group, so
+      // it still works as the final tiebreak.
+      const sortStage = buildLeaderboardSort(sortBy, dir, 'user.', 'periodXp');
+
+      const basePipeline: mongoose.PipelineStage[] = [
+        { $match: { createdAt: { $gte: cutoff } } },
+        { $group: { _id: '$userId', periodXp: { $sum: '$delta' } } },
+        { $match: { periodXp: { $gt: 0 } } },
+        { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
+        // $unwind drops rows whose lookup found nothing (deleted/purged user).
+        { $unwind: '$user' },
+        { $match: { 'user.isDeleted': { $ne: true } } },
+        // Trim before $sort: the sort runs over every user who moved in the
+        // window, and full user documents (badges, musicLibrary, …) would blow
+        // the in-memory sort budget for no benefit.
+        {
+          $project: {
+            periodXp: 1,
+            'user._id': 1,
+            'user.accountName': 1,
+            'user.displayName': 1,
+            'user.avatarUrl': 1,
+            'user.badges': 1,
+            'user.stats': 1,
+            'user.streak': 1,
+            'user.progression': 1,
+            'user.social': 1,
+            'user.rankScore': 1,
+            'user.projectCount': 1,
+          },
+        },
+        { $sort: sortStage },
+      ];
+
+      const [faceted] = await XPEvent.aggregate<LeaderboardFacet>([
+        ...basePipeline,
+        {
+          $facet: {
+            rows: [{ $skip: skip }, { $limit: cap + 1 }],
+            total: [{ $count: 'count' }],
+          },
+        },
+      ]).allowDiskUse(true);
+
+      const rows = faceted?.rows ?? [];
+      const hasMore = rows.length > cap;
 
       return {
-        users: page.map(u => ({
-          id: u._id.toString(),
-          accountName: u.accountName,
-          displayName: u.displayName ?? null,
-          avatarUrl: u.avatarUrl ?? null,
-          badges: u.badges ?? [],
-          stats: { minutesSynced: u.stats?.minutesSynced ?? 0, secondsSynced: u.stats?.secondsSynced ?? 0, wordsSynced: u.stats?.wordsSynced ?? 0, karaokeLines: u.stats?.karaokeLines ?? 0, syncedLines: u.stats?.syncedLines ?? 0, aiSyncedLines: u.stats?.aiSyncedLines ?? 0, aiWordsSynced: u.stats?.aiWordsSynced ?? 0 },
-          streak: getStreakView(u.streak),
-          progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },
-          projectCount: pcMap.get(u._id.toString()) ?? 0,
-          totalStarsReceived: u.social?.totalStarsReceived ?? 0,
-          totalForksReceived: u.social?.totalForksReceived ?? 0,
-          rankScore: u.rankScore ?? 0,
-        })),
-        total,
+        users: rows.slice(0, cap).map((r) => toLeaderboardUser(r.user, r.periodXp)),
+        total: faceted?.total?.[0]?.count ?? 0,
         hasMore,
       };
     },

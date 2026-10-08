@@ -182,7 +182,7 @@ export async function recomputeLeaderboardRanking(): Promise<void> {
   type BulkOp = {
     updateOne: {
       filter: { _id: mongoose.Types.ObjectId };
-      update: { $set: { rankScore: number } };
+      update: { $set: { rankScore: number; projectCount: number } };
     };
   };
   const bulkOps: BulkOp[] = [];
@@ -198,10 +198,14 @@ export async function recomputeLeaderboardRanking(): Promise<void> {
     // Multiply by 10,000 (no artificial ceiling), round to 2 decimal places
     const rankScore = Math.round(score * 10000 * 100) / 100;
 
+    // projectCount rides along in the same write. The leaderboard sorts by this
+    // denormalized field, which is kept live by $inc on project create/clone/
+    // delete; writing the aggregated truth here makes it self-heal hourly if an
+    // $inc was ever lost (fire-and-forget write, crash mid-request, …).
     bulkOps.push({
       updateOne: {
         filter: { _id: new mongoose.Types.ObjectId(u.id) },
-        update: { $set: { rankScore } },
+        update: { $set: { rankScore, projectCount: projectCountMap.get(u.id) ?? 0 } },
       },
     });
   }

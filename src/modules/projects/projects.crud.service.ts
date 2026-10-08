@@ -206,6 +206,11 @@ export async function createProject(
     // guest→account migration) funnels through here; forks use cloneProject and
     // are already counted via their project_forked activity.
     recordHeatmapEvent(userId, 'project_created', result.publicId).catch(() => {});
+    // Keep the denormalized leaderboard counter live. Fire-and-forget like the
+    // side effects above: the hourly leaderboard-ranking job rewrites this field
+    // from the authoritative Project aggregation, so a lost $inc self-heals.
+    // Forks do not come through here — cloneProject increments its own owner.
+    User.updateOne({ _id: userId }, { $inc: { projectCount: 1 } }).catch(() => {});
   }
 
   return result;
@@ -775,6 +780,18 @@ export async function deleteProject(
     // asset and clearing $unset uploadId on every project that pointed at it.
     await Project.deleteOne({ publicId }, { session });
     await Lyrics.deleteOne({ publicId }, { session });
+
+    // 4. Denormalized leaderboard counter. In the transaction so it cannot
+    // decrement for a delete that rolls back. The `$gt: 0` guard keeps it from
+    // going negative — `min: 0` on the schema is not enforced for $inc updates.
+    // Reconciled hourly by the leaderboard-ranking job regardless.
+    if (project.userId) {
+      await User.updateOne(
+        { _id: project.userId, projectCount: { $gt: 0 } },
+        { $inc: { projectCount: -1 } },
+        { session }
+      );
+    }
   }, { operation: 'deleteProject', publicId, userId });
 
   logUserAction({

@@ -22,7 +22,17 @@ function superseded<T>(model: Model<T>, old: IndexKey, replacement: IndexKey): S
 const SUPERSEDED_INDEXES: SupersededIndex[] = [
   superseded(Project, { public: 1, trendingScore: -1 }, { public: 1, trendingScore: -1, createdAt: -1 }),
   superseded(Playlist, { isPublic: 1, trendingScore: -1 }, { isPublic: 1, trendingScore: -1, createdAt: -1 }),
-  superseded(User, { rankScore: -1, isDeleted: 1 }, { rankScore: -1, 'stats.syncedLines': -1, isDeleted: 1 }),
+  // Both earlier rankScore indexes are prefixes of the current one, so it
+  // answers everything they did. (It gained the `_id` key when the leaderboard
+  // resolver started appending `_id` as its final sort tiebreak.) They are
+  // listed against the same replacement rather than chained, so a database that
+  // only ever had the oldest of them still gets it dropped.
+  superseded(User, { rankScore: -1, isDeleted: 1 }, { rankScore: -1, 'stats.syncedLines': -1, _id: 1, isDeleted: 1 }),
+  superseded(
+    User,
+    { rankScore: -1, 'stats.syncedLines': -1, isDeleted: 1 },
+    { rankScore: -1, 'stats.syncedLines': -1, _id: 1, isDeleted: 1 },
+  ),
 ];
 
 // Key order is part of an index's identity, so compare the serialized form.
