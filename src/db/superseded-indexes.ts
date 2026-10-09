@@ -20,8 +20,20 @@ function superseded<T>(model: Model<T>, old: IndexKey, replacement: IndexKey): S
 // it, so an index replaced by a wider one stays behind and keeps costing every
 // write. Each entry pairs a retired index with the one that covers its queries.
 const SUPERSEDED_INDEXES: SupersededIndex[] = [
-  superseded(Project, { public: 1, trendingScore: -1 }, { public: 1, trendingScore: -1, createdAt: -1 }),
-  superseded(Playlist, { isPublic: 1, trendingScore: -1 }, { isPublic: 1, trendingScore: -1, createdAt: -1 }),
+  // The trending indexes gained `ownerListed` as a second equality key
+  // (owner-visibility filtering), so BOTH earlier forms are retired: the
+  // original two-key index and the createdAt-tiebreak one that replaced it.
+  // Each is listed against the current replacement rather than chained, so a
+  // database that only ever had the oldest still gets it dropped.
+  //
+  // Only the trending indexes changed. `{public, starCount}` and
+  // `{public, createdAt}` were left as they are: no query filters `public` and
+  // sorts by those off an index (project search sorts after a $search stage or
+  // over an $or filter), so widening them would have been churn for nothing.
+  superseded(Project, { public: 1, trendingScore: -1 }, { public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
+  superseded(Project, { public: 1, trendingScore: -1, createdAt: -1 }, { public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
+  superseded(Playlist, { isPublic: 1, trendingScore: -1 }, { isPublic: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
+  superseded(Playlist, { isPublic: 1, trendingScore: -1, createdAt: -1 }, { isPublic: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
   // Both earlier rankScore indexes are prefixes of the current one, so it
   // answers everything they did. (It gained the `_id` key when the leaderboard
   // resolver started appending `_id` as its final sort tiebreak.) They are

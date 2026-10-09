@@ -15,6 +15,9 @@ export interface IProject extends Document {
   coverImage?: string;
   readOnly: boolean;
   public: boolean;
+  /** Derived from the owner's moderation state — see modules/users/owner-visibility.service.ts */
+  ownerActive: boolean;
+  ownerListed: boolean;
   forksEnabled: boolean;
   trendingScore: number;
   forkedFrom?: {
@@ -138,6 +141,14 @@ const projectSchema = new mongoose.Schema(
     // explicitly publishes it. Guarding the public surface (search, public profile,
     // OG, the Project.user edge) starts here — see F8.
     public: { type: Boolean, default: false },
+    // Denormalized owner-visibility. Derived, never set by a request handler:
+    // syncOwnerVisibility() recomputes both whenever the owner is deactivated,
+    // banned, shadow-banned or restored. `ownerActive` gates every read
+    // including direct links; `ownerListed` gates discovery only, so a silent
+    // shadow ban stays silent. Default true so content created before the
+    // backfill, and guest content with no owner, is not hidden by accident.
+    ownerActive: { type: Boolean, default: true },
+    ownerListed: { type: Boolean, default: true },
     forksEnabled: { type: Boolean, default: true },
     trendingScore: { type: Number, default: 0 },
 
@@ -164,8 +175,11 @@ projectSchema.index({ 'metadata.tags': 1 });
 // Supports public project discovery and trending sorts
 projectSchema.index({ public: 1, starCount: -1 });
 projectSchema.index({ public: 1, createdAt: -1 });
-// createdAt is the explore sort's tiebreak — without it in the key the sort runs in memory
-projectSchema.index({ public: 1, trendingScore: -1, createdAt: -1 });
+// createdAt is the explore sort's tiebreak — without it in the key the sort runs
+// in memory. `ownerListed` sits directly after `public` so both equality
+// predicates form the index prefix and the sort still comes from the key;
+// appending it after the sort fields instead would not be usable.
+projectSchema.index({ public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 });
 projectSchema.index({ forksEnabled: 1 });
 
 export interface IProjectModel extends Model<IProject & IProjectMethods> {}

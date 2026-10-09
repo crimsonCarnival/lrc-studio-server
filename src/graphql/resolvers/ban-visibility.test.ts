@@ -200,26 +200,22 @@ describe('leaderboard — moderation visibility', () => {
     expect(await names()).not.toContain(u.accountName);
   });
 
-  /**
-   * FINDING C — the leaderboard filters only `isDeleted`.
-   *
-   * Every other discovery surface (explore, user search, OG meta) uses
-   * ACTIVE_USER_FILTER: isDeleted + ban.active + shadowBan.search. The
-   * leaderboard resolver (user.resolvers.ts:399) and the ranking job
-   * (leaderboard-ranking.job.ts:100) do not, so a banned user stays publicly
-   * ranked and a shadow-banned user keeps a public placement — which defeats
-   * the purpose of a shadow ban.
-   *
-   * Remove the `.fails` markers once ACTIVE_USER_FILTER is applied in both.
-   */
-  it.fails('should exclude a banned user (FINDING C)', async () => {
+  // FINDING C, fixed: the leaderboard now shares one predicate with the other
+  // discovery surfaces (LEADERBOARD_VISIBLE), rather than filtering `isDeleted`
+  // alone and leaving banned users publicly ranked.
+  it('excludes a banned user', async () => {
     const u = await mkUser({ rankScore: 10, banned: true });
     expect(await names()).not.toContain(u.accountName);
   });
 
-  it.fails('should exclude a search-shadow-banned user (FINDING C)', async () => {
+  it('excludes a search-shadow-banned user, so the shadow ban is not undone by the board', async () => {
     const u = await mkUser({ rankScore: 10, shadowSearch: true });
     expect(await names()).not.toContain(u.accountName);
+  });
+
+  it('still lists a feed-only shadow-banned user — that switch is not about search', async () => {
+    const u = await mkUser({ rankScore: 10, shadowFeed: true });
+    expect(await names()).toContain(u.accountName);
   });
 });
 

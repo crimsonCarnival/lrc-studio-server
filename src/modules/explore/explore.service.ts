@@ -17,7 +17,10 @@ const ACTIVE_USER_FILTER = { isDeleted: { $ne: true }, 'ban.active': { $ne: true
 
 export async function getTrendingProjects(offset: number, limit: number, viewerId?: string) {
   const blockedSet = await getBlockedSet(viewerId);
-  const filter: Record<string, unknown> = { public: true };
+  // ownerListed: a deactivated, banned or shadow-banned owner's work is not a
+  // discovery surface. Denormalized so this stays a single-collection query
+  // with an index-provided sort — see modules/users/owner-visibility.service.ts.
+  const filter: Record<string, unknown> = { public: true, ownerListed: true };
   if (blockedSet.size > 0) {
     filter.userId = { $nin: [...blockedSet].map((id) => new mongoose.Types.ObjectId(id)) };
   }
@@ -34,7 +37,7 @@ export async function getTrendingProjects(offset: number, limit: number, viewerI
 }
 
 export async function getPopularPlaylists(offset: number, limit: number) {
-  const filter = { isPublic: true };
+  const filter = { isPublic: true, ownerListed: true };
   const [playlists, total] = await Promise.all([
     Playlist.find(filter)
       .sort({ trendingScore: -1, createdAt: -1 })
@@ -153,9 +156,9 @@ export async function getSuggestedUsers(viewerId: string, limit: number) {
 
 export async function getExploreStats() {
   const [totalProjects, totalUsers, totalPlaylists] = await Promise.all([
-    Project.countDocuments({ public: true }),
+    Project.countDocuments({ public: true, ownerListed: true }),
     User.countDocuments({ isVerified: true }),
-    Playlist.countDocuments({ isPublic: true }),
+    Playlist.countDocuments({ isPublic: true, ownerListed: true }),
   ]);
 
   return { totalProjects, totalUsers, totalPlaylists };

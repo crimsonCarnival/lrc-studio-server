@@ -529,6 +529,17 @@ userSchema.methods.checkBanStatus = async function (
     this.appeal.status = "none";
     this.appeal.submittedAt = null;
     await this.save();
+
+    // A temporary ban lapses here, with no admin action involved, so this is
+    // the only place that can restore the owner-visibility flags on the user's
+    // content. Imported dynamically: owner-visibility imports this model.
+    // Failure must not break the request that happened to trigger the expiry —
+    // the next sync (or the backfill script) repairs it.
+    try {
+      const { syncOwnerVisibility } = await import('../modules/users/owner-visibility.service.js');
+      await syncOwnerVisibility(this._id);
+    } catch { /* non-fatal: flags converge on the next visibility transition */ }
+
     return true;
   }
 

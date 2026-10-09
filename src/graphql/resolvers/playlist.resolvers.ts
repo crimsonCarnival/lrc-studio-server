@@ -8,6 +8,7 @@ import User from '../../db/user.model.js';
 import type { IUser } from '../../db/user.model.js';
 import { Context } from './context.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
+import { visibilityForNewContent } from '../../modules/users/owner-visibility.service.js';
 
 type LeanPlaylist = IPlaylist & { _id: mongoose.Types.ObjectId };
 type LeanProject = IProject & { _id: mongoose.Types.ObjectId; publicId: string };
@@ -93,6 +94,12 @@ export const playlistResolvers = {
       if (!playlist.isPublic && context.userId !== playlist.userId.toString()) {
         throw new Error('forbidden');
       }
+      // Deactivated/banned owner: not readable by anyone else, even by link.
+      // `ownerActive` rather than `ownerListed`, so a shadow-banned owner's
+      // playlist still opens — see modules/users/owner-visibility.service.ts.
+      if (playlist.ownerActive === false && context.userId !== playlist.userId.toString()) {
+        throw new Error('not_found');
+      }
       return formatPlaylist(playlist, context);
     },
 
@@ -111,7 +118,14 @@ export const playlistResolvers = {
       const saved = await SavedPlaylist.find({ userId: context.userId }).lean();
       if (!saved.length) return [];
       const playlistIds = saved.map(s => s.playlistId);
-      const playlists = await Playlist.find({ _id: { $in: playlistIds }, isPublic: true }).lean<LeanPlaylist[]>();
+      // Already-saved playlists are a direct reference, not discovery, so this
+      // uses ownerActive: a deactivated or banned owner's list drops out, a
+      // shadow-banned owner's stays where the viewer already had it.
+      const playlists = await Playlist.find({
+        _id: { $in: playlistIds },
+        isPublic: true,
+        ownerActive: { $ne: false },
+      }).lean<LeanPlaylist[]>();
       return Promise.all(playlists.map(p => formatPlaylist(p, context)));
     },
   },
@@ -133,6 +147,7 @@ export const playlistResolvers = {
         objectIds = input.publicIds.map((id: string) => projectMap.get(id)).filter((id): id is mongoose.Types.ObjectId => Boolean(id));
       }
       const playlist = await Playlist.create({
+        ...(await visibilityForNewContent(context.userId)),
         userId: context.userId,
         name: input.name,
         description: input.description,

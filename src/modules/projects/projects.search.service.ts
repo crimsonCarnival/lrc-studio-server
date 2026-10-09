@@ -45,16 +45,37 @@ async function searchWithAtlas(
     },
   };
 
+  // Owner-visibility is enforced as a pipeline $match rather than an Atlas
+  // `equals` inside the $search filter on purpose: an `equals` clause needs
+  // `ownerListed` mapped in the `projects_search` Atlas index definition, which
+  // lives outside this repo. If it were missing, the clause would match nothing
+  // and public search would silently return empty. A $match runs on the
+  // materialized documents, so it works against the existing index definition.
+  // A hidden owner's own content stays findable by that owner, matching the
+  // `public OR mine` filter above — a shadow ban must not be self-evident.
+  const visibilityStage = {
+    $match: {
+      $or: [
+        { ownerListed: true },
+        ...(userId ? [{ userId: new mongoose.Types.ObjectId(userId) }] : []),
+      ],
+    },
+  };
+
   const sortStage: Record<string, unknown> | null =
     sortBy === 'STARS'  ? { $sort: { starCount: -1 } } :
     sortBy === 'NEWEST' ? { $sort: { createdAt: -1 } } :
     null;
 
-  const resultPipeline: PipelineStage[] = [searchStage as PipelineStage];
+  const resultPipeline: PipelineStage[] = [searchStage as PipelineStage, visibilityStage as PipelineStage];
   if (sortStage) resultPipeline.push(sortStage as unknown as PipelineStage);
   resultPipeline.push({ $skip: offset }, { $limit: limit });
 
-  const countPipeline: PipelineStage[] = [searchStage as PipelineStage, { $count: 'total' }];
+  const countPipeline: PipelineStage[] = [
+    searchStage as PipelineStage,
+    visibilityStage as PipelineStage,
+    { $count: 'total' },
+  ];
 
   const [projects, countResult] = await Promise.all([
     Project.aggregate(resultPipeline),
@@ -81,7 +102,7 @@ async function searchWithRegex(
     $and: [
       {
         $or: [
-          { public: true },
+          { public: true, ownerListed: true },
           ...(userId ? [{ userId: new mongoose.Types.ObjectId(userId) }] : [])
         ]
       },
