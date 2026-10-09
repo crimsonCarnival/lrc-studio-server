@@ -49,6 +49,25 @@ export interface Env {
    * Unset/empty is a no-op — never accidentally grants to nobody/everybody.
    */
   SUPERADMIN_EMAIL?: string;
+  /**
+   * Absolute URL of the 1200x630 brand card the OG image endpoints fall back
+   * to for a missing, private or non-Cloudinary asset. The asset itself lives
+   * in the client repo's `public/`, so the default points at the production
+   * client origin.
+   */
+  OG_DEFAULT_IMAGE_URL: string;
+  /**
+   * Absolute origin of THIS api, used to build the `og:image` URLs that point
+   * back at `/og/image/...`. Unset falls back to the origin the request
+   * arrived on (`trustProxy` is enabled), which is correct in every
+   * single-origin deployment.
+   */
+  OG_API_ORIGIN?: string;
+  /**
+   * Absolute origin of the client SPA, used for `og:url` / canonical. Unset
+   * falls back to APP_URL.
+   */
+  CLIENT_ORIGIN?: string;
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -99,6 +118,9 @@ export function loadEnv(): Env {
     TRACK_METADATA_CLIENT_SECRET: process.env.TRACK_METADATA_CLIENT_SECRET,
     LASTFM_API_KEY: process.env.LASTFM_API_KEY,
     SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL,
+    OG_DEFAULT_IMAGE_URL: process.env.OG_DEFAULT_IMAGE_URL?.trim() || 'https://www.lrcstudio.app/og-default.png',
+    OG_API_ORIGIN: process.env.OG_API_ORIGIN?.trim() || undefined,
+    CLIENT_ORIGIN: process.env.CLIENT_ORIGIN?.trim() || undefined,
   };
 }
 
