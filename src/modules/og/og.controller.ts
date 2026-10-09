@@ -25,11 +25,31 @@ const IMAGE_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400, stale-while-
 
 const CARD_TYPES: readonly OgCardType[] = ['project', 'profile', 'list'] as const;
 
+/**
+ * Used when OG_API_ORIGIN is unset in production. A constant rather than a
+ * boot-time hard requirement so a misconfigured deploy degrades to the right
+ * host instead of refusing to start.
+ */
+const DEFAULT_API_ORIGIN = 'https://api.lrcstudio.app';
+
+/**
+ * Origin that `og:image` URLs point back at.
+ *
+ * NEVER derived from request headers in production. `trustProxy: true` is set
+ * on the Fastify instance, so `request.host` honours a caller-supplied
+ * X-Forwarded-Host, and this value is interpolated straight into og:image /
+ * og:image:secure_url. `/og/meta` is sent with `public, s-maxage=300`, so one
+ * request carrying a forged host can poison a shared cache and hand every
+ * crawler that later asks for the same path an attacker-chosen image URL —
+ * attacker-controlled imagery on the unfurl of a legitimate project.
+ *
+ * Outside production the request-derived origin is kept so `pnpm dev` on
+ * localhost still produces reachable card URLs.
+ */
 function resolveApiOrigin(request: FastifyRequest): string {
   const configured = getEnv().OG_API_ORIGIN;
   if (configured) return configured.replace(/\/+$/, '');
-  // `trustProxy: true` is set on the Fastify instance, so protocol/host here
-  // already honour X-Forwarded-*.
+  if (process.env.NODE_ENV === 'production') return DEFAULT_API_ORIGIN;
   return `${request.protocol}://${request.host}`;
 }
 
