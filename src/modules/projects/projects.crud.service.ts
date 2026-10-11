@@ -15,6 +15,7 @@ import { writeActivity, recordHeatmapEvent } from '../activity/activity.service.
 import { isDeepStrictEqual } from 'node:util';
 import { recomputeSyncStats, scheduleSyncStatsRefresh, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
 import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
+import { visibilityForNewContent } from '../users/owner-visibility.service.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
   _id: mongoose.Types.ObjectId;
@@ -165,7 +166,13 @@ export async function createProject(
       finalIsPublic = false; // Guests default to private
     }
 
+    // New content inherits the owner's current visibility, so a shadow-banned
+    // user's new project is unlisted from the moment it exists rather than
+    // until the next sync. Guests (no userId) are treated as visible.
+    const ownerVisibility = await visibilityForNewContent(userId);
+
     const [project] = await Project.create([{
+      ...ownerVisibility,
       userId: userId || null,
       title: stripHtml(title || '').slice(0, 200),
       uploadId: resolvedUploadId,
@@ -327,6 +334,14 @@ export async function getProject(publicId: string, requestingUserId?: string | n
   if (!project) return null;
 
   if (!project.public && !project.isOwnedBy(requestingUserId ?? '')) return null;
+
+  // A deactivated or banned owner's project is not readable by anyone but its
+  // owner, even by direct link — otherwise a ban is bypassed by sharing the
+  // link, which is the argument og.meta.service already makes for crawler
+  // cards. `ownerActive`, not `ownerListed`: a shadow ban only removes content
+  // from discovery, so a shadow-banned project must still open by link or the
+  // shadow ban is detectable by its target.
+  if (project.ownerActive === false && !project.isOwnedBy(requestingUserId ?? '')) return null;
 
   // Refresh stats for the owner on project load so settings→stats and leaderboard stay current.
   // Throttled to once per 5 minutes to avoid expensive repeated aggregations.

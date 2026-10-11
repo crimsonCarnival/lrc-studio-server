@@ -307,7 +307,9 @@ export const projectResolvers = {
     boostProject: async (_: unknown, { publicId }: { publicId: string }, ctx: Context) => {
       if (!ctx.userId) throw new Error('Unauthorized');
 
-      const project = await Project.findOne({ publicId, public: true }).lean<IProject>();
+      // ownerActive: boosting feeds the trending score, so content from a
+      // deactivated or banned owner must not be boostable.
+      const project = await Project.findOne({ publicId, public: true, ownerActive: { $ne: false } }).lean<IProject>();
       if (!project) throw new Error('Project not found');
       if (project.userId?.toString() === ctx.userId) throw new Error('Cannot boost your own project');
 

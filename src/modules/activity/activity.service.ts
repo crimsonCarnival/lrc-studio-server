@@ -56,13 +56,23 @@ export async function getFeed(
 
   const actorIds = following.map(f => f.followingId);
 
-  // Exclude actors who are shadow-banned from feed
-  const shadowBannedIds = await User.find(
-    { _id: { $in: actorIds }, 'shadowBan.feed': true },
+  // Exclude actors whose activity must not appear in a follower's feed:
+  // feed-shadow-banned, deactivated, or banned. Only the first was filtered
+  // before, so a deactivated user's past activity kept showing to everyone who
+  // still followed them (blocking severs follow edges, deactivating does not).
+  const hiddenActorIds = await User.find(
+    {
+      _id: { $in: actorIds },
+      $or: [
+        { 'shadowBan.feed': true },
+        { isDeleted: true },
+        { 'ban.active': true },
+      ],
+    },
     '_id'
   ).lean().then(docs => new Set(docs.map(d => d._id.toString())));
 
-  const filteredActorIds = actorIds.filter(id => !shadowBannedIds.has(id.toString()));
+  const filteredActorIds = actorIds.filter(id => !hiddenActorIds.has(id.toString()));
 
   const items = await Activity.find({ actorId: { $in: filteredActorIds } })
     .sort({ createdAt: -1 })

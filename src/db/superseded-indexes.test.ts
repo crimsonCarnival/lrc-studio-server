@@ -36,21 +36,23 @@ describe('dropSupersededIndexes', () => {
       'users.rankScore_-1_stats.syncedLines_-1_isDeleted_1',
     ]);
 
-    expect(await names(Project)).toContain('public_1_trendingScore_-1_createdAt_-1');
+    // The trending indexes now carry `ownerListed` as a second equality key.
+    expect(await names(Project)).toContain('public_1_ownerListed_1_trendingScore_-1_createdAt_-1');
     expect(await names(Project)).not.toContain('public_1_trendingScore_-1');
-    expect(await names(Playlist)).toContain('isPublic_1_trendingScore_-1_createdAt_-1');
+    expect(await names(Playlist)).toContain('isPublic_1_ownerListed_1_trendingScore_-1_createdAt_-1');
     // Both earlier rankScore indexes are retired in favour of the one that
     // carries the resolver's `_id` sort tiebreak.
     expect(await names(User)).toContain('rankScore_-1_stats.syncedLines_-1__id_1_isDeleted_1');
     expect(await names(User)).not.toContain('rankScore_-1_stats.syncedLines_-1_isDeleted_1');
-    // An unrelated index sharing the prefix must survive.
+    // An unrelated index sharing the prefix must survive — `{public, starCount}`
+    // was deliberately left un-widened, so it is not superseded.
     expect(await names(Project)).toContain('public_1_starCount_-1');
 
     expect(await dropSupersededIndexes()).toEqual([]);
   });
 
   it('leaves the old index alone while its replacement is missing', async () => {
-    await Project.collection.dropIndex('public_1_trendingScore_-1_createdAt_-1');
+    await Project.collection.dropIndex('public_1_ownerListed_1_trendingScore_-1_createdAt_-1');
     await Project.collection.createIndex({ public: 1, trendingScore: -1 });
     // init() is memoised, so the replacement is not rebuilt here — the same
     // state as a replacement build that failed.

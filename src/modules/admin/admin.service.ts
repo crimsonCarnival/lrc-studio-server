@@ -18,6 +18,7 @@ import geoip from 'geoip-lite';
 import JobLog from '../../db/job-log.model.js';
 import { getOnlineUserIds } from '../../socket/presence.js';
 import RolePermissionsConfig from './rolePermissionsConfig.model.js';
+import { syncOwnerVisibility } from '../users/owner-visibility.service.js';
 
 // Staff-protection: resolve the acting admin's rank. A null actor (system call)
 // is treated as top rank so internal automation isn't blocked.
@@ -250,6 +251,11 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
 
   await user.save();
 
+  // Hide (or restore) everything this user owns. Awaited, not fire-and-forget:
+  // a ban that leaves the content visible is the bug this closes, so a failure
+  // here must surface rather than be swallowed.
+  await syncOwnerVisibility(user._id);
+
   if (!banStatus) {
     notifyUnban(userId).catch(() => {});
   }
@@ -308,6 +314,11 @@ export async function toggleShadowBan(
   };
 
   await user.save();
+
+  // `search` feeds ownerListed, so the user's content must leave (or rejoin)
+  // the discovery surfaces. Recomputed from scratch, so lifting a shadow ban on
+  // an account that is also banned does not resurface it.
+  await syncOwnerVisibility(user._id);
 
   if (adminId) {
     const admin = await User.findById(adminId);
@@ -423,6 +434,7 @@ export async function deleteUser(userId: string, adminId: string | null = null, 
   user.appeal.status = 'none';
 
   await user.save();
+  await syncOwnerVisibility(user._id);
 
   if (adminId) {
     const admin = await User.findById(adminId);
@@ -448,6 +460,7 @@ export async function reactivateUser(userId: string, adminId: string | null = nu
   user.deletedAt = null;
 
   await user.save();
+  await syncOwnerVisibility(user._id);
 
   if (adminId) {
     const admin = await User.findById(adminId);

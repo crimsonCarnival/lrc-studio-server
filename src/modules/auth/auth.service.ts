@@ -1109,5 +1109,11 @@ export async function deactivateUser(userId: string): Promise<ServiceResult<{ su
   user.appeal.status = 'none';
 
   await user.save();
+
+  // Self-deactivation must take the user's content down with it — projects,
+  // playlists and feed entries used to stay fully visible until reactivation.
+  const { syncOwnerVisibility } = await import('../users/owner-visibility.service.js');
+  await syncOwnerVisibility(user._id);
+
   return { success: true };
 }

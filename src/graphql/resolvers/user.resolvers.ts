@@ -134,6 +134,28 @@ const LEADERBOARD_SORT_FIELDS: Record<LeaderboardSort, readonly string[]> = {
 };
 
 /**
+ * The leaderboard is a discovery surface, so it hides the same users explore
+ * and user search hide: deactivated, banned, and search-shadow-banned. It
+ * filtered only `isDeleted` before, which left a banned user publicly ranked
+ * and gave a shadow-banned user a public placement — defeating the shadow ban.
+ *
+ * Kept as one constant so the ALL_TIME find() and the windowed aggregation
+ * cannot drift apart; `LEADERBOARD_VISIBLE_PREFIXED` is the same predicate for
+ * the pipeline, where the user document sits under `user`.
+ */
+const LEADERBOARD_VISIBLE = {
+  isDeleted: { $ne: true },
+  'ban.active': { $ne: true },
+  'shadowBan.search': { $ne: true },
+} as const;
+
+const LEADERBOARD_VISIBLE_PREFIXED = {
+  'user.isDeleted': { $ne: true },
+  'user.ban.active': { $ne: true },
+  'user.shadowBan.search': { $ne: true },
+} as const;
+
+/**
  * Builds the sort document for a leaderboard page.
  *
  * `_id` is appended as the final key in every case, and that is load-bearing,
@@ -396,13 +418,13 @@ export const userResolvers = {
       // ── ALL_TIME: indexed find, no XP window ──────────────────────────────
       if (timeframe === 'ALL_TIME') {
         const [users, total] = await Promise.all([
-          User.find({ isDeleted: { $ne: true } })
+          User.find(LEADERBOARD_VISIBLE)
             .sort(buildLeaderboardSort(sortBy, dir))
             .skip(skip)
             .limit(cap + 1)
             .select('_id accountName displayName avatarUrl badges stats streak progression social rankScore projectCount')
             .lean<IUser[]>(),
-          User.countDocuments({ isDeleted: { $ne: true } }),
+          User.countDocuments(LEADERBOARD_VISIBLE),
         ]);
 
         const hasMore = users.length > cap;
@@ -437,7 +459,7 @@ export const userResolvers = {
         { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
         // $unwind drops rows whose lookup found nothing (deleted/purged user).
         { $unwind: '$user' },
-        { $match: { 'user.isDeleted': { $ne: true } } },
+        { $match: LEADERBOARD_VISIBLE_PREFIXED },
         // Trim before $sort: the sort runs over every user who moved in the
         // window, and full user documents (badges, musicLibrary, …) would blow
         // the in-memory sort budget for no benefit.

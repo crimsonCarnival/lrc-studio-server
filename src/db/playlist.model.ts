@@ -7,6 +7,9 @@ export interface IPlaylist {
   coverImage?: string;
   tags: string[];
   isPublic: boolean;
+  /** Derived from the owner's moderation state — see modules/users/owner-visibility.service.ts */
+  ownerActive: boolean;
+  ownerListed: boolean;
   sortMode: 'MANUAL' | 'DATE_ADDED' | 'STARS' | 'ALPHABETICAL';
   publicIds: mongoose.Types.ObjectId[];
   savedCount: number;
@@ -25,6 +28,10 @@ const playlistSchema = new mongoose.Schema<IPlaylist>(
     coverImage: { type: String },
     tags: { type: [String], default: [] },
     isPublic: { type: Boolean, default: true },
+    // Denormalized owner-visibility — see modules/users/owner-visibility.service.ts.
+    // Derived state: recomputed by syncOwnerVisibility(), never set by a handler.
+    ownerActive: { type: Boolean, default: true },
+    ownerListed: { type: Boolean, default: true },
     sortMode: {
       type: String,
       enum: ['MANUAL', 'DATE_ADDED', 'STARS', 'ALPHABETICAL'],
@@ -41,7 +48,9 @@ const playlistSchema = new mongoose.Schema<IPlaylist>(
 
 playlistSchema.index({ userId: 1 });
 playlistSchema.index({ tags: 1 });
-// createdAt is the explore sort's tiebreak — without it in the key the sort runs in memory
-playlistSchema.index({ isPublic: 1, trendingScore: -1, createdAt: -1 });
+// createdAt is the explore sort's tiebreak — without it in the key the sort runs in memory.
+// `ownerListed` is placed before the sort fields so both equality predicates
+// form the index prefix and the sort stays index-provided.
+playlistSchema.index({ isPublic: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 });
 
 export default mongoose.model<IPlaylist>('Playlist', playlistSchema);
