@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
-import Reaction, { ALLOWED_EMOJIS } from '../../db/reaction.model.js';
+import Reaction from '../../db/reaction.model.js';
+import { isValidReaction } from './reaction.emoji.js';
 import { getIO } from '../../socket/socket.manager.js';
 import Project from '../projects/project.model.js';
 import User from '../../db/user.model.js';
@@ -34,7 +35,7 @@ async function runToggle(
       await existing.deleteOne();
       return false;
     }
-    existing.emoji = emoji as typeof ALLOWED_EMOJIS[number];
+    existing.emoji = emoji;
     await existing.save();
     return true;
   }
@@ -53,7 +54,7 @@ export async function reactToProject(
   userId: string,
   emoji: string
 ): Promise<{ reactions: ReactionSummary[]; myReaction: string | null }> {
-  if (!(ALLOWED_EMOJIS as readonly string[]).includes(emoji)) throw new Error('Invalid emoji');
+  if (!isValidReaction(emoji)) throw new Error('Invalid emoji');
 
   const kept = await runToggle(userId, 'project', publicId, emoji);
 

@@ -1,13 +1,12 @@
 import mongoose from 'mongoose';
-
-const ALLOWED_EMOJIS = ['heart', 'fire', 'wow', 'laugh', 'clap', 'music'] as const;
-export type EmojiCode = typeof ALLOWED_EMOJIS[number];
+import { isValidReaction, REACTION_MAX_LENGTH } from '../modules/reactions/reaction.emoji.js';
 
 export interface IReaction {
   userId: mongoose.Types.ObjectId;
   targetType: 'project';
   targetId: string;
-  emoji: EmojiCode;
+  /** A quick-reaction code ('heart', 'fire', ...) or one emoji. */
+  emoji: string;
   createdAt: Date;
 }
 
@@ -16,7 +15,8 @@ const reactionSchema = new mongoose.Schema<IReaction>(
     userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     targetType: { type: String, enum: ['project'], required: true },
     targetId:   { type: String, required: true },
-    emoji:      { type: String, enum: ALLOWED_EMOJIS, required: true },
+    // Second line of defence behind the service check: the same rule, at the DB layer.
+    emoji:      { type: String, required: true, maxlength: REACTION_MAX_LENGTH, validate: isValidReaction },
   },
   { timestamps: { createdAt: true, updatedAt: false }, collection: 'reactions' }
 );
@@ -24,5 +24,4 @@ const reactionSchema = new mongoose.Schema<IReaction>(
 reactionSchema.index({ userId: 1, targetType: 1, targetId: 1 }, { unique: true });
 reactionSchema.index({ targetType: 1, targetId: 1 });
 
-export { ALLOWED_EMOJIS };
 export default mongoose.model<IReaction>('Reaction', reactionSchema);
