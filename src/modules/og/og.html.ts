@@ -84,6 +84,7 @@ ${meta.music?.musician ? `<meta property="music:musician" content="${e(meta.musi
 <meta name="twitter:description" content="${description}">
 <meta name="twitter:image" content="${image}">
 <meta name="twitter:image:alt" content="${e(meta.image.alt)}">
+<meta property="og:logo" content="https://lrcstudio.app/favicon.svg">
 <meta http-equiv="refresh" content="0; url=${url}">
 </head><body>
 <script nonce="${e(nonce)}">window.location.replace(${jsStringLiteral(redirectUrl)});</script>
