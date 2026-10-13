@@ -4,6 +4,9 @@ import User from '../db/user.model.js';
 import Upload from '../modules/uploads/upload.model.js';
 import Lyrics from '../modules/lyrics/lyrics.model.js';
 import ProjectStar from '../modules/projects/projectStar.model.js';
+import Boost from '../db/boost.model.js';
+import Follow from '../db/follow.model.js';
+import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
 
 /** Shape of a GraphQL parent object as passed by Mercurius loaders */
@@ -31,6 +34,16 @@ function countLyricLines(doc: LyricsCountDoc | undefined, syncedOnly: boolean): 
   return syncedOnly ? flat.filter(isSynced).length : flat.length;
 }
 
+/** True when any lyric line (nested or legacy flat format) has a word with a timestamp. */
+export function hasTimedWord(doc: LyricsCountDoc | undefined): boolean {
+  if (!doc) return false;
+  const timed = (l: LineEntry) => (l.words ?? []).some((w) => w.time !== null && w.time !== undefined);
+  if (Array.isArray(doc.sections) && doc.sections.length > 0) {
+    return doc.sections.some((sec) => (sec.lines ?? []).some(timed));
+  }
+  return (doc.lines ?? []).some(timed);
+}
+
 export const loaders: MercuriusLoaders = {
   Project: {
     user: {
@@ -52,7 +65,7 @@ export const loaders: MercuriusLoaders = {
         if (toFetch.length > 0) {
           const ids = toFetch.map(tf => tf.id);
           const users = await User.find({ _id: { $in: ids } })
-            .select('accountName displayName avatarUrl role isVerified ban')
+            .select('accountName displayName avatarUrl role isVerified ban progression')
             .lean();
           toFetch.forEach(tf => {
             results[tf.index] = users.find((u) => (u._id as { toString(): string }).toString() === String(tf.id)) || null;
@@ -130,6 +143,46 @@ export const loaders: MercuriusLoaders = {
       },
     },
 
+    // Boosts live in their own collection (no counter on Project), so the count is
+    // one grouped query per request rather than a countDocuments per project.
+    boostCount: {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
+        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const counts = await Boost.aggregate<{ _id: string; count: number }>([
+          { $match: { publicId: { $in: publicIds } } },
+          { $group: { _id: '$publicId', count: { $sum: 1 } } },
+        ]);
+        const map = new Map(counts.map((c) => [c._id, c.count]));
+        return queries.map(({ obj }) => map.get(obj.publicId as string) ?? 0);
+      },
+    },
+
+    isBoostedByMe: {
+      loader: async (queries: Array<{ obj: LoaderObj }>, context: MercuriusContext & { userId?: string | null }) => {
+        if (!context.userId) return queries.map(() => false);
+        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const boosts = await Boost
+          .find({ userId: context.userId, publicId: { $in: publicIds } })
+          .select('publicId')
+          .lean<Array<{ publicId: string }>>();
+        const boostedSet = new Set(boosts.map((b) => b.publicId));
+        return queries.map(({ obj }) => boostedSet.has(obj.publicId as string));
+      },
+    },
+
+    // Projects only the word times, not the lyric text, so a list of results stays cheap.
+    hasWordSync: {
+      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
+        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const lyricsList = await Lyrics.find(
+          { publicId: { $in: publicIds } },
+          { publicId: 1, 'sections.lines.words.time': 1, 'lines.words.time': 1 }
+        ).lean<LyricsCountDoc[]>();
+        const map = new Map(lyricsList.map((l) => [l.publicId, l]));
+        return queries.map(({ obj }) => hasTimedWord(map.get(obj.publicId as string)));
+      },
+    },
+
     // Batches lineCount across all projects in a single query per request
     lineCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
@@ -159,6 +212,32 @@ export const loaders: MercuriusLoaders = {
           if (obj.syncedLineCount !== undefined) return obj.syncedLineCount;
           return countLyricLines(map.get(obj.publicId as string), true);
         });
+      },
+    },
+  },
+  FollowUser: {
+    // FollowUser is built by several resolvers (search, suggestions, follow lists,
+    // playlist owner, activity actor) and the field is non-null, so a resolver that
+    // forgot to set it used to null the whole query. A value the parent already
+    // carries is trusted; the rest are resolved here in one query per request.
+    isFollowedByMe: {
+      loader: async (queries: Array<{ obj: LoaderObj }>, context: MercuriusContext & { userId?: string | null }) => {
+        const missing = queries
+          .filter(({ obj }) => typeof obj.isFollowedByMe !== 'boolean')
+          .map(({ obj }) => String(obj.id ?? ''))
+          .filter((id) => mongoose.isValidObjectId(id));
+
+        let followedSet = new Set<string>();
+        if (context.userId && missing.length > 0) {
+          const follows = await Follow
+            .find({ followerId: context.userId, followingId: { $in: missing } })
+            .select('followingId')
+            .lean<Array<{ followingId: { toString(): string } }>>();
+          followedSet = new Set(follows.map((f) => f.followingId.toString()));
+        }
+        return queries.map(({ obj }) =>
+          typeof obj.isFollowedByMe === 'boolean' ? obj.isFollowedByMe : followedSet.has(String(obj.id ?? ''))
+        );
       },
     },
   },

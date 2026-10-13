@@ -27,6 +27,10 @@ export const projectSchema = `
     shareCount: Int
     isStarredByMe: Boolean
     isForkedByMe: Boolean
+    boostCount: Int
+    isBoostedByMe: Boolean
+    # True when at least one word carries a timestamp (karaoke-style sync).
+    hasWordSync: Boolean
     forksEnabled: Boolean
     trendingScore: Float
   }

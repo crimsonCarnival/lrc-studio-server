@@ -136,6 +136,14 @@ export const userSchema = `
     displayName: String
     avatarUrl: String
     isFollowedByMe: Boolean!
+    # Profile summary for result rows. Null on surfaces that do not load it
+    # (only searchUsers does today), so clients must treat absence as "unknown".
+    level: Int
+    projectCount: Int
+    totalStarsReceived: Int
+    followerCount: Int
+    # Same privacy rules as PublicUser.country (preferences.countryVisibility).
+    country: String
   }
 
   type FollowListResult {

@@ -1170,6 +1170,18 @@ function asViewer<R>(resolver: UserFieldResolver<R>): UserFieldResolver<R> {
     resolver(user, args, user.asVisitor ? { ...context, userId: null } : context);
 }
 
+// FollowUser rows carry no IP, so country loads it here and then defers to the
+// one User.country resolver: the visibility rules must not exist in two places.
+// Costs a few queries per row, which is why only the search results page asks for it.
+export const followUserResolvers = {
+  country: async (parent: { id?: string }, args: unknown, context: Context) => {
+    if (!parent.id || !mongoose.isValidObjectId(parent.id)) return null;
+    const user = await User.findById(parent.id).select('lastIp').lean<IUser>();
+    if (!user) return null;
+    return userResolvers.User.country(user, args, context);
+  },
+};
+
 // PublicUser reuses the same field resolvers as User (privacy/permission logic is identical)
 export const publicUserResolvers = {
   showFollowers: asViewer(userResolvers.User.showFollowers),

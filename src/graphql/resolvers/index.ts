@@ -1,5 +1,5 @@
 import { healthResolvers }   from './health.resolvers.js';
-import { userResolvers, publicUserResolvers } from './user.resolvers.js';
+import { userResolvers, publicUserResolvers, followUserResolvers } from './user.resolvers.js';
 import { projectResolvers }  from './project.resolvers.js';
 import { lyricsResolvers }   from './lyrics.resolvers.js';
 import { uploadResolvers }   from './upload.resolvers.js';
@@ -38,6 +38,7 @@ export const resolvers = {
   },
   User:     userResolvers.User,
   PublicUser: publicUserResolvers,
+  FollowUser: followUserResolvers,
   Project:  projectResolvers.Project,
   Lyrics:   lyricsResolvers.Lyrics,
   Upload:   uploadResolvers.Upload,
