@@ -44,7 +44,42 @@ export function hasTimedWord(doc: LyricsCountDoc | undefined): boolean {
   return (doc.lines ?? []).some(timed);
 }
 
+const STAFF_ROLES = new Set(['mod', 'admin', 'superadmin']);
+
+/**
+ * staffRole for any user-shaped parent. A parent that already carries `role` (a User
+ * document) answers from it; the plain objects other resolvers build (follow lists, search,
+ * leaderboard, activity actors) are looked up together, one query per request. Ordinary
+ * users resolve to null, so the field never reveals more than "this account is staff".
+ */
+const staffRoleLoader = {
+  loader: async (queries: Array<{ obj: LoaderObj }>) => {
+    const idOf = (obj: LoaderObj) => String(obj.id ?? obj._id ?? '');
+    const missing = [...new Set(
+      queries
+        .filter(({ obj }) => typeof obj.role !== 'string')
+        .map(({ obj }) => idOf(obj))
+        .filter((id) => mongoose.isValidObjectId(id)),
+    )];
+
+    const roles = new Map<string, string>();
+    if (missing.length > 0) {
+      const users = await User.find({ _id: { $in: missing } })
+        .select('role')
+        .lean<Array<{ _id: { toString(): string }; role?: string }>>();
+      for (const u of users) if (u.role) roles.set(u._id.toString(), u.role);
+    }
+    return queries.map(({ obj }) => {
+      const role = typeof obj.role === 'string' ? obj.role : roles.get(idOf(obj));
+      return role && STAFF_ROLES.has(role) ? role : null;
+    });
+  },
+};
+
 export const loaders: MercuriusLoaders = {
+  User: { staffRole: staffRoleLoader },
+  PublicUser: { staffRole: staffRoleLoader },
+  LeaderboardUser: { staffRole: staffRoleLoader },
   Project: {
     user: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
@@ -240,6 +275,7 @@ export const loaders: MercuriusLoaders = {
         );
       },
     },
+    staffRole: staffRoleLoader,
   },
   Upload: {
     user: {

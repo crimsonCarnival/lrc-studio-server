@@ -4,6 +4,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import Boost from '../db/boost.model.js';
 import Follow from '../db/follow.model.js';
+import User from '../db/user.model.js';
 import { hasTimedWord, loaders } from './loaders.js';
 
 type Obj = Record<string, unknown>;
@@ -29,7 +30,7 @@ afterAll(async () => {
   await mongo.stop();
 });
 beforeEach(async () => {
-  await Promise.all([Boost.deleteMany({}), Follow.deleteMany({})]);
+  await Promise.all([Boost.deleteMany({}), Follow.deleteMany({}), User.deleteMany({})]);
 });
 
 describe('hasTimedWord', () => {
@@ -86,6 +87,29 @@ describe('FollowUser.isFollowedByMe', () => {
 
   it('does not throw on a parent with no usable id', async () => {
     expect(await run('FollowUser', 'isFollowedByMe', [{ id: '' }, { id: 'deleted' }, {}], oid())).toEqual([false, false, false]);
+  });
+});
+
+describe('staffRole', () => {
+  const makeUser = async (role: string) => {
+    const id = new mongoose.Types.ObjectId();
+    // Straight into the collection: this test is about the role lookup, not user validation.
+    await User.collection.insertOne({ _id: id, accountName: `u${id.toString()}`, role });
+    return id.toString();
+  };
+
+  it('names staff and hides every other role', async () => {
+    const [mod, admin, dev, plain] = await Promise.all(['mod', 'admin', 'superadmin', 'user'].map(makeUser));
+    const result = await run('FollowUser', 'staffRole', [{ id: mod }, { id: admin }, { id: dev }, { id: plain }]);
+    expect(result).toEqual(['mod', 'admin', 'superadmin', null]);
+  });
+
+  it('answers from a role the parent already carries, without a lookup', async () => {
+    expect(await run('User', 'staffRole', [{ id: oid(), role: 'admin' }, { id: oid(), role: 'user' }])).toEqual(['admin', null]);
+  });
+
+  it('is null for an unknown or unusable id', async () => {
+    expect(await run('PublicUser', 'staffRole', [{ id: oid() }, { id: 'not-an-id' }, {}])).toEqual([null, null, null]);
   });
 });
 

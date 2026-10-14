@@ -187,6 +187,9 @@ export const rootSchema = `
     accountName: String!
     displayName: String
     avatarUrl: String
+    # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
+    # Unlike User.role it never says "user" and is safe on public surfaces.
+    staffRole: String
     badges: [UserBadge!]!
     stats: UserStats
     progression: UserProgression

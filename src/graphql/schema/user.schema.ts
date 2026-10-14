@@ -32,6 +32,9 @@ export const userSchema = `
     appeal: UserAppeal
     wasJustUnbanned: Boolean
     role: String!
+    # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
+    # Unlike User.role it never says "user" and is safe on public surfaces.
+    staffRole: String
     permissions: [String!]!
     createdAt: String
     passwordChangedAt: String
@@ -105,6 +108,9 @@ export const userSchema = `
     bio: String
     isVerified: Boolean!
     isAdmin: Boolean!
+    # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
+    # Unlike User.role it never says "user" and is safe on public surfaces.
+    staffRole: String
     createdAt: String
     projects: [Project!]!
     projectCount: Int!
@@ -135,6 +141,9 @@ export const userSchema = `
     accountName: String!
     displayName: String
     avatarUrl: String
+    # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
+    # Unlike User.role it never says "user" and is safe on public surfaces.
+    staffRole: String
     isFollowedByMe: Boolean!
     # Profile summary for result rows. Null on surfaces that do not load it
     # (only searchUsers does today), so clients must treat absence as "unknown".
