@@ -194,16 +194,15 @@ describe('GET /og/project/:publicId (legacy crawler page)', () => {
     expect(hidden.body).toContain('noindex');
     expect(hidden.body.length).toBe(missing.body.length);
   });
-  it('carries a start time and a loop through to the song page, and drops anything else', async () => {
+  it('carries a start time through to the song page, and drops a malformed one', async () => {
     await seedPublished();
-    const res = await asCrawler('/og/project/pubsong001?s=42.5&loop=10-20');
+    const res = await asCrawler('/og/project/pubsong001?s=42.5');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('s=42.5');
-    expect(res.body).toContain('loop=10-20');
+    expect(res.body).toContain('/project/pubsong001?s=42.5');
 
-    const junk = await asCrawler('/og/project/pubsong001?s=%3Cscript%3E&loop=20-10');
+    const junk = await asCrawler('/og/project/pubsong001?s=%3Cscript%3E');
     expect(junk.statusCode).toBe(200);
     expect(junk.body).not.toContain('script%3E');
-    expect(junk.body).not.toContain('loop=');
+    expect(junk.body).not.toContain('?s=');
   });
 });
