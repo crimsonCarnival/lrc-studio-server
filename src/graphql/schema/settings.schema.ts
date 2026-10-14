@@ -137,6 +137,7 @@ export const settingsSchema = `
     focusSync: [String!]
     focusPreview: [String!]
     focusPlayback: [String!]
+    captureAdLib: [String!]
   }
 
 
@@ -289,6 +290,7 @@ export const settingsSchema = `
     focusSync: [String!]
     focusPreview: [String!]
     focusPlayback: [String!]
+    captureAdLib: [String!]
   }
 
 

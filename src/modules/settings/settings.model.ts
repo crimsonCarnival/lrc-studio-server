@@ -138,6 +138,7 @@ const shortcutsSchema = sub({
   focusSync: { type: [shortcutString] },
   focusPreview: { type: [shortcutString] },
   focusPlayback: { type: [shortcutString] },
+  captureAdLib: { type: [shortcutString] },
 });
 
 
