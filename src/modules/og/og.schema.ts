@@ -33,6 +33,10 @@ export const ogMetaQuerySchema = {
       // Optional on purpose: a missing path is a generic branded card, not a 400.
       path: { type: 'string', maxLength: MAX_PATH_LENGTH },
       hl: { type: 'string', maxLength: MAX_LOCALE_LENGTH },
+      // Deep-link parameters passed through to the redirect. Validated in the controller,
+      // not here, so a malformed value is dropped rather than turned into a 400 a crawler caches.
+      s: { type: 'string', maxLength: 32 },
+      loop: { type: 'string', maxLength: 32 },
     },
     additionalProperties: false,
   },
@@ -63,6 +67,10 @@ export const ogProjectPageSchema = {
     type: 'object',
     properties: {
       hl: { type: 'string', maxLength: MAX_LOCALE_LENGTH },
+      // Deep-link parameters passed through to the redirect. Validated in the controller,
+      // not here, so a malformed value is dropped rather than turned into a 400 a crawler caches.
+      s: { type: 'string', maxLength: 32 },
+      loop: { type: 'string', maxLength: 32 },
     },
     additionalProperties: false,
   },

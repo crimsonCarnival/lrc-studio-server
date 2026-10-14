@@ -132,8 +132,27 @@ export async function getOgImage(
  * by `/og/meta` + the Vercel middleware, kept because links shared before that
  * existed still point at it.
  */
+const SECONDS = /^\d{1,6}(\.\d{1,3})?$/;
+
+/**
+ * Appends the deep-link parameters the song page understands, and only those, when they
+ * are well formed: whole or decimal seconds, and a loop whose end is after its start.
+ * Anything else is dropped, never echoed, since the URL ends up in the page's HTML.
+ */
+export function withDeepLink(target: string, query: { s?: string; loop?: string } | undefined): string {
+  const params = new URLSearchParams();
+  if (query?.s && SECONDS.test(query.s)) params.set('s', query.s);
+  const [a, b, extra] = (query?.loop ?? '').split('-');
+  if (a && b && extra === undefined && SECONDS.test(a) && SECONDS.test(b) && Number(b) > Number(a)) {
+    params.set('loop', `${a}-${b}`);
+  }
+  const qs = params.toString();
+  if (!qs) return target;
+  return `${target}${target.includes('?') ? '&' : '?'}${qs}`;
+}
+
 export async function getProjectOgPage(
-  request: FastifyRequest<{ Params: { publicId: string }; Querystring: { hl?: string } }>,
+  request: FastifyRequest<{ Params: { publicId: string }; Querystring: { hl?: string; s?: string; loop?: string } }>,
   reply: FastifyReply,
 ): Promise<void> {
   const locale = localeFromRequest(request.query?.hl, request);
@@ -149,7 +168,9 @@ export async function getProjectOgPage(
   });
 
   const hidden = meta.robots !== 'index,follow';
-  const redirectUrl = hidden ? `${clientOrigin}/` : meta.canonical;
+  // A shared link can carry where to start (?s=) and an A-B loop (?loop=); they ride along
+  // to the song page. Hidden projects redirect home and keep nothing.
+  const redirectUrl = hidden ? `${clientOrigin}/` : withDeepLink(meta.canonical, request.query);
 
   const send = (status: number, body: string): void => {
     reply
