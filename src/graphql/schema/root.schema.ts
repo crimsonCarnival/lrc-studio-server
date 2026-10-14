@@ -44,6 +44,8 @@ export const rootSchema = `
     myMusicLibrary: [MusicLibraryEntry!]!
     userContentStats: ContentStats!
     adminAddictionLevels: [AddictionLevel!]!
+    # The level ladder shown to a signed-in user on their stats page.
+    addictionLevels: [AddictionLevel!]!
     xpLevelCurve(maxLevel: Int): [XpLevelThreshold!]!
     myPreferences: UserPreferences!
   }

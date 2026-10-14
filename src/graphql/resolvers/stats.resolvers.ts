@@ -27,6 +27,13 @@ export const statsResolvers = {
       return getAllLevels();
     },
 
+    // The ladder a user climbs is theirs to see: titles and thresholds only, nothing
+    // per-user. Signed-in only, since nothing outside the stats page shows it.
+    addictionLevels: async (_root: unknown, _args: unknown, context: Context) => {
+      if (!context.userId) throw Object.assign(new Error('Unauthorized'), { status: 401 });
+      return getAllLevels();
+    },
+
     // Admin dashboard reference table for the XP economy. Derived from the real
     // server formula (xpRequiredForLevel is the inverse of computeLevel), so the
     // client never has to restate the curve and cannot drift from it.
