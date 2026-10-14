@@ -136,6 +136,7 @@ export const rootSchema = `
     miniProfileBadgesEnabled: Boolean!
     miniProfileBadgeIds: [String!]!
     showActivityHeatmap: Boolean!
+    showXpProgress: Boolean!
     notifications: NotificationPreferences!
   }
 
@@ -158,6 +159,7 @@ export const rootSchema = `
     miniProfileBadgesEnabled: Boolean
     miniProfileBadgeIds: [String!]
     showActivityHeatmap: Boolean
+    showXpProgress: Boolean
     notifications: NotificationPreferencesInput
   }
 

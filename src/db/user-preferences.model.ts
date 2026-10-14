@@ -22,6 +22,9 @@ export interface IUserPreferences {
   // Privacy-by-default: the activity heatmap reveals when a user is active,
   // so it is only exposed on the public profile after an explicit opt-in.
   showActivityHeatmap: boolean;
+  // Also opt-in: the XP progress bar on the public profile. Level and XP totals stay public
+  // where they already are (leaderboard), this only hides the progress bar.
+  showXpProgress: boolean;
   notifications: INotificationPrefs;
 }
 
@@ -45,6 +48,7 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   miniProfileBadgesEnabled: { type: Boolean, default: true },
   miniProfileBadgeIds:      { type: [String], default: [] },
   showActivityHeatmap:      { type: Boolean, default: false },
+  showXpProgress:           { type: Boolean, default: false },
   notifications:           { type: notifPrefsSchema, default: () => ({}) },
 }, { timestamps: true, collection: 'user_preferences' });
 

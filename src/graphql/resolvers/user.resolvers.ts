@@ -1189,5 +1189,6 @@ export const publicUserResolvers = {
   lastOnlineAt: asViewer(userResolvers.User.lastOnlineAt),
   country: asViewer(userResolvers.User.country),
   activityHeatmap: (user: { id: string }) => getPublicActivityHeatmap(user.id),
+  showXpProgress: async (user: { id: string }) => (await getPreferences(user.id)).showXpProgress,
 };
 

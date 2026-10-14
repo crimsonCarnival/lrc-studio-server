@@ -11,6 +11,7 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
   return {
     ...prefs,
     showActivityHeatmap: prefs.showActivityHeatmap === true,
+    showXpProgress: prefs.showXpProgress === true,
     notifications: {
       ...prefs.notifications,
       streak_warning: prefs.notifications?.streak_warning !== false,

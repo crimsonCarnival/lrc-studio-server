@@ -132,6 +132,8 @@ export const userSchema = `
     progression: UserProgression
     country: String
     lastOnlineAt: String
+    # Whether the owner shows their XP progress bar to visitors. Off by default.
+    showXpProgress: Boolean!
     # Null unless the owner enabled preferences.showActivityHeatmap.
     activityHeatmap: [ActivityHeatmapDay!]
   }
