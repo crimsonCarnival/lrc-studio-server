@@ -371,6 +371,7 @@ export const userResolvers = {
         accountName: user.accountName,
         displayName: user.displayName ?? null,
         avatarUrl: user.avatarUrl ?? null,
+        coverImageUrl: user.coverImageUrl ?? null,
         bio: user.bio ?? null,
         isVerified: user.isVerified ?? false,
         isAdmin: rankOf(user.role) >= ROLE_RANK.admin,
