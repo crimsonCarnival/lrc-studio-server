@@ -8,8 +8,9 @@ process.env.MONGODB_URI ||= 'mongodb://127.0.0.1:27017/og-test';
 process.env.JWT_SECRET ||= 'test-jwt-secret-value-not-used-here';
 process.env.COOKIE_SECRET ||= 'test-cookie-secret-value-not-used-here';
 
-import { parseClientPath, buildProjectMeta, buildProfileMeta, buildListMeta } from './og.meta.service.js';
+import { parseClientPath, buildProjectMeta, buildProfileMeta, buildListMeta, buildHiddenMeta } from './og.meta.service.js';
 import { withDeepLink } from './og.controller.js';
+import { buildOgHtml } from './og.html.js';
 
 describe('parseClientPath: slug project URLs', () => {
   it('takes the project id from the last 10 characters of the segment', () => {
@@ -97,5 +98,70 @@ describe('profiles live at /:accountName', () => {
     expect(buildProfileMeta({ accountName: 'u1' }, 'en', 'https://api.example').canonical).toBe('https://www.lrcstudio.app/u1');
     expect(buildListMeta({ listId: '0123456789abcdef01234567', accountName: 'u1', name: 'L' }, 'en', 'https://api.example').canonical)
       .toBe('https://www.lrcstudio.app/u1/lists/0123456789abcdef01234567');
+  });
+});
+
+describe('project link-preview title: "Song – Artist, Synced by owner | LRC Studio"', () => {
+  const base = { publicId: 'k3x9a2c7qm', lyricLines: [] as string[] };
+  const title = (over: Record<string, unknown>, locale: 'en' | 'es' = 'en') =>
+    buildProjectMeta({ ...base, ...over }, locale, 'https://api.example').title;
+
+  it('has song, artist and owner', () => {
+    expect(title({ songName: 'Creep', songArtist: 'Radiohead', ownerAccountName: '32blunts' }))
+      .toBe('Creep – Radiohead, Synced by 32blunts | LRC Studio');
+  });
+
+  it('keeps the derived artist display (feat.) as is', () => {
+    expect(title({ songName: 'Song', songArtist: 'Drake feat. Rihanna & Kanye', ownerAccountName: 'u1' }))
+      .toBe('Song – Drake feat. Rihanna & Kanye, Synced by u1 | LRC Studio');
+  });
+
+  it('drops the artist when there is none', () => {
+    expect(title({ songName: 'Creep', ownerAccountName: '32blunts' })).toBe('Creep, Synced by 32blunts | LRC Studio');
+  });
+
+  it('drops the credit without an owner (legacy URL fallback)', () => {
+    expect(title({ songName: 'Creep', songArtist: 'Radiohead' })).toBe('Creep – Radiohead | LRC Studio');
+    expect(title({ songName: 'Creep' })).toBe('Creep | LRC Studio');
+  });
+
+  it('falls back from song name to the project title, then to the site name', () => {
+    expect(title({ title: 'My Mix', ownerAccountName: 'u1' })).toBe('My Mix, Synced by u1 | LRC Studio');
+    expect(title({ ownerAccountName: 'u1' })).toBe('LRC Studio, Synced by u1 | LRC Studio');
+  });
+
+  it('is localised', () => {
+    expect(title({ songName: 'Creep', songArtist: 'Radiohead', ownerAccountName: '32blunts' }, 'es'))
+      .toBe('Creep – Radiohead, Sincronizado por 32blunts | LRC Studio');
+  });
+
+  it('uses the account name as is, without @', () => {
+    expect(title({ songName: 'S', ownerAccountName: 'a.b_c-d' })).toBe('S, Synced by a.b_c-d | LRC Studio');
+  });
+
+  it('keeps the plain subject in the image alt', () => {
+    const m = buildProjectMeta({ ...base, songName: 'Creep', songArtist: 'Radiohead', ownerAccountName: 'u1' }, 'en', 'https://api.example');
+    expect(m.image.alt).toBe('Creep on LRC Studio');
+  });
+
+  it('escapes a hostile song name in <title>, og:title and twitter:title (by the renderer, not by string surgery)', () => {
+    const meta = buildProjectMeta({ ...base, songName: '"><script>alert(1)</script>', songArtist: 'A & B', ownerAccountName: 'u1' }, 'en', 'https://api.example');
+    expect(meta.title).toContain('<script>');
+    const html = buildOgHtml({ meta, redirectUrl: 'https://www.lrcstudio.app/', nonce: 'n', lang: 'en', linkLabel: 'x' });
+    expect(html).not.toContain('<script>alert(1)</script>');
+    const escaped = '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt; – A &amp; B, Synced by u1 | LRC Studio';
+    expect(html).toContain(`<title>${escaped}</title>`);
+    expect(html).toContain(`<meta property="og:title" content="${escaped}">`);
+    expect(html).toContain(`<meta name="twitter:title" content="${escaped}">`);
+  });
+
+  it('does not touch profile or list titles', () => {
+    expect(buildProfileMeta({ accountName: 'u1', displayName: 'Person' }, 'en', 'https://api.example').title).toBe('Person (@u1) — LRC Studio');
+    expect(buildListMeta({ listId: '0123456789abcdef01234567', accountName: 'u1', name: 'My List' }, 'en', 'https://api.example').title).toBe('My List — LRC Studio');
+  });
+
+  it('the hidden meta carries no song, artist or owner', () => {
+    const hidden = JSON.stringify(buildHiddenMeta('en'));
+    expect(hidden).not.toMatch(/Synced by|Sincronizado por|Creep|Radiohead|32blunts/);
   });
 });

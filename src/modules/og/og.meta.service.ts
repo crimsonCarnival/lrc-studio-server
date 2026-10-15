@@ -299,9 +299,12 @@ export function buildProjectMeta(
   const artist = (input.songArtist || '').trim();
   const subject = song || SITE_NAME;
 
-  const title = artist
-    ? `${subject} ${TITLE_SEPARATOR} ${artist}${strings.titleSuffix}`
-    : `${subject}${strings.titleSuffix}`;
+  // `Song – Artist, Synced by owner | LRC Studio`; each part is dropped when its data is missing.
+  // Mirrors the web client's tab title so a pasted link and the unfurl read the same.
+  const owner = (input.ownerAccountName || '').trim();
+  const head = artist ? `${subject} ${TITLE_SEPARATOR} ${artist}` : subject;
+  const credit = owner ? interpolate(strings.syncedBy, { name: owner }) : '';
+  const title = `${[head, credit].filter(Boolean).join(', ')}${strings.projectTitleSuffix}`;
 
   const lyricSample = input.lyricLines
     .map(line => line.trim())
