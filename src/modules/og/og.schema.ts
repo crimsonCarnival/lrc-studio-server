@@ -36,8 +36,6 @@ export const ogMetaQuerySchema = {
       // Start time passed through to the redirect. Validated in the controller, not here,
       // so a malformed value is dropped rather than turned into a 400 a crawler caches.
       s: { type: 'string', maxLength: 32 },
-      // Playlist the viewer arrived from; same treatment as `s`.
-      list: { type: 'string', maxLength: 64 },
     },
     additionalProperties: false,
   },
@@ -71,6 +69,8 @@ export const ogProjectPageSchema = {
       // Start time passed through to the redirect. Validated in the controller, not here,
       // so a malformed value is dropped rather than turned into a 400 a crawler caches.
       s: { type: 'string', maxLength: 32 },
+      // Playlist the viewer arrived from; same treatment as `s`.
+      list: { type: 'string', maxLength: 64 },
     },
     additionalProperties: false,
   },
