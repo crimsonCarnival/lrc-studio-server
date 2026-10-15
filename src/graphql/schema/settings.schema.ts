@@ -92,6 +92,8 @@ export const settingsSchema = `
     timestampPrecision: String
     defaultFilenamePattern: String
     includeMetadata: Boolean
+    # false when never set.
+    includeFeaturedInTitle: Boolean
     stripEmptyLines: Boolean
     normalizeTimestamps: Boolean
     wordTimestampPrecision: String
@@ -246,6 +248,8 @@ export const settingsSchema = `
     wordTimestampPrecision: String
     defaultFilenamePattern: String
     includeMetadata: Boolean
+    # false when never set.
+    includeFeaturedInTitle: Boolean
     stripEmptyLines: Boolean
     normalizeTimestamps: Boolean
   }

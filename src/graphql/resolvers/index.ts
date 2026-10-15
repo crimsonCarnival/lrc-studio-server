@@ -42,6 +42,7 @@ export const resolvers = {
   PublicUser: publicUserResolvers,
   FollowUser: followUserResolvers,
   Project:  projectResolvers.Project,
+  ExportSettings: settingsResolvers.ExportSettings,
   ProjectMetadata: projectResolvers.ProjectMetadata,
   Lyrics:   lyricsResolvers.Lyrics,
   Upload:   uploadResolvers.Upload,

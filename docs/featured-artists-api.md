@@ -100,7 +100,8 @@ Pure (no auth needed), input capped at 1000 characters each. Use it to pre-fill 
 
 **`POST /lyrics/compile/lrc`** — new optional fields:
 - `metadata.artists`: `[{ name, role }]`. When present, `[ar:]` = `formatArtistDisplay(credits)` (overrides `metadata.ar`).
-- `includeFeaturedInTitle` (boolean, **default `false`**): when `true`, `[ti:]` becomes `Title (feat. A & B)`. Off by default so `[ti:]` stays the plain title; suggest exposing it as an export setting.
+- `includeFeaturedInTitle` (boolean): when `true`, `[ti:]` becomes `Title (feat. A & B)`; when `false`, `[ti:]` stays the plain title. **If the body omits it**, a signed-in request uses the user's saved `settings.export.includeFeaturedInTitle`; anonymous requests and users who never set it get `false`. An explicit `true`/`false` in the body always wins. The request needs the session cookie for the saved setting to apply.
+- **Persisted setting:** `settings { export { includeFeaturedInTitle } }` (`Boolean`, reads as `false` when never set) and `updateSettings(input: { export: { includeFeaturedInTitle: true } })`. Like the other export settings, it follows the user across devices.
 - Invalid credits → `422 { error, code }` with the codes above. Without `metadata.artists` the old `ar` / `ti` strings pass through unchanged.
 
 **`POST /lyrics/parse`** — response now also includes (for `.lrc` / `.txt`, not `.srt`):
