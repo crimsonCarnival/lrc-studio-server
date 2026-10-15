@@ -5,6 +5,7 @@ import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import { withTransaction, TransactionError } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
 import User from '../../db/user.model.js';
+import { projectPath } from '../../utils/project-slug.js';
 import Upload from '../uploads/upload.model.js';
 import { cleanTitle, fallbackTitle, hasProjectIdentity, PROJECT_TITLE_MAX } from './project-identity.js';
 import { getIO } from '../../socket/socket.manager.js';
@@ -191,9 +192,10 @@ export async function cloneProject(
       });
     } catch { /* socket not ready */ }
 
+    const forker = await User.findById(newUserId).select('accountName').session(session).lean<{ accountName?: string }>();
     return {
       publicId: newProject.publicId,
-      url: `/s/${newProject.publicId}`,
+      url: projectPath(newProject, forker?.accountName),
     };
     }, { operation: 'cloneProject', sourcepublicId, userId: newUserId });
   } catch (err) {

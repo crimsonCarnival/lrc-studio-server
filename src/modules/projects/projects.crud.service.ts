@@ -1,5 +1,6 @@
 import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
 import { migrateLinesToSections } from '../lyrics/lyrics.model.js';
+import { projectPath } from '../../utils/project-slug.js';
 import { sanitizeUrl } from '../../utils/sanitize.js';
 import mongoose from 'mongoose';
 import Project from './project.model.js';
@@ -208,7 +209,8 @@ export async function createProject(
     project.lyricsId = lyricsDoc._id;
     await project.save({ session });
 
-    return { publicId: project.publicId, url: `/s/${project.publicId}` };
+    const owner = await User.findById(userId).select('accountName').session(session).lean<{ accountName?: string }>();
+    return { publicId: project.publicId, url: projectPath(project, owner?.accountName) };
   }, { operation: 'createProject', userId: userId ?? null });
 
   if ('publicId' in result) {
