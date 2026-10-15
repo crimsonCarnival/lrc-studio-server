@@ -115,6 +115,7 @@ export const rootSchema = `
     email: String
     bio: String
     avatarUrl: String
+    coverImageUrl: String
   }
 
   type NotificationPreferences {

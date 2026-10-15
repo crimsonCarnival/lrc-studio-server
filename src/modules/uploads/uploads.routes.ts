@@ -24,6 +24,15 @@ export default async function uploadRoutes(fastify: FastifyInstance): Promise<vo
       }
     }
   }, uploadController.coverSignature);
+  fastify.post('/profile-cover-signature', {
+    preHandler: [fastify.requireAuth],
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 hour'
+      }
+    }
+  }, uploadController.profileCoverSignature);
   // Media reads and the create/delete writes are served by GraphQL
   // (uploads / upload / saveMedia / deleteMedia). updateMedia has no GraphQL
   // equivalent yet, so it stays here.

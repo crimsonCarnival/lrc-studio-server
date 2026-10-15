@@ -144,6 +144,48 @@ export async function generateCoverSignature(data: Record<string, unknown>, user
   };
 }
 
+const PROFILE_COVER_FOLDER = 'lyrics-syncer/profile-covers';
+const MAX_PROFILE_COVER_SIZE = 5 * 1024 * 1024;
+// 1200x400 = the 3:1 ratio the client's crop step outputs. c_fill (not c_limit, like the
+// generic project-cover endpoint) locks the stored asset to exactly that size, since the
+// client has already cropped to this ratio — this just guards against a tampered request.
+const PROFILE_COVER_TRANSFORMATION = 'c_fill,w_1200,h_400,f_webp,q_auto';
+
+export async function generateProfileCoverSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
+  if (!isStorageConfigured()) {
+    return { error: 'Upload service not configured', status: 503 };
+  }
+
+  const { fileSize, recaptchaToken } = data as { fileSize?: number; recaptchaToken?: string };
+  if (!(await verifyRecaptcha(recaptchaToken, ip))) {
+    return { error: 'recaptcha_failed', status: 403 };
+  }
+
+  if (fileSize && fileSize > MAX_PROFILE_COVER_SIZE) {
+    return { error: 'Cover image too large. Max: 5 MB', status: 400 };
+  }
+
+  const apiSecret = process.env.CLOUDINARY_API_SECRET as string;
+  const timestamp = Math.round(Date.now() / 1000);
+  const userFolder = `${PROFILE_COVER_FOLDER}/${userId}`;
+  const params = {
+    timestamp,
+    folder: userFolder,
+    transformation: PROFILE_COVER_TRANSFORMATION,
+  };
+  const signature = cloudinary.utils.api_sign_request(params, apiSecret);
+
+  return {
+    signature,
+    timestamp,
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    folder: userFolder,
+    resourceType: 'image',
+    transformation: PROFILE_COVER_TRANSFORMATION,
+  };
+}
+
 export async function listMedia(userId: string, { limit = 50, offset = 0 }: { limit?: unknown; offset?: unknown } = {}): Promise<Record<string, unknown>> {
   const clampedLimit = Math.min(Math.max(1, Number(limit)), 100);
   const clampedOffset = Math.max(0, Number(offset));
