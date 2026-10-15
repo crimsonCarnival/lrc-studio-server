@@ -12,6 +12,8 @@ import { requirePermission, requireStaff } from './auth-guards.js';
 import { hasPermission, rankOf, ROLE_RANK } from '../../shared/permissions.js';
 import { logAdminAction, toggleShadowBan } from '../../modules/admin/admin.service.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
+import { findUserByAccountName, isAccountNameInHistoryOfOther, recordAccountNameChange } from '../../modules/users/account-name.service.js';
+import { isReservedAccountName } from '../../modules/auth/auth.validation.js';
 import EmailHistory from '../../db/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
 import Follow from '../../db/follow.model.js';
@@ -285,7 +287,9 @@ export const userResolvers = {
       { accountName, asVisitor }: { accountName: string; asVisitor?: boolean | null },
       context: Context
     ) => {
-      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
+      // Old account names keep resolving; the payload carries the current one so
+      // the client can redirect to it.
+      const user = await findUserByAccountName<IUser>(accountName);
       if (!user || user.isDeleted || user.ban?.active) return null;
 
       // asVisitor: project the profile exactly as an anonymous visitor sees it
@@ -514,9 +518,7 @@ export const userResolvers = {
     publicBadgeDefinitions: () => listPublicBadgeDefs(),
 
     userShowcase: async (_root: unknown, { accountName }: { accountName: string }, _context: Context) => {
-      const user = await User.findOne({ accountName: accountName.toLowerCase() })
-        .select('badges showcasedBadges')
-        .lean<IUser>();
+      const user = await findUserByAccountName<IUser>(accountName, 'badges showcasedBadges');
       if (!user) return [];
 
       const ownedMap = new Map<string, IUserBadge>(
@@ -556,7 +558,7 @@ export const userResolvers = {
       { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING' | 'FRIENDS'; offset?: number },
       context: Context
     ) => {
-      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
+      const user = await findUserByAccountName<IUser>(accountName);
       if (!user || user.isDeleted || user.ban?.active) return { users: [], total: 0 };
       const isOwner = context.userId && context.userId === user._id.toString();
       const prefs = await getPreferences(user._id.toString());
@@ -693,12 +695,14 @@ export const userResolvers = {
         }
         const normalised = accountName.toLowerCase().trim();
         if (!/^[a-z0-9_-]{3,30}$/.test(normalised)) throw new Error('accountName_invalid');
-        const existing = await User.findOne({ accountName: normalised });
+        const existing = (await User.findOne({ accountName: normalised }))
+          || isReservedAccountName(normalised)
+          || (await isAccountNameInHistoryOfOther(normalised, user._id));
         if (existing) throw Object.assign(new Error('accountName_taken'), { extensions: { code: 'accountName_taken', status: 409 } });
         const previousAccountName = user.accountName;
         user.accountName = normalised;
         user.lastAccountNameChangedAt = new Date();
-        AccountNameHistory.create({ userId: user._id, from: previousAccountName, to: normalised }).catch(() => {});
+        if (previousAccountName) await recordAccountNameChange(user._id, previousAccountName, normalised);
       }
 
       if (displayName !== undefined) {

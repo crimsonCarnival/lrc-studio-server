@@ -27,6 +27,7 @@ import { getBlockedSet } from '../../modules/blocks/block.service.js';
 import type { SearchSort } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
+import { projectSlug } from '../../utils/project-slug.js';
 import { registerProjectView } from '../../modules/projects/project-view.service.js';
 
 export const projectResolvers = {
@@ -97,7 +98,11 @@ export const projectResolvers = {
     // Delegates to the full service: verifies reCAPTCHA, creates Lyrics doc, links lyricsId
     createProject: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {
       const result = await createProjectService(input, context.userId, context.ip || '');
-      if ('error' in result) throw new Error(result.error ?? 'Unknown error');
+      if ('error' in result) {
+        throw Object.assign(new Error(result.error ?? 'Unknown error'), {
+          extensions: { code: result.code ?? 'unknown_error', status: result.status ?? 500 },
+        });
+      }
       const created = result as { publicId: string; url: string };
       if (context.userId) {
         const meta = input.metadata as {
@@ -134,6 +139,7 @@ export const projectResolvers = {
       if ('error' in result) {
         const statusErr = new Error(result.error ?? 'Unknown error') as Error & { status?: number };
         statusErr.status = result.status;
+        if (result.code) Object.assign(statusErr, { extensions: { code: result.code, status: result.status } });
         throw statusErr;
       }
       const patched = result as { project: unknown };
@@ -359,6 +365,8 @@ export const projectResolvers = {
 
   Project: {
     id: (project: IProject) => project._id?.toString() || project.id || null,
+    // Stored for every migrated row; computed for anything the backfill hasn't reached yet.
+    slug: (project: IProject) => project.slug || projectSlug(project),
     createdAt: (project: IProject) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
     updatedAt: (project: IProject) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
     isStarredByMe: async (project: IProject, _args: Record<string, unknown>, ctx: Context) => {

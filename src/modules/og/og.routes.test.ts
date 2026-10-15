@@ -86,6 +86,20 @@ describe('GET /og/meta as a crawler', () => {
     expect(body.image.url).toContain('/og/image/project/pubsong001.png');
   });
 
+  it('resolves a slug URL by id alone and canonicalises it, whatever slug or account the link had', async () => {
+    await seedPublished();
+    const canonical = 'https://www.lrcstudio.app/crawlerowner/projects/m83-midnight-city-pubsong001';
+    for (const path of [
+      '/crawlerowner/projects/m83-midnight-city-pubsong001',
+      '/crawlerowner/projects/m83-midnight-city-pubsong001/edit',
+      '/old-name/projects/an-outdated-slug-pubsong001',
+      '/project/pubsong001',
+    ]) {
+      const res = await asCrawler('/og/meta?path=' + encodeURIComponent(path));
+      expect(res.json().canonical).toBe(canonical);
+    }
+  });
+
   it('gives an unpublished song the same bytes as a nonexistent one', async () => {
     await seedPublished();
     const hidden = await asCrawler('/og/meta?path=%2Fproject%2Fprvsong001');
@@ -198,7 +212,8 @@ describe('GET /og/project/:publicId (legacy crawler page)', () => {
     await seedPublished();
     const res = await asCrawler('/og/project/pubsong001?s=42.5');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('/project/pubsong001?s=42.5');
+    // Redirects to the canonical slug URL, keeping the seek time.
+    expect(res.body).toContain('/crawlerowner/projects/m83-midnight-city-pubsong001?s=42.5');
 
     const junk = await asCrawler('/og/project/pubsong001?s=%3Cscript%3E');
     expect(junk.statusCode).toBe(200);

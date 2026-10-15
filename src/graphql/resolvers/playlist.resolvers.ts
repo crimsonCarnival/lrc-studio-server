@@ -1,3 +1,4 @@
+import { findUserByAccountName } from '../../modules/users/account-name.service.js';
 import mongoose from 'mongoose';
 import Playlist from '../../db/playlist.model.js';
 import type { IPlaylist } from '../../db/playlist.model.js';
@@ -104,7 +105,7 @@ export const playlistResolvers = {
     },
 
     playlists: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
-      const user = await User.findOne({ accountName: accountName.toLowerCase() }).lean<LeanUser>();
+      const user = await findUserByAccountName<LeanUser>(accountName);
       if (!user || user.isDeleted || user.ban?.active) return [];
       const isOwner = context.userId && context.userId === user._id.toString();
       const filter: { userId: mongoose.Types.ObjectId; isPublic?: boolean } = { userId: user._id };

@@ -167,6 +167,7 @@ export interface ProjectListItem {
   id: string;
   publicId: string;
   title?: string;
+  slug?: string;
   metadata?: ProjectMetadata;
   coverImage?: string;
   upload?: UploadInfo | null;

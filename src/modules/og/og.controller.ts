@@ -133,22 +133,25 @@ export async function getOgImage(
  * existed still point at it.
  */
 const SECONDS = /^\d{1,6}(\.\d{1,3})?$/;
+/** `?list=` carries the playlist the viewer arrived from (a Mongo id or nanoid-style token). */
+const LIST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Appends the start time (?s=, whole or decimal seconds) the song page understands, and
  * only when it is well formed. Anything else is dropped, never echoed, since the URL ends
  * up in the page's HTML.
  */
-export function withDeepLink(target: string, query: { s?: string } | undefined): string {
+export function withDeepLink(target: string, query: { s?: string; list?: string } | undefined): string {
   const params = new URLSearchParams();
   if (query?.s && SECONDS.test(query.s)) params.set('s', query.s);
+  if (query?.list && LIST_ID.test(query.list)) params.set('list', query.list);
   const qs = params.toString();
   if (!qs) return target;
   return `${target}${target.includes('?') ? '&' : '?'}${qs}`;
 }
 
 export async function getProjectOgPage(
-  request: FastifyRequest<{ Params: { publicId: string }; Querystring: { hl?: string; s?: string } }>,
+  request: FastifyRequest<{ Params: { publicId: string }; Querystring: { hl?: string; s?: string; list?: string } }>,
   reply: FastifyReply,
 ): Promise<void> {
   const locale = localeFromRequest(request.query?.hl, request);

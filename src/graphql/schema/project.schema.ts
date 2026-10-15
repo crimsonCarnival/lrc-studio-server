@@ -3,6 +3,8 @@ export const projectSchema = `
     id: ID!
     publicId: String!
     title: String
+    # Readable URL slug derived from artist + song name (else title); may be empty.
+    slug: String!
     user: User
     upload: Upload
     lyrics: Lyrics

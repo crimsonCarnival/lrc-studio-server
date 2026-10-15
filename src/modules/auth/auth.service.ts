@@ -12,7 +12,7 @@ import BannedDevice from '../admin/bannedDevice.model.js';
 import UserDevice from './userDevice.model.js';
 import { v2 as cloudinary } from 'cloudinary';
 import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.js';
-import AccountNameHistory from '../../db/account-name-history.model.js';
+import { isAccountNameInHistoryOfOther, recordAccountNameChange } from '../users/account-name.service.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
 import { createOnce, resolveSticky } from '../notifications/notifications.service.js';
 import Passkey from '../../db/passkey.model.js';
@@ -195,6 +195,8 @@ export async function register(
     if (!isValidAccountName(accountName) || isReservedAccountName(accountName)) {
       return err('accountName_taken', 409);
     }
+    // A former name of another user is never reissued: old links would land on a stranger.
+    if (await isAccountNameInHistoryOfOther(accountName)) return err('accountName_taken', 409);
   }
 
   const query: Record<string, unknown>[] = [];
@@ -569,11 +571,13 @@ export async function updateProfile(
       return { error: 'accountName_taken', code: 'accountName_taken', status: 409 };
     }
     const existing = await User.findOne({ accountName: normalised });
-    if (existing) return { error: 'accountName_taken', code: 'accountName_taken', status: 409 };
+    if (existing || await isAccountNameInHistoryOfOther(normalised, user._id)) {
+      return { error: 'accountName_taken', code: 'accountName_taken', status: 409 };
+    }
     const previousAccountName = user.accountName;
     user.accountName = normalised;
     user.lastAccountNameChangedAt = new Date();
-    AccountNameHistory.create({ userId: user._id, from: previousAccountName, to: normalised }).catch(() => {});
+    if (previousAccountName) await recordAccountNameChange(user._id, previousAccountName, normalised);
   }
 
   if (displayName !== undefined) {
