@@ -16,7 +16,8 @@ import {
 export default async function lyricsRoutes(fastify: FastifyInstance) {
   // --- Parse / Compile (prefix: /lyrics) -------------------------------
   fastify.post('/parse', { schema: parseSchema }, lyricsController.parse);
-  fastify.post('/compile/lrc', { schema: compileLrcSchema }, lyricsController.compileLrc);
+  // optionalAuth: a signed-in user's saved export settings supply defaults the body omits.
+  fastify.post('/compile/lrc', { schema: compileLrcSchema, preHandler: [fastify.optionalAuth] }, lyricsController.compileLrc);
   fastify.post('/compile/srt', { schema: compileSrtSchema }, lyricsController.compileSrt);
   fastify.post('/infer-end-times', { schema: inferEndTimesSchema }, lyricsController.inferEnd);
 

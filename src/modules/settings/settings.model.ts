@@ -90,6 +90,8 @@ const exportSchema = sub({
   downloadFormat: { type: String, enum: ['lrc', 'srt', 'txt'] },
   defaultFilenamePattern: { type: String, enum: ['fixed', 'media', 'title', 'date'] },
   includeMetadata: Boolean,
+  // Appends "(feat. …)" to [ti:] in LRC exports. Absent = false; no default stored.
+  includeFeaturedInTitle: Boolean,
   stripEmptyLines: Boolean,
   normalizeTimestamps: Boolean,
   wordTimestampPrecision: { type: String, enum: ['hundredths', 'thousandths', 'milliseconds', 'seconds'] },
