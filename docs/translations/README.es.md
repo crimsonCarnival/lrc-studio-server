@@ -2,7 +2,7 @@
 
 El backend de [LRC Studio](https://www.lrcstudio.app), una plataforma de sincronización de letras. Una API en Fastify 5 que sirve REST, GraphQL y WebSockets sobre MongoDB, además de la canalización de transcripción con IA que impulsa el Estampado Automático.
 
-**[Aplicación en vivo](https://www.lrcstudio.app)** · [GitHub](https://github.com/crimsonCarnival/lrc-studio) · [README del cliente](../../../client/README.md)
+**[Aplicación en vivo](https://www.lrcstudio.app)** · [GitHub](https://github.com/crimsonCarnival/lrc-studio) · [README del cliente](https://github.com/crimsonCarnival/lrc-studio-client#readme)
 
 > Idiomas: [English (Inglés)](../../README.md)
 
