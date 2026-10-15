@@ -100,6 +100,22 @@ describe('GET /og/meta as a crawler', () => {
     }
   });
 
+  it('titles a project "Song – Artist, Synced by owner | LRC Studio" on both crawler surfaces', async () => {
+    await seedPublished();
+    const title = 'Midnight City – M83, Synced by crawlerowner | LRC Studio';
+
+    const meta = await asCrawler('/og/meta?path=' + encodeURIComponent('/crawlerowner/projects/m83-midnight-city-pubsong001'));
+    expect(meta.json().title).toBe(title);
+
+    const page = await asCrawler('/og/project/pubsong001');
+    expect(page.body).toContain(`<title>${title}</title>`);
+    expect(page.body).toContain(`<meta property="og:title" content="${title}">`);
+    expect(page.body).toContain(`<meta name="twitter:title" content="${title}">`);
+
+    const es = await asCrawler('/og/meta?hl=es&path=' + encodeURIComponent('/project/pubsong001'));
+    expect(es.json().title).toBe('Midnight City – M83, Sincronizado por crawlerowner | LRC Studio');
+  });
+
   it('gives an unpublished song the same bytes as a nonexistent one', async () => {
     await seedPublished();
     const hidden = await asCrawler('/og/meta?path=%2Fproject%2Fprvsong001');

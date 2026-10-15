@@ -24,6 +24,10 @@ export const OG_LOCALES: readonly OgLocale[] = ['en', 'es'] as const;
 export type OgStrings = {
   /** Appended to every resource title. */
   titleSuffix: string;
+  /** Appended to a project title instead (`Song – Artist, Synced by owner | LRC Studio`). */
+  projectTitleSuffix: string;
+  /** Project title credit. `{name}` is the owner's account name. */
+  syncedBy: string;
   genericTitle: string;
   genericDescription: string;
   homeTitle: string;
@@ -51,6 +55,8 @@ export const SITE_NAME = 'LRC Studio';
 const STRINGS: Record<OgLocale, OgStrings> = {
   en: {
     titleSuffix: ' — LRC Studio',
+    projectTitleSuffix: ' | LRC Studio',
+    syncedBy: 'Synced by {name}',
     genericTitle: 'LRC Studio — Sync lyrics to music',
     genericDescription:
       'Create, time and share synced lyrics. Import a song, stamp every line, export LRC, SRT or plain text.',
@@ -72,6 +78,8 @@ const STRINGS: Record<OgLocale, OgStrings> = {
   },
   es: {
     titleSuffix: ' — LRC Studio',
+    projectTitleSuffix: ' | LRC Studio',
+    syncedBy: 'Sincronizado por {name}',
     genericTitle: 'LRC Studio — Sincroniza letras con la música',
     genericDescription:
       'Crea, cronometra y comparte letras sincronizadas. Importa una canción, marca cada línea y exporta LRC, SRT o texto.',
