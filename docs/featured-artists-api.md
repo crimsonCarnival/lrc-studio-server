@@ -124,4 +124,4 @@ Malformed rows (empty marker, unbalanced bracket, > 10 names…) are never appli
 ## 7. Notes for the client task
 - The music-library autofill (`myMusicLibrary`) now stores **primary** artists only.
 - Lyrics search (`/lyrics/search`, `/lyrics/extract`) and track-metadata lookup take a single artist string: send the **primary** names (`joinNames` of the primaries), not the display string.
-- Atlas Search: no index change is needed. `projects_search` already indexes `metadata.songArtist`, which carries every artist, featured included.
+- Atlas Search: no index change is needed. the search paths already include `metadata.songArtist`, which carries every artist, featured included (the regex fallback uses it too).
