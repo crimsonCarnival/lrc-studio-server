@@ -4,6 +4,7 @@ import Playlist from '../../db/playlist.model.js';
 import User from '../../db/user.model.js';
 import { getEnv } from '../../config/env.js';
 import { projectPath } from '../../utils/project-slug.js';
+import { isReservedAccountName } from '../auth/auth.validation.js';
 import { findUserByAccountName } from '../users/account-name.service.js';
 import {
   OG_IMAGE_HEIGHT,
@@ -224,6 +225,9 @@ export function parseClientPath(rawPath: string | null | undefined): ParsedOgRou
   if (segments.length === 1) {
     if (first === 'explore') return { kind: 'explore' };
     if (first === 'leaderboard') return { kind: 'leaderboard' };
+    // /:accountName is a profile. Every route segment the client serves is a
+    // reserved account name, so this cannot swallow one of them.
+    if (ACCOUNT_NAME.test(first) && !isReservedAccountName(first)) return { kind: 'profile', accountName: first };
     return { kind: 'unknown' };
   }
 
@@ -248,6 +252,8 @@ export function parseClientPath(rawPath: string | null | undefined): ParsedOgRou
     return { kind: 'list', accountName: first, listId: third };
   }
 
+  // Legacy /profile/:accountName[/lists/:id]. Still parsed so old shared links
+  // resolve; the canonical they report is the bare /:accountName form.
   if (first === 'profile' && segments.length === 2 && ACCOUNT_NAME.test(second)) {
     return { kind: 'profile', accountName: second };
   }
@@ -347,7 +353,7 @@ export function buildProfileMeta(
     description: bio
       ? truncateAtWord(bio)
       : truncateAtWord(interpolate(strings.profileFallbackDescription, { name })),
-    canonical: `${getClientOrigin()}/profile/${input.accountName}`,
+    canonical: `${getClientOrigin()}/${input.accountName}`,
     ...baseMeta(locale),
     robots: ROBOTS_INDEX,
     image: resourceImage(ogImageEndpoint(apiOrigin, 'profile', input.accountName), name, locale),
@@ -378,7 +384,7 @@ export function buildListMeta(
     type: 'article',
     title: `${name}${strings.titleSuffix}`,
     description: truncateAtWord(description || strings.listFallbackDescription),
-    canonical: `${getClientOrigin()}/profile/${input.accountName}/lists/${input.listId}`,
+    canonical: `${getClientOrigin()}/${input.accountName}/lists/${input.listId}`,
     ...baseMeta(locale),
     robots: ROBOTS_INDEX,
     image: resourceImage(ogImageEndpoint(apiOrigin, 'list', input.listId), name, locale),

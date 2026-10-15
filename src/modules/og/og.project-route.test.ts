@@ -8,7 +8,7 @@ process.env.MONGODB_URI ||= 'mongodb://127.0.0.1:27017/og-test';
 process.env.JWT_SECRET ||= 'test-jwt-secret-value-not-used-here';
 process.env.COOKIE_SECRET ||= 'test-cookie-secret-value-not-used-here';
 
-import { parseClientPath, buildProjectMeta } from './og.meta.service.js';
+import { parseClientPath, buildProjectMeta, buildProfileMeta, buildListMeta } from './og.meta.service.js';
 import { withDeepLink } from './og.controller.js';
 
 describe('parseClientPath: slug project URLs', () => {
@@ -70,5 +70,32 @@ describe('withDeepLink', () => {
   it('keeps a valid seek time and list, drops junk', () => {
     expect(withDeepLink('https://x/y', { s: '12', list: 'abc_DEF-1' })).toBe('https://x/y?s=12&list=abc_DEF-1');
     expect(withDeepLink('https://x/y', { s: '<x>', list: 'a b' })).toBe('https://x/y');
+  });
+});
+
+describe('profiles live at /:accountName', () => {
+  it('parses a bare account name as a profile', () => {
+    expect(parseClientPath('/32blunts')).toEqual({ kind: 'profile', accountName: '32blunts' });
+    expect(parseClientPath('/a.b_c-d?hl=es')).toEqual({ kind: 'profile', accountName: 'a.b_c-d' });
+  });
+
+  it('never treats a client route as a profile', () => {
+    for (const r of ['admin', 'settings', 'library', 'feed', 'home', 'search', 'notifications', 'projects', 'profile', 'og']) {
+      expect(parseClientPath('/' + r).kind, r).toBe('unknown');
+    }
+    expect(parseClientPath('/explore').kind).toBe('explore');
+    expect(parseClientPath('/leaderboard').kind).toBe('leaderboard');
+  });
+
+  it('still parses the legacy /profile/... URLs', () => {
+    expect(parseClientPath('/profile/someone')).toEqual({ kind: 'profile', accountName: 'someone' });
+    expect(parseClientPath('/profile/someone/lists/0123456789abcdef01234567'))
+      .toEqual({ kind: 'list', accountName: 'someone', listId: '0123456789abcdef01234567' });
+  });
+
+  it('reports bare canonicals', () => {
+    expect(buildProfileMeta({ accountName: 'u1' }, 'en', 'https://api.example').canonical).toBe('https://www.lrcstudio.app/u1');
+    expect(buildListMeta({ listId: '0123456789abcdef01234567', accountName: 'u1', name: 'L' }, 'en', 'https://api.example').canonical)
+      .toBe('https://www.lrcstudio.app/u1/lists/0123456789abcdef01234567');
   });
 });
