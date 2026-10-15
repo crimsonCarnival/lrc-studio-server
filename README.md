@@ -30,6 +30,10 @@ The backend for [LRC Studio](https://www.lrcstudio.app), a lyrics synchronizatio
   - [Auto Stamp (ASR)](#auto-stamp-asr)
   - [Lyrics Providers](#lyrics-providers)
   - [Projects & Lyrics Persistence](#projects--lyrics-persistence)
+  - [Project URLs & Slugs](#project-urls--slugs)
+  - [Featured Artists](#featured-artists)
+  - [Account Names](#account-names)
+  - [Link Previews (Open Graph)](#link-previews-open-graph)
   - [Gamification](#gamification)
   - [Background Jobs](#background-jobs)
 - [Getting Started](#getting-started)
@@ -64,14 +68,15 @@ Layering within a module is strict — routes register and declare `preHandler` 
 |---|---|
 | `auth` | Register, login, passkey (WebAuthn), Google OAuth OTT exchange, sessions, refresh-token rotation, appeals, env-based superadmin bootstrap |
 | `password-reset` / `email-verification` | Transactional token flows, separate from `auth` |
-| `projects` | Project CRUD, clone/fork, share, star, boost, forks-enabled toggle |
+| `projects` | Project CRUD, clone/fork, share, star, boost, forks-enabled toggle, readable URL slugs, the “a project must be nameable” rule |
+| `artists` | Per-user artist records, own-library autocomplete, and the legacy-artist-string migration (see [Featured Artists](#featured-artists)) |
 | `lyrics` | Parse LRC/SRT/TXT, compile to LRC/SRT, bulk-shift, global offset, duplicate detection, end-time inference |
 | `asr` | **Auto Stamp** — Groq Whisper transcription, yt-dlp YouTube audio extraction, lyric/transcript alignment, job store |
 | `genius` | Lyrics search and import via a multi-provider chain (see [Lyrics Providers](#lyrics-providers)) |
 | `uploads` | Cloudinary signed URLs for audio/avatar/cover, media records, YouTube URL persistence |
 | `song-metadata` | Track metadata lookup (Spotify API as provider, Last.fm as fallback) |
 | `youtube` | oEmbed metadata fetch |
-| `settings` | Per-user settings with per-path diff sync |
+| `settings` | Per-user settings with per-path diff sync; partial updates merge field by field |
 | `admin` | Ban/unban, appeals, IP & device blocking, role assignment, per-role permission presets, audit logs, shadow ban |
 | `blocks` | User-to-user blocking (distinct from admin network blocks) |
 | `requests` | Staff proposal workflow — GraphQL-only, payload-whitelisted, atomic claim on approval |
@@ -82,9 +87,9 @@ Layering within a module is strict — routes register and declare `preHandler` 
 | `explore` | Trending and popular queries |
 | `reactions` | Emoji reactions on projects and comments |
 | `notifications` | Read/unread state, real-time delivery |
-| `users` | Public user lookup and profile reads |
+| `users` | Public user lookup and profile reads; account-name history (old names keep resolving) |
 | `user_logs` | `UserActionLog` — written by services, never by controllers |
-| `og` | Open Graph image generation for public projects |
+| `og` | Link-preview metadata (`/og/meta`), crawler pages and card images for projects, profiles and lists |
 | `email` | SMTP transport |
 | `health` | Health check |
 
@@ -150,6 +155,8 @@ Rate limits here key on **IP only**, never on the client-supplied device header.
 
 ### `/projects`
 
+> **Note:** the REST `/projects` routes are no longer registered — project CRUD is served by GraphQL (`createProject`, `updateProject`, `deleteProject`, `cloneProject`; see [GraphQL](#graphql--post-graphql)). The table below shows the legacy request shapes. Artists, slugs and the “nameable project” rule are described in [Featured Artists](#featured-artists) and [Project URLs & Slugs](#project-urls--slugs).
+
 | Method | Path | Guard | Request | Response |
 |---|---|---|---|---|
 | POST | `/projects` | `requireActiveUser` | `{ title?, uploadId?, lyrics?, state?, metadata?, readOnly?, public?, ytUrl?, uploadUrl?, uploadPublicId?, fileName?, duration?, recaptchaToken? }` | `{ project }` with a nanoid(10) `publicId` |
@@ -181,8 +188,8 @@ The same router is mounted under **both** prefixes, so every route below answers
 
 | Method | Path | Request | Response |
 |---|---|---|---|
-| POST | `/parse` | `{ content, filename? }` (≤5 MB; extension picks LRC/SRT/TXT) | `{ lines }` |
-| POST | `/compile/lrc` | `{ lines, includeTranslations?, includeSecondary?, precision?: 'hundredths'\|'thousandths', wordPrecision?, metadata?, lineEndings?: 'lf'\|'crlf', exportTranslationIndex? }` | `{ content }` |
+| POST | `/parse` | `{ content, filename? }` (≤5 MB; extension picks LRC/SRT/TXT) | `{ lines, detectedFormat, count, metadata, artists }` — see below |
+| POST | `/compile/lrc` | `{ lines, includeTranslations?, includeSecondary?, precision?: 'hundredths'\|'thousandths', wordPrecision?, metadata?, includeFeaturedInTitle?, lineEndings?: 'lf'\|'crlf', exportTranslationIndex? }` | `{ output, format }` |
 | POST | `/compile/srt` | `{ lines, duration?, includeTranslations?, includeSecondary?, lineEndings?, srtConfig? }` | `{ content }` |
 | POST | `/infer-end-times` | `{ lines, duration?, srtConfig? }` | `{ lines }` |
 | POST | `/mark` | `{ lines, activeLineIndex, time, editorMode, settings, activeWordIndex?, stampTarget?: 'main'\|'secondary', awaitingEndMark?, lastAction? }` | `{ lines, activeLineIndex, awaitingEndMark }` |
@@ -191,6 +198,17 @@ The same router is mounted under **both** prefixes, so every route below answers
 | POST | `/clear-all` | `{ lines, isSrt?, isWords? }` | `{ lines }` |
 | POST | `/clear-line` | `{ lines, index, isSrt?, isWords? }` | `{ lines }` |
 | POST | `/detect-duplicates` | `{ lines, threshold? }` | `{ duplicates }` |
+
+**Featured artists in LRC files.** `POST /compile/lrc` accepts `metadata.artists` (`[{ name, role }]`): `[ar:]` is then the formatted credits (`Drake feat. Rihanna & Kanye`), overriding a plain `metadata.ar`. `[ti:]` stays the plain title unless `includeFeaturedInTitle` is `true`, which writes `Title (feat. Rihanna & Kanye)`. When the body omits `includeFeaturedInTitle`, a signed-in request (session cookie) falls back to the user's saved `settings.export.includeFeaturedInTitle`; anonymous requests get `false`; an explicit `true`/`false` always wins. Invalid credits → `422 { error, code }`.
+
+`POST /parse` also returns the file's header tags and what the shared parser makes of them (for `.lrc`/`.txt`; `{}`/`null` otherwise):
+
+```jsonc
+{ "metadata": { "ti": "Song (feat. B)", "ar": "A & B" },
+  "artists": { "credits": [{ "name": "A", "role": "primary", "order": 0 }],
+               "title": "Song", "display": "A feat. B",
+               "flags": [{ "code": "ambiguous_separator", "source": "artist", "text": "A & B" }] } }
+```
 
 ### `/lyrics` — search & import
 
@@ -234,6 +252,8 @@ The binary never transits this server — the client uploads straight to Cloudin
 
 ### `/settings`
 
+> **Note:** settings are read and written through GraphQL (`settings`, `updateSettings`, `resetSettings`); the REST routes below are legacy. `updateSettings` merges **field by field**: sending `{ export: { stripEmptyLines: true } }` no longer erases the other `export` fields. New: `export.includeFeaturedInTitle` (boolean, reads as `false` when never set).
+
 All `requireAuth`. Bodies are validated against the full settings tree (`playback`, `editor`, `export`, `interface`, `shortcuts`, `import`, `advanced`, `autoStamp`).
 
 | Method | Path | Request | Response |
@@ -266,7 +286,9 @@ All `requireAuth`. Delivered live over Socket.IO as well.
 | GET | `/google/login/url` | — | — | — | `{ url }` — for sign-in |
 | GET | `/google/auth/callback` | — | — | `?code&state` | HTML that `postMessage`s a one-time token to the opener |
 | POST | `/google/disconnect` | `requireAuth` | — | — | `{ disconnected }` · 409 `last_auth_method` if it's the only sign-in method |
-| GET | `/og/project/:publicId` | — | — | — | **HTML** (not JSON) with Open Graph/Twitter tags and a redirect, under a per-response CSP nonce · 404 for private/missing |
+| GET | `/og/project/:publicId` | — | — | `?s` (start time), `?list`, `?hl` | **HTML** (not JSON) with Open Graph/Twitter tags and a redirect to the canonical slug URL (`?s` / `?list` preserved), under a per-response CSP nonce · 404 for private/missing |
+| GET | `/og/meta` | — | yes | `?path` (a web-app path such as `/32blunts/projects/radiohead-creep-<id>`), `?hl` | JSON link-preview metadata. **Always 200**; a private/missing/hidden resource is byte-identical to a non-existent one. See [Link Previews](#link-previews-open-graph) |
+| GET | `/og/image/:type/:id.png` | — | yes | `type` ∈ `project\|profile\|list` | 302 to a 1200×630 card (or the brand card) |
 
 ### `/admin`
 
@@ -337,7 +359,9 @@ Depth limit 12; introspection disabled in production. Context is `{ userId, bann
 | `badgeDefinitions` | — | `[BadgeDef!]!` |
 | `publicBadgeDefinitions` | — | `[PublicBadgeDef!]!` |
 | `userShowcase` | `accountName: String!` | `[ShowcasedBadge!]!` |
-| `myMusicLibrary` | — | `[MusicLibraryEntry!]!` |
+| `myMusicLibrary` | — | `[MusicLibraryEntry!]!` — primary artists only |
+| `myArtistSuggestions` | `prefix: String!, limit, offset` | `ArtistSuggestionPage!` — prefix match over **the caller's own** artists, `limit` ≤ 20 |
+| `parseArtists` | `artist: String!, title: String` | `ParsedArtists!` — what the shared parser reads out of an artist string / title (credits, cleaned title, flags, display) |
 | `userContentStats` | — | `ContentStats!` |
 | `adminAddictionLevels` | — | `[AddictionLevel!]!` |
 | `myPreferences` | — | `UserPreferences!` |
@@ -384,6 +408,13 @@ Depth limit 12; introspection disabled in production. Context is `{ userId, bann
 | `adminUnshadowBan` | `userId: ID!` | `Boolean!` |
 | `submitRequest` | `type: String!, payload: String!` (JSON string, whitelisted server-side) | `StaffRequest!` |
 | `reviewRequest` | `id: ID!, decision: String!, note: String` | `StaffRequest!` — atomic claim; self-review refused |
+
+**Notes on inputs and results**
+
+- **Project metadata.** `Project.slug` (`String!`) is the readable URL slug; `Project.metadata.artists` is `[ArtistCredit!]!` and `metadata.songArtist` is the **derived, read-only** display string. `ProjectMetadataInput.songArtist` was removed; send `artists: [{ name, role }]` instead (omitted = keep, `[]` = clear). See [Featured Artists](#featured-artists).
+- **Errors.** `createProject` / `updateProject` fail with `extensions: { code, status }`: `project_identity_required` (422) and the `artist_*` / `artists_*` codes listed under [Featured Artists](#featured-artists).
+- **Account names.** `publicProfile`, `followList`, `userShowcase` and `playlists` also accept a *former* account name and return the user's **current** `accountName`; the client redirects. See [Account Names](#account-names).
+- **Settings.** `updateSettings` merges per field (see [`/settings`](#settings)); `settings { export { includeFeaturedInTitle } }` is the saved default for the LRC export option.
 
 ### Socket.IO
 
@@ -456,6 +487,58 @@ Lyrics are stored as nested `sections[]`, each holding `lines[]`. The client wor
 `PATCH /projects/:id` accepts either a full `sections` replacement or a surgical positional patch (`{ sectionIdx, lineIdx, line }`, optionally down to `{ wordIndex, word }`). Positional fields **must** be declared in `projects.schema.ts` — AJV runs with `removeAdditional`, so an undeclared field is silently stripped and the patch becomes a no-op. Index bounds in the schema mirror the service's `MAX_*_INDEX` constants; keep them in sync.
 
 After a successful patch the server emits `project:updated` to the `project:{id}` room and `autosave:ack` to the originating socket.
+
+### Project URLs & Slugs
+
+| Page | URL |
+|---|---|
+| Public project | `/:accountName/projects/:slug-:publicId` |
+| Editor (owner) | `/:accountName/projects/:slug-:publicId/edit` |
+| Profile / playlist | `/:accountName` · `/:accountName/lists/:listId` |
+| Legacy (still parsed) | `/project/:publicId`, `/profile/:accountName[/lists/:id]`, `/u/:accountName` |
+
+The slug and account name in a URL are **cosmetic**. A project is always resolved by `publicId` — the *last 10 characters* of the final path segment (the nanoid alphabet contains `-`, so the id cannot be found by splitting) — so renames never break a link and no slug history is kept.
+
+`src/utils/project-slug.ts` is the single source of the slug (the web client mirrors it): NFD-fold Latin diacritics (kana dakuten is kept), lower-case, drop apostrophes, keep letters and digits of **any** script, collapse the rest to `-`, cap at 60 characters. The slug is `slugify(artist display + " " + song name)`, else `slugify(title)`, else empty (the URL is then just the id). `projectPath()` builds the full path.
+
+`Project.slug` is **derived, never client input**. A pre-validate hook sets it on create/save, and every `findOneAndUpdate` path that writes `title` or `metadata` sets it in the same write. GraphQL's `slug` falls back to computing it when a row has none stored yet, so rows are valid before the backfill runs.
+
+**A project must be nameable.** `title`, `metadata.songName` or an artist must contain at least one letter or digit, otherwise create/update fails with `project_identity_required` (422). An update is only refused if it would remove the *last* of them, so unrelated edits to a legacy row are never blocked. A fork of a nameless source gets a fallback title (upload title → file name → `untitled`). Titles are trimmed and capped at 200 characters, song names at 500.
+
+`pnpm tsx scripts/backfill-project-slugs.ts` fills `slug` for existing projects (batched, idempotent, `--dry-run`, `--recompute`; it does not touch `updatedAt`). Nameless legacy rows get the fallback title and are counted in the log.
+
+### Featured Artists
+
+A song has an ordered list of **credits**, each `primary` or `featured`:
+
+- **Storage.** `Project.metadata.artists: [{ artistId, name, role, order }]`, backed by a per-user `artists` collection (`userId` + case-insensitive name, unique). `metadata.songArtist` is the **derived display string** (`Drake feat. Rihanna & Kanye`) that search, OG, slugs and old readers keep using; it is no longer accepted as input. Legacy rows keep their original `songArtist` text until migrated.
+- **Shared code.** `src/utils/artists.ts` holds the parser, formatter and validator and has no imports, so the client copies it verbatim; its test file is the behavioural spec.
+- **Formatter.** `A` · `A & B` · `A, B & C` for primaries; featured follows as `feat. A` · `feat. A & B` · `feat. A, B & C` (`Primary feat. A & B`).
+- **Parser.** Reads `feat.` / `feat` / `ft.` / `ft` / `featuring` (and `with` only inside brackets), case-insensitively, inside or outside nested brackets, from both the artist string and the title (returning the cleaned title). Names split on `,` `&` `and` `x`. Doubtful cases are **flagged, never guessed**: `ambiguous_separator` (*Simon & Garfunkel*), `weak_marker` (bare `ft` / `feat`), `empty_feat_segment`, `unbalanced_bracket`, `duplicate_removed`.
+- **Validation** (422, `extensions.code`): `artists_invalid`, `artist_role_invalid`, `artist_name_empty`, `artist_name_too_long` (> 300), `artists_too_many` (> 10), `artist_duplicate` (case-insensitive, any role), `artist_primary_required` (a non-empty list needs a primary; `[]` is valid).
+- **Writes.** Send `metadata.artists`; omitted keeps the stored credits, `[]` clears them. `artistId` is never accepted: ids are resolved by name inside the owner's own records. A fork re-links the credits to the forker's records. The music library stores **primary** artists only.
+- **Autocomplete.** `myArtistSuggestions(prefix, limit ≤ 20, offset)` searches only the caller's own artist names, case-insensitive prefix, plain text (no patterns).
+- **Search.** Featured names are part of `songArtist`, so existing search paths match them; no Atlas index change is needed.
+- **Migration.** `pnpm tsx scripts/migrate-artists.ts` converts legacy strings and is a **dry run by default** (`--write` applies, `--include-ambiguous` also applies `&`/`and`/`x` and bare-`ft` rows, `--report file.json` saves the report). A title / song name loses its `feat.` segment only when it was moved into `artists`, and is never emptied. Malformed rows are never applied. Re-runs are safe.
+
+Full request/response shapes, error messages and the client notes are in [`docs/featured-artists-api.md`](docs/featured-artists-api.md).
+
+### Account Names
+
+Renaming an account records the old name in `account_name_history`, so old links keep working:
+
+- Name lookups from a URL (`publicProfile`, `followList`, `userShowcase`, `playlists`, and OG) check **current** names first and only then the history (newest row first). The payload carries the user's *current* `accountName`; the client compares it with the URL and redirects.
+- An old name is **never reissued** to someone else (sign-up and rename both refuse it); the previous owner can take it back, which releases it from their history. The history index is deliberately not unique — uniqueness of a *claimed* name is enforced in code.
+- `RESERVED_USERNAMES` (`modules/auth/auth.validation.ts`) covers every top-level web-app route segment, because `/:accountName` shares the root with the app's own routes (`admin`, `explore`, `feed`, `library`, `login`, `notifications`, `profile`, `project`, `projects`, `search`, `settings`, `u`, `og`, `api`, …).
+
+### Link Previews (Open Graph)
+
+`GET /og/meta?path=` takes a web-app path and returns the metadata the client's crawler proxy renders; `GET /og/project/:id` renders the same metadata as HTML. Both go through `og.meta.service.ts`.
+
+- **Paths understood:** `/`, `/explore`, `/leaderboard`, `/:accountName`, `/:accountName/lists/:id`, `/:accountName/projects/:slug-:id[/edit]`, plus the legacy `/project/:id` and `/profile/...` forms. Every captured segment is shape-validated before it reaches a query.
+- **Canonical URLs:** projects → `/<owner>/projects/<slug>-<id>`, profiles → `/<accountName>`, lists → `/<accountName>/lists/<id>` (legacy URLs report the new canonical).
+- **Project title:** `Song – Artist, Synced by owner | LRC Studio` (Spanish: `Sincronizado por`), the same text as the web client's tab title. Song falls back to the project title, then the site name; the artist is the derived display string; the owner is the *current* account name. Without an artist the part is dropped; without an owner (legacy fallback) so is `Synced by …`. Profile and list titles keep ` — LRC Studio`. The strings live in `og.strings.ts`; everything is HTML-escaped by the renderer.
+- **Hidden resources** (private project, banned/deleted/shadow-banned owner, unknown path) all return one neutral payload, so nothing leaks and existence cannot be probed.
 
 ### Gamification
 
@@ -545,11 +628,18 @@ Never commit `.env`. Never log or echo secret values.
 | `pnpm test:watch` | Vitest in watch mode |
 | `pnpm test:coverage` | Coverage report |
 
+One-off maintenance scripts run with `pnpm tsx scripts/<name>.ts` and need `MONGODB_URI`. Both below are idempotent and safe to re-run:
+
+| Script | Purpose |
+|---|---|
+| `backfill-project-slugs.ts` | Fill `Project.slug` for existing projects. `--dry-run` reports only; `--recompute` also rewrites filled rows |
+| `migrate-artists.ts` | Convert legacy `songArtist` strings to structured `artists`. **Dry run unless `--write`**; `--include-ambiguous`, `--report <file>` |
+
 ## Testing
 
 Vitest with `mongodb-memory-server`, so suites run against a real in-memory MongoDB rather than mocks.
 
-Test files are intentionally **not committed**, so a fresh clone has the infrastructure but no suites. Highest-value areas to cover first: token refresh and rotation, `applyMark`, `buildProjectPatch`, the `flatToSections` round-trip, permission checks, and trending score aggregation.
+Suites live next to the code as `*.test.ts`. Pure suites (artist parser/formatter, slugs, OG titles and route parsing, settings merge, LRC export) run anywhere. Database-backed suites use `mongodb-memory-server`, which downloads a `mongod` binary on first run, so they need network access to `fastdl.mongodb.org`; without it they fail at startup rather than at an assertion. Suites that use transactions run on a one-node replica set.
 
 ## Operational Notes
 
