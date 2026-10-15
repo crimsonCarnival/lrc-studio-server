@@ -1,9 +1,13 @@
 // server/src/modules/auth/auth.validation.ts
 
+// The top level of the web client is shared: `/:accountName/projects/...` and
+// `/:accountName/lists/...` sit beside the app's own routes, so an account name
+// must never equal a first path segment the client or API serves.
 export const RESERVED_USERNAMES = new Set([
-  'home', 'library', 'admin', 'settings', 'feed', 'search',
-  'project', 'uploads', 'verify-email', 'auth', 'share', 'lists',
-  'api', 'static', 'assets',
+  'admin', 'api', 'assets', 'auth', 'change-password', 'explore', 'feed', 'guide',
+  'home', 'leaderboard', 'library', 'lists', 'login', 'notifications', 'og',
+  'profile', 'project', 'projects', 'register', 'reset-password', 'search',
+  'settings', 'share', 'static', 'u', 'uploads', 'verify-email',
 ]);
 
 // Allows lowercase letters, digits, _ - . :  (3–30 chars)

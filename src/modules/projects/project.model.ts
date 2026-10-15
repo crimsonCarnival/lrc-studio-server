@@ -1,12 +1,15 @@
 import mongoose, { type Document, type Model } from 'mongoose';
 import { nanoid } from 'nanoid';
 import { stripHtml } from '../../utils/sanitize.js';
+import { projectSlug } from '../../utils/project-slug.js';
 import { PRIMARY_GENRES, type ProjectMetadata, type ProjectState } from '../../types/index.js';
 
 export interface IProject extends Document {
   publicId: string;
   userId?: mongoose.Types.ObjectId | null;
   title?: string;
+  /** Derived from title/songName/songArtist — see utils/project-slug.ts. Never client input. */
+  slug: string;
   type?: string;
   uploadId?: mongoose.Types.ObjectId | null;
   lyricsId?: mongoose.Types.ObjectId | null;
@@ -116,6 +119,10 @@ const projectSchema = new mongoose.Schema(
       sparse: true,
     },
     title: { type: String, default: '', maxlength: 500, set: textSetter },
+    // Derived, never accepted from a request. Maintained by the pre-validate hook
+    // below (create / save) and by an explicit $set wherever title or metadata is
+    // written through findOneAndUpdate, which skips document middleware.
+    slug: { type: String, default: '', maxlength: 200 },
     type: { type: String, default: null, maxlength: 100 },
 
     // Audio reference to Upload collection (required)
@@ -181,6 +188,10 @@ projectSchema.index({ public: 1, createdAt: -1 });
 // appending it after the sort fields instead would not be usable.
 projectSchema.index({ public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 });
 projectSchema.index({ forksEnabled: 1 });
+
+projectSchema.pre('validate', function (this: mongoose.Document & IProject) {
+  this.slug = projectSlug({ title: this.title, metadata: this.metadata });
+});
 
 export interface IProjectModel extends Model<IProject & IProjectMethods> {}
 

@@ -1,6 +1,7 @@
 import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
 import { migrateLinesToSections } from '../lyrics/lyrics.model.js';
-import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
+import { projectPath } from '../../utils/project-slug.js';
+import { sanitizeUrl } from '../../utils/sanitize.js';
 import mongoose from 'mongoose';
 import Project from './project.model.js';
 import ProjectFork from './projectFork.model.js';
@@ -16,11 +17,15 @@ import { isDeepStrictEqual } from 'node:util';
 import { recomputeSyncStats, scheduleSyncStatsRefresh, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
 import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
 import { visibilityForNewContent } from '../users/owner-visibility.service.js';
+import {
+  PROJECT_IDENTITY_REQUIRED, cleanTitle, cleanIdentityMetadata, hasProjectIdentity, slugFor,
+} from './project-identity.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
   _id: mongoose.Types.ObjectId;
   publicId: string;
   title?: string;
+  slug?: string;
   metadata?: Record<string, unknown>;
   coverImage?: string;
   uploadId?: Record<string, unknown> | null;
@@ -104,6 +109,14 @@ export async function createProject(
     return { error: 'Authentication required', status: 401 } as ServiceResult;
   }
 
+  // Every create path (GraphQL, autosave auto-create, guest claim, import) lands
+  // here, so this is the one place a nameless project is refused.
+  const cleanedTitle = cleanTitle(title);
+  const cleanedMetadata = cleanIdentityMetadata(metadata);
+  if (!hasProjectIdentity(cleanedTitle, cleanedMetadata)) {
+    return { ...PROJECT_IDENTITY_REQUIRED } as ServiceResult;
+  }
+
   const MAX_PROJECTS_PER_USER = 200;
 
   // Note: mild TOCTOU race on concurrent creates is acceptable — overage is bounded and non-critical
@@ -174,10 +187,10 @@ export async function createProject(
     const [project] = await Project.create([{
       ...ownerVisibility,
       userId: userId || null,
-      title: stripHtml(title || '').slice(0, 200),
+      title: cleanedTitle,
       uploadId: resolvedUploadId,
       state: state || {},
-      metadata: metadata || {},
+      metadata: cleanedMetadata,
       coverImage: coverImage ? sanitizeUrl(coverImage) : '',
       readOnly: readOnly ?? true,
       public: finalIsPublic,
@@ -196,7 +209,8 @@ export async function createProject(
     project.lyricsId = lyricsDoc._id;
     await project.save({ session });
 
-    return { publicId: project.publicId, url: `/s/${project.publicId}` };
+    const owner = await User.findById(userId).select('accountName').session(session).lean<{ accountName?: string }>();
+    return { publicId: project.publicId, url: projectPath(project, owner?.accountName) };
   }, { operation: 'createProject', userId: userId ?? null });
 
   if ('publicId' in result) {
@@ -225,7 +239,7 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('publicId title metadata coverImage uploadId readOnly public createdAt updatedAt forkedFrom forkCount starCount viewCount')
+    .select('publicId title slug metadata coverImage uploadId readOnly public createdAt updatedAt forkedFrom forkCount starCount viewCount')
     .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist')
     .sort({ updatedAt: -1 })
     .limit(100)
@@ -307,6 +321,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       id: s._id.toString(),
       publicId: s.publicId,
       title: s.title,
+      slug: s.slug || slugFor(s.title, s.metadata),
       metadata: s.metadata || {},
       coverImage: s.coverImage || '',
       upload: uploadObj,
@@ -399,13 +414,16 @@ export async function updateProject(
   }
 
   const projectUpdate: Record<string, unknown> = {};
-  if (title !== undefined) projectUpdate.title = stripHtml(title).slice(0, 200);
+  if (title !== undefined) projectUpdate.title = title;
   if (uploadId !== undefined) projectUpdate.uploadId = uploadId;
   if (state !== undefined) projectUpdate.state = state;
   if (metadata !== undefined) projectUpdate.metadata = preserveSingers(metadata, project.metadata);
   if (readOnly !== undefined) projectUpdate.readOnly = readOnly;
   if (data.public !== undefined) projectUpdate.public = data.public;
   if (data.coverImage !== undefined) projectUpdate.coverImage = sanitizeUrl(data.coverImage);
+
+  const identityError = applyProjectIdentity(project, projectUpdate);
+  if (identityError) return identityError as ServiceResult;
 
   const lyricsPromise = (() => {
     if (lyrics === undefined) return Lyrics.findOne({ publicId });
@@ -513,6 +531,9 @@ export async function patchProject(
   }
   if (data.metadata !== undefined) projectUpdate.metadata = preserveSingers(data.metadata, project.metadata);
 
+  const identityError = applyProjectIdentity(project, projectUpdate);
+  if (identityError) return identityError as ServiceResult;
+
   const hasProjectUpdate = allowed.some(k => data[k] !== undefined);
   // Any save by an authenticated user is a heatmap candidate now — manual and
   // auto both count, deduped to one contribution per project per day (see
@@ -596,6 +617,30 @@ export async function patchProject(
   }
 
   return { project: pub as unknown as ProjectPublic };
+}
+
+/**
+ * Normalises title/metadata in a pending update and keeps the derived slug in
+ * step with them, in the same write. Only refuses an update that would strip a
+ * project of the last of its title / song name / artist, so an unrelated edit
+ * to a legacy row that never had one is not blocked.
+ */
+export function applyProjectIdentity(
+  existing: { title?: string; metadata?: unknown },
+  update: Record<string, unknown>,
+): ServiceResult | null {
+  if (!('title' in update) && !('metadata' in update)) return null;
+  if ('title' in update) update.title = cleanTitle(update.title);
+  if ('metadata' in update) update.metadata = cleanIdentityMetadata(update.metadata as Record<string, unknown>);
+
+  const title = 'title' in update ? update.title : existing.title;
+  const metadata = ('metadata' in update ? update.metadata : existing.metadata) as Record<string, unknown> | undefined;
+  if (hasProjectIdentity(existing.title, existing.metadata as Record<string, unknown> | undefined)
+      && !hasProjectIdentity(title, metadata)) {
+    return { ...PROJECT_IDENTITY_REQUIRED } as ServiceResult;
+  }
+  update.slug = slugFor(title, metadata);
+  return null;
 }
 
 // "Actual changes" for the heatmap = authored content. Excluded on purpose:

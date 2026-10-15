@@ -3,6 +3,9 @@ import Lyrics from '../lyrics/lyrics.model.js';
 import Playlist from '../../db/playlist.model.js';
 import User from '../../db/user.model.js';
 import { getEnv } from '../../config/env.js';
+import { projectPath } from '../../utils/project-slug.js';
+import { isReservedAccountName } from '../auth/auth.validation.js';
+import { findUserByAccountName } from '../users/account-name.service.js';
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_TYPE,
@@ -180,6 +183,7 @@ export type ParsedOgRoute =
 const PUBLIC_ID = /^[A-Za-z0-9_-]{1,32}$/;
 const ACCOUNT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 const OBJECT_ID = /^[a-f\d]{24}$/i;
+const PROJECT_ID_LENGTH = 10;
 
 /**
  * Maps a client SPA path onto a resource. The `path` query parameter is
@@ -221,6 +225,9 @@ export function parseClientPath(rawPath: string | null | undefined): ParsedOgRou
   if (segments.length === 1) {
     if (first === 'explore') return { kind: 'explore' };
     if (first === 'leaderboard') return { kind: 'leaderboard' };
+    // /:accountName is a profile. Every route segment the client serves is a
+    // reserved account name, so this cannot swallow one of them.
+    if (ACCOUNT_NAME.test(first) && !isReservedAccountName(first)) return { kind: 'profile', accountName: first };
     return { kind: 'unknown' };
   }
 
@@ -228,6 +235,25 @@ export function parseClientPath(rawPath: string | null | undefined): ParsedOgRou
     return { kind: 'project', publicId: second };
   }
 
+  // /:accountName/projects/:slug-:publicId[/edit]. The slug and account name are
+  // cosmetic; the project is identified by the last 10 characters of the segment
+  // (the nanoid alphabet contains '-', so the id cannot be found by splitting).
+  if (
+    second === 'projects'
+    && ACCOUNT_NAME.test(first)
+    && (segments.length === 3 || (segments.length === 4 && fourth === 'edit'))
+    && third.length >= PROJECT_ID_LENGTH
+  ) {
+    const publicId = third.slice(-PROJECT_ID_LENGTH);
+    if (PUBLIC_ID.test(publicId)) return { kind: 'project', publicId };
+  }
+
+  if (second === 'lists' && segments.length === 3 && ACCOUNT_NAME.test(first) && OBJECT_ID.test(third)) {
+    return { kind: 'list', accountName: first, listId: third };
+  }
+
+  // Legacy /profile/:accountName[/lists/:id]. Still parsed so old shared links
+  // resolve; the canonical they report is the bare /:accountName form.
   if (first === 'profile' && segments.length === 2 && ACCOUNT_NAME.test(second)) {
     return { kind: 'profile', accountName: second };
   }
@@ -255,6 +281,10 @@ export type ProjectMetaInput = {
   description?: string | null;
   songName?: string | null;
   songArtist?: string | null;
+  /** Stored slug; recomputed from the song / title when absent. */
+  slug?: string | null;
+  /** Current account name of the owner. Absent = fall back to the legacy /project/:id URL. */
+  ownerAccountName?: string | null;
   lyricLines: string[];
 };
 
@@ -285,7 +315,10 @@ export function buildProjectMeta(
     type: artist ? 'music.song' : 'article',
     title,
     description: truncateAtWord(source),
-    canonical: `${getClientOrigin()}/project/${input.publicId}`,
+    canonical: `${getClientOrigin()}${projectPath(
+      { publicId: input.publicId, slug: input.slug, title: input.title, metadata: { songName: input.songName, songArtist: input.songArtist } },
+      input.ownerAccountName,
+    )}`,
     ...baseMeta(locale),
     robots: ROBOTS_INDEX,
     image: resourceImage(ogImageEndpoint(apiOrigin, 'project', input.publicId), subject, locale),
@@ -320,7 +353,7 @@ export function buildProfileMeta(
     description: bio
       ? truncateAtWord(bio)
       : truncateAtWord(interpolate(strings.profileFallbackDescription, { name })),
-    canonical: `${getClientOrigin()}/profile/${input.accountName}`,
+    canonical: `${getClientOrigin()}/${input.accountName}`,
     ...baseMeta(locale),
     robots: ROBOTS_INDEX,
     image: resourceImage(ogImageEndpoint(apiOrigin, 'profile', input.accountName), name, locale),
@@ -351,7 +384,7 @@ export function buildListMeta(
     type: 'article',
     title: `${name}${strings.titleSuffix}`,
     description: truncateAtWord(description || strings.listFallbackDescription),
-    canonical: `${getClientOrigin()}/profile/${input.accountName}/lists/${input.listId}`,
+    canonical: `${getClientOrigin()}/${input.accountName}/lists/${input.listId}`,
     ...baseMeta(locale),
     robots: ROBOTS_INDEX,
     image: resourceImage(ogImageEndpoint(apiOrigin, 'list', input.listId), name, locale),
@@ -383,10 +416,11 @@ async function resolveProject(
   apiOrigin: string,
 ): Promise<OgMeta> {
   const project = await Project.findOne({ publicId, public: true })
-    .select('publicId title description metadata userId')
+    .select('publicId title slug description metadata userId')
     .lean<{
       publicId: string;
       title?: string;
+      slug?: string;
       description?: string;
       metadata?: { songName?: string; songArtist?: string };
       userId?: unknown;
@@ -397,11 +431,13 @@ async function resolveProject(
   // A project whose owner is banned/deleted/shadow-banned is not a public
   // surface either — the owner's own profile card is hidden, so their project
   // cards must be too, or the ban is trivially bypassed by sharing a project.
+  let ownerAccountName: string | null = null;
   if (project.userId) {
     const owner = await User.findById(project.userId)
-      .select('isDeleted ban.active shadowBan.search')
-      .lean<{ isDeleted?: boolean; ban?: { active?: boolean }; shadowBan?: { search?: boolean } }>();
+      .select('accountName isDeleted ban.active shadowBan.search')
+      .lean<{ accountName?: string; isDeleted?: boolean; ban?: { active?: boolean }; shadowBan?: { search?: boolean } }>();
     if (!isUserPubliclyVisible(owner)) return buildHiddenMeta(locale);
+    ownerAccountName = owner?.accountName ?? null;
   }
 
   const lyrics = await Lyrics.findOne({ publicId })
@@ -424,6 +460,8 @@ async function resolveProject(
       description: project.description,
       songName: project.metadata?.songName,
       songArtist: project.metadata?.songArtist,
+      slug: project.slug,
+      ownerAccountName,
       lyricLines,
     },
     locale,
@@ -436,16 +474,15 @@ async function resolveProfile(
   locale: OgLocale,
   apiOrigin: string,
 ): Promise<OgMeta> {
-  const user = await User.findOne({ accountName: accountName.toLowerCase() })
-    .select('accountName displayName bio isDeleted ban.active shadowBan.search')
-    .lean<{
+  // An old account name resolves to its owner; the canonical then names the current one.
+  const user = await findUserByAccountName<{
       accountName?: string;
       displayName?: string | null;
       bio?: string;
       isDeleted?: boolean;
       ban?: { active?: boolean };
       shadowBan?: { search?: boolean };
-    }>();
+    }>(accountName, 'accountName displayName bio isDeleted ban.active shadowBan.search');
 
   if (!isUserPubliclyVisible(user) || !user?.accountName) return buildHiddenMeta(locale);
 
@@ -477,10 +514,12 @@ async function resolveList(
       shadowBan?: { search?: boolean };
     }>();
 
-  if (!isUserPubliclyVisible(owner)) return buildHiddenMeta(locale);
+  if (!isUserPubliclyVisible(owner) || !owner?.accountName) return buildHiddenMeta(locale);
   // The path must actually belong to the owner; otherwise any account name
   // could be used to address any public playlist.
-  if (owner?.accountName !== accountName.toLowerCase()) return buildHiddenMeta(locale);
+  // (an owner's former names count: old links keep working and canonicalise).
+  const requested = await findUserByAccountName<{ accountName?: string }>(accountName, 'accountName');
+  if (!requested || String(requested._id) !== String(playlist.userId)) return buildHiddenMeta(locale);
 
   return buildListMeta(
     { listId, accountName: owner.accountName, name: playlist.name, description: playlist.description },

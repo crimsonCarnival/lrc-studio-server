@@ -5,6 +5,9 @@ import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import { withTransaction, TransactionError } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
 import User from '../../db/user.model.js';
+import { projectPath } from '../../utils/project-slug.js';
+import Upload from '../uploads/upload.model.js';
+import { cleanTitle, fallbackTitle, hasProjectIdentity, PROJECT_TITLE_MAX } from './project-identity.js';
 import { getIO } from '../../socket/socket.manager.js';
 
 export async function getShareProject(publicId: string): Promise<ProjectPublic | null> {
@@ -106,11 +109,23 @@ export async function cloneProject(
 
   const sourceLyrics = await Lyrics.findOne({ publicId: sourcepublicId }).select('+lines').lean();
 
+  // A fork inherits the source's title and metadata. If the source somehow has
+  // no identity, fall back the way the slug migration does instead of failing
+  // the user's fork.
+  const sourceTitle = cleanTitle(sourceProject.title);
+  let cloneTitle = sourceTitle ? `Clone - ${sourceTitle}`.slice(0, PROJECT_TITLE_MAX) : '';
+  if (!hasProjectIdentity(cloneTitle, sourceProject.metadata as Record<string, unknown> | undefined)) {
+    const sourceUpload = sourceProject.uploadId
+      ? await Upload.findById(sourceProject.uploadId).select('title fileName').lean<{ title?: string; fileName?: string }>()
+      : null;
+    cloneTitle = fallbackTitle(sourceUpload);
+  }
+
   try {
     return await withTransaction(async (session) => {
     const [newProject] = await Project.create([{
       userId: newUserId,
-      title: `Clone - ${sourceProject.title}`,
+      title: cloneTitle,
       uploadId: sourceProject.uploadId || null,
       state: sourceProject.state,
       metadata: sourceProject.metadata,
@@ -177,9 +192,10 @@ export async function cloneProject(
       });
     } catch { /* socket not ready */ }
 
+    const forker = await User.findById(newUserId).select('accountName').session(session).lean<{ accountName?: string }>();
     return {
       publicId: newProject.publicId,
-      url: `/s/${newProject.publicId}`,
+      url: projectPath(newProject, forker?.accountName),
     };
     }, { operation: 'cloneProject', sourcepublicId, userId: newUserId });
   } catch (err) {
