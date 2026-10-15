@@ -27,8 +27,24 @@ import { getBlockedSet } from '../../modules/blocks/block.service.js';
 import type { SearchSort } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
+import { joinNames, primaryNames, type ArtistCredit } from '../../utils/artists.js';
 import { projectSlug } from '../../utils/project-slug.js';
 import { registerProjectView } from '../../modules/projects/project-view.service.js';
+
+type LibraryMeta = {
+  artists?: ArtistCredit[];
+  songArtist?: string;
+  songAlbum?: string;
+  songGenre?: string;
+  songLanguage?: string;
+  trackCount?: number | null;
+};
+
+/** The music library remembers primary artists only; featured guests would fragment its entries. */
+function libraryArtist(meta: Pick<LibraryMeta, 'artists' | 'songArtist'> | undefined): string {
+  const primaries = primaryNames(meta?.artists ?? []);
+  return primaries.length > 0 ? joinNames(primaries) : (meta?.songArtist ?? '');
+}
 
 export const projectResolvers = {
   Query: {
@@ -47,13 +63,13 @@ export const projectResolvers = {
       if (!context.userId) return [];
       const rows = await Project.find(
         { userId: context.userId, isDeleted: { $ne: true } },
-        { 'metadata.songArtist': 1, 'metadata.songAlbum': 1, 'metadata.genre': 1, 'metadata.songLanguage': 1, 'metadata.trackCount': 1 }
+        { 'metadata.songArtist': 1, 'metadata.artists': 1, 'metadata.songAlbum': 1, 'metadata.genre': 1, 'metadata.songLanguage': 1, 'metadata.trackCount': 1 }
       ).lean<IProject[]>();
       const seen = new Set<string>();
       const results: { artist: string; album: string; genre: string; language: string; trackCount: number | null }[] = [];
       for (const row of rows) {
         const m = (row.metadata ?? {}) as Record<string, unknown>;
-        const artist = (m['songArtist'] as string) || '';
+        const artist = libraryArtist(m as LibraryMeta);
         const album = (m['songAlbum'] as string) || '';
         if (!artist && !album) continue;
         const key = `${artist}||${album}`;
@@ -104,24 +120,21 @@ export const projectResolvers = {
         });
       }
       const created = result as { publicId: string; url: string };
+      const createdProject = await Project.findOne({ publicId: created.publicId });
       if (context.userId) {
-        const meta = input.metadata as {
-          songArtist?: string;
-          songAlbum?: string;
-          songGenre?: string;
-          songLanguage?: string;
-          trackCount?: number | null;
-        } | undefined;
+        // The stored metadata, not the input: `songArtist` is derived from `artists`.
+        const meta = createdProject?.metadata as LibraryMeta | undefined;
+        const artist = libraryArtist(meta);
         Promise.all([
           updateStreak(context.userId),
           triggerBadgeCheck(context.userId, 'project_create'),
           ...(input.public ? [triggerBadgeCheck(context.userId, 'project_publish')] : []),
-          ...(meta?.songArtist || meta?.songAlbum
-            ? [upsertMusicLibraryEntry(context.userId, { artist: meta.songArtist || '', album: meta.songAlbum || '', genre: meta.songGenre, language: meta.songLanguage, trackCount: meta.trackCount })]
+          ...(artist || meta?.songAlbum
+            ? [upsertMusicLibraryEntry(context.userId, { artist, album: meta?.songAlbum || '', genre: meta?.songGenre, language: meta?.songLanguage, trackCount: meta?.trackCount })]
             : []),
         ]).catch(() => {});
       }
-      return Project.findOne({ publicId: created.publicId });
+      return createdProject;
     },
 
     // id = publicId (nanoid string). Delegates to patchProject service for version locking,
@@ -154,15 +167,10 @@ export const projectResolvers = {
         triggerBadgeCheck(context.userId, 'project_publish').catch(() => {});
       }
       if (context.userId && input.metadata) {
-        const meta = input.metadata as {
-          songArtist?: string;
-          songAlbum?: string;
-          songGenre?: string;
-          songLanguage?: string;
-          trackCount?: number | null;
-        };
-        if (meta.songArtist || meta.songAlbum) {
-          upsertMusicLibraryEntry(context.userId, { artist: meta.songArtist || '', album: meta.songAlbum || '', genre: meta.songGenre, language: meta.songLanguage, trackCount: meta.trackCount }).catch(() => {});
+        const meta = (patched.project as { metadata?: LibraryMeta }).metadata;
+        const artist = libraryArtist(meta);
+        if (artist || meta?.songAlbum) {
+          upsertMusicLibraryEntry(context.userId, { artist, album: meta?.songAlbum || '', genre: meta?.songGenre, language: meta?.songLanguage, trackCount: meta?.trackCount }).catch(() => {});
         }
       }
       return patched.project;
@@ -362,6 +370,11 @@ export const projectResolvers = {
   // ── Field Resolvers ────────────────────────────────────────────────────────
   // These receive raw Mongoose documents. Loaders in loaders.ts will batch
   // the user/upload/lyrics lookups to avoid N+1 queries.
+
+  // Legacy rows were stored before `artists` existed; lean reads skip the schema default.
+  ProjectMetadata: {
+    artists: (metadata: { artists?: unknown[] | null }) => metadata.artists ?? [],
+  },
 
   Project: {
     id: (project: IProject) => project._id?.toString() || project.id || null,

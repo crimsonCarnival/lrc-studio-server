@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { serializeToRubyMarkup, parseRubyMarkup } from './furigana.js';
 import type { RubySegment } from './furigana.js';
+import { formatArtistDisplay, formatTitleWithFeatured, validateArtistCredits, type ArtistValidationCode } from './artists.js';
 
 // SRT utilities live in srt.ts; re-export SrtConfig so existing imports from lrc.ts still work.
 import type { SrtConfig } from './srt.js';
@@ -71,6 +72,47 @@ function formatWordTimestamp(seconds: number, precision = 'hundredths'): string 
 function sanitizeLrcTag(s: unknown): string {
   if (typeof s !== 'string') return String(s || '');
   return s.replace(/[[\]]/g, '');
+}
+
+const LRC_META_KEYS = ['ti', 'ar', 'al', 'au', 'by', 'lg'] as const;
+export type LrcMetaKey = typeof LRC_META_KEYS[number];
+
+/** Reads the `[ti:]` / `[ar:]` / `[al:]` … header tags of an LRC file. Last occurrence of a key wins; empty values are skipped. */
+export function parseLrcMetaTags(content: string): Partial<Record<LrcMetaKey, string>> {
+  const out: Partial<Record<LrcMetaKey, string>> = {};
+  for (const raw of content.replace(/\r\n/g, '\n').split('\n')) {
+    const m = /^\s*\[([a-z]{2}):([^\]]*)\]\s*$/i.exec(raw);
+    if (!m) continue;
+    const key = m[1].toLowerCase() as LrcMetaKey;
+    const value = m[2].trim();
+    if ((LRC_META_KEYS as readonly string[]).includes(key) && value) out[key] = value;
+  }
+  return out;
+}
+
+export type LrcExportMetadata =
+  | { ok: true; metadata: Record<string, string | undefined> }
+  | { ok: false; code: ArtistValidationCode; message: string };
+
+/**
+ * Header metadata for an LRC export. With structured `artists`, `[ar:]` is the
+ * formatted credits (`A feat. B`) and `[ti:]` stays the plain title unless
+ * `includeFeaturedInTitle` asks for `Title (feat. B)`. Without them the
+ * caller's own `ar` / `ti` strings pass through unchanged.
+ */
+export function buildLrcExportMetadata(
+  metadata: Record<string, unknown>,
+  includeFeaturedInTitle = false,
+): LrcExportMetadata {
+  const { artists, ...rest } = metadata;
+  const base = rest as Record<string, string | undefined>;
+  if (artists === undefined || artists === null) return { ok: true, metadata: base };
+  const result = validateArtistCredits(artists);
+  if (!result.ok) return result;
+  const out = { ...base };
+  if (result.credits.length > 0) out.ar = formatArtistDisplay(result.credits);
+  if (includeFeaturedInTitle && typeof out.ti === 'string' && out.ti) out.ti = formatTitleWithFeatured(out.ti, result.credits);
+  return { ok: true, metadata: out };
 }
 
 export function formatTimestamp(seconds: number | null | undefined, precision = 'hundredths'): string {

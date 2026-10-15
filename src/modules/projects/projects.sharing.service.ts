@@ -5,6 +5,7 @@ import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import { withTransaction, TransactionError } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
 import User from '../../db/user.model.js';
+import { linkArtistIds, type StoredCredit } from '../artists/artist.service.js';
 import { projectPath } from '../../utils/project-slug.js';
 import Upload from '../uploads/upload.model.js';
 import { cleanTitle, fallbackTitle, hasProjectIdentity, PROJECT_TITLE_MAX } from './project-identity.js';
@@ -121,6 +122,15 @@ export async function cloneProject(
     cloneTitle = fallbackTitle(sourceUpload);
   }
 
+  // Credits are re-linked to the forker's own artist records: the source owner's
+  // ids are never copied across accounts.
+  const cloneMetadata = ((sourceProject as unknown as { toObject(): { metadata?: Record<string, unknown> } }).toObject().metadata ?? {}) as Record<string, unknown>;
+  const sourceCredits = (cloneMetadata.artists ?? []) as StoredCredit[];
+  if (sourceCredits.length > 0) {
+    cloneMetadata.artists = sourceCredits.map(({ name, role, order }) => ({ name, role, order }));
+    await linkArtistIds(newUserId, cloneMetadata.artists as StoredCredit[]);
+  }
+
   try {
     return await withTransaction(async (session) => {
     const [newProject] = await Project.create([{
@@ -128,7 +138,7 @@ export async function cloneProject(
       title: cloneTitle,
       uploadId: sourceProject.uploadId || null,
       state: sourceProject.state,
-      metadata: sourceProject.metadata,
+      metadata: cloneMetadata,
       coverImage: sourceProject.coverImage || '',
       readOnly: false,
       forkedFrom: {

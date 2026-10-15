@@ -10,6 +10,7 @@ import { exploreResolvers }  from './explore.resolvers.js';
 import { reactionResolvers } from './reaction.resolvers.js';
 import { statsResolvers }    from './stats.resolvers.js';
 import { requestResolvers }  from './request.resolvers.js';
+import { artistResolvers }   from './artist.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -24,6 +25,7 @@ export const resolvers = {
     ...reactionResolvers.Query,
     ...statsResolvers.Query,
     ...requestResolvers.Query,
+    ...artistResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -40,6 +42,7 @@ export const resolvers = {
   PublicUser: publicUserResolvers,
   FollowUser: followUserResolvers,
   Project:  projectResolvers.Project,
+  ProjectMetadata: projectResolvers.ProjectMetadata,
   Lyrics:   lyricsResolvers.Lyrics,
   Upload:   uploadResolvers.Upload,
   Activity: activityResolvers.Activity,
