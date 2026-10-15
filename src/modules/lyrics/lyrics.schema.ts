@@ -18,7 +18,10 @@ export const compileLrcSchema = {
       lines: linesArray,
       includeTranslations: { type: 'boolean' },
       precision: { type: 'string', enum: ['hundredths', 'thousandths'] },
+      // `metadata.artists` ([{ name, role }]) takes precedence over a plain `metadata.ar`.
       metadata: { type: 'object', additionalProperties: true },
+      // Appends "(feat. …)" to [ti:] when the song has featured artists. Off by default.
+      includeFeaturedInTitle: { type: 'boolean' },
       lineEndings: { type: 'string', enum: ['lf', 'crlf'] },
       includeSecondary: { type: 'boolean' },
       wordPrecision: { type: 'string' },

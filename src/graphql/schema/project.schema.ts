@@ -59,7 +59,9 @@ export const projectSchema = `
     singerColors: [String!]
     singers: [String!]
     songName: String
+    # Derived from artists, e.g. "Drake feat. Rihanna". Read-only: not accepted as input.
     songArtist: String
+    artists: [ArtistCredit!]!
     songAlbum: String
     songYear: String
     songGenre: String
@@ -67,6 +69,24 @@ export const projectSchema = `
     trackNumber: Int
     trackCount: Int
     albumArt: String
+  }
+
+  enum ArtistRole {
+    primary
+    featured
+  }
+
+  type ArtistCredit {
+    # The owner's artist record; null on legacy credits.
+    artistId: ID
+    name: String!
+    role: ArtistRole!
+    order: Int!
+  }
+
+  input ArtistCreditInput {
+    name: String!
+    role: ArtistRole!
   }
 
   input WordInput {
@@ -116,7 +136,8 @@ export const projectSchema = `
     singerColors: [String!]
     singers: [String!]
     songName: String
-    songArtist: String
+    # Omit to leave the artists as they are; [] clears them. Order in the list is the display order.
+    artists: [ArtistCreditInput!]
     songAlbum: String
     songYear: String
     songGenre: String

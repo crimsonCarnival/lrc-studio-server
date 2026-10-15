@@ -73,6 +73,17 @@ const stateSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// --- Subdocument: Artist credit ---
+const artistCreditSchema = new mongoose.Schema(
+  {
+    artistId: { type: mongoose.Schema.Types.ObjectId, ref: 'Artist', default: null },
+    name: { type: String, required: true, maxlength: 300, set: textSetter },
+    role: { type: String, enum: ['primary', 'featured'], required: true },
+    order: { type: Number, required: true, min: 0 },
+  },
+  { _id: false }
+);
+
 // --- Subdocument: Metadata ---
 const metadataSchema = new mongoose.Schema(
   {
@@ -90,7 +101,11 @@ const metadataSchema = new mongoose.Schema(
     singerColors: { type: [String], default: [] },
     singers: { type: [String], default: [], set: singersSetter },
     songName: { type: String, default: '', maxlength: 500, set: textSetter },
-    songArtist: { type: String, default: '', maxlength: 500, set: textSetter },
+    // Derived from `artists` (see utils/artists.ts formatArtistDisplay) and never
+    // client input; kept as a plain string for search, OG, slug and old readers.
+    // Legacy rows without `artists` still carry their original text here.
+    songArtist: { type: String, default: '', maxlength: 4000, set: textSetter },
+    artists: { type: [artistCreditSchema], default: [] },
     songAlbum: { type: String, default: '', maxlength: 500, set: textSetter },
     songYear: { type: String, default: '', maxlength: 4, set: textSetter },
     songGenre: { type: String, default: '', maxlength: 100, set: textSetter },

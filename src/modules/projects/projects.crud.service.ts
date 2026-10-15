@@ -1,5 +1,6 @@
 import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
 import { migrateLinesToSections } from '../lyrics/lyrics.model.js';
+import { linkArtistIds, type StoredCredit } from '../artists/artist.service.js';
 import { projectPath } from '../../utils/project-slug.js';
 import { sanitizeUrl } from '../../utils/sanitize.js';
 import mongoose from 'mongoose';
@@ -18,7 +19,7 @@ import { recomputeSyncStats, scheduleSyncStatsRefresh, triggerBadgeCheck, update
 import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
 import { visibilityForNewContent } from '../users/owner-visibility.service.js';
 import {
-  PROJECT_IDENTITY_REQUIRED, cleanTitle, cleanIdentityMetadata, hasProjectIdentity, slugFor,
+  PROJECT_IDENTITY_REQUIRED, cleanTitle, cleanIdentityMetadata, hasProjectIdentity, slugFor, resolveMetadataArtists,
 } from './project-identity.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
@@ -112,7 +113,9 @@ export async function createProject(
   // Every create path (GraphQL, autosave auto-create, guest claim, import) lands
   // here, so this is the one place a nameless project is refused.
   const cleanedTitle = cleanTitle(title);
-  const cleanedMetadata = cleanIdentityMetadata(metadata);
+  const resolvedMetadata = resolveMetadataArtists(cleanIdentityMetadata(metadata), null);
+  if ('failure' in resolvedMetadata) return { ...resolvedMetadata.failure } as ServiceResult;
+  const cleanedMetadata = resolvedMetadata.metadata;
   if (!hasProjectIdentity(cleanedTitle, cleanedMetadata)) {
     return { ...PROJECT_IDENTITY_REQUIRED } as ServiceResult;
   }
@@ -138,6 +141,8 @@ export async function createProject(
       return { error: 'Not authorized to use this upload', status: 403 } as ServiceResult;
     }
   }
+
+  await linkMetadataArtists(userId, cleanedMetadata);
 
   const result = await withTransaction(async (session) => {
     // Resolve uploadId: use provided ID, or create inline from raw media URL
@@ -424,6 +429,7 @@ export async function updateProject(
 
   const identityError = applyProjectIdentity(project, projectUpdate);
   if (identityError) return identityError as ServiceResult;
+  await linkMetadataArtists(userId, projectUpdate.metadata);
 
   const lyricsPromise = (() => {
     if (lyrics === undefined) return Lyrics.findOne({ publicId });
@@ -533,6 +539,7 @@ export async function patchProject(
 
   const identityError = applyProjectIdentity(project, projectUpdate);
   if (identityError) return identityError as ServiceResult;
+  await linkMetadataArtists(userId, projectUpdate.metadata);
 
   const hasProjectUpdate = allowed.some(k => data[k] !== undefined);
   // Any save by an authenticated user is a heatmap candidate now — manual and
@@ -619,6 +626,15 @@ export async function patchProject(
   return { project: pub as unknown as ProjectPublic };
 }
 
+const plainMetadata = (m: unknown): Record<string, unknown> | null =>
+  (m as { toObject?: () => Record<string, unknown> } | null | undefined)?.toObject?.() ?? (m as Record<string, unknown> | null) ?? null;
+
+/** Gives newly named credits their artist-record ids (owner-scoped). No-op without credits. */
+async function linkMetadataArtists(userId: string | null | undefined, metadata: unknown): Promise<void> {
+  const credits = (metadata as { artists?: StoredCredit[] } | undefined)?.artists;
+  if (userId && Array.isArray(credits) && credits.length > 0) await linkArtistIds(userId, credits);
+}
+
 /**
  * Normalises title/metadata in a pending update and keeps the derived slug in
  * step with them, in the same write. Only refuses an update that would strip a
@@ -631,7 +647,11 @@ export function applyProjectIdentity(
 ): ServiceResult | null {
   if (!('title' in update) && !('metadata' in update)) return null;
   if ('title' in update) update.title = cleanTitle(update.title);
-  if ('metadata' in update) update.metadata = cleanIdentityMetadata(update.metadata as Record<string, unknown>);
+  if ('metadata' in update) {
+    const resolved = resolveMetadataArtists(cleanIdentityMetadata(update.metadata as Record<string, unknown>), plainMetadata(existing.metadata));
+    if ('failure' in resolved) return { ...resolved.failure } as ServiceResult;
+    update.metadata = resolved.metadata;
+  }
 
   const title = 'title' in update ? update.title : existing.title;
   const metadata = ('metadata' in update ? update.metadata : existing.metadata) as Record<string, unknown> | undefined;

@@ -4,11 +4,14 @@ import JobLog from '../../db/job-log.model.js';
 
 import {
   parseLrcSrtFile,
+  parseLrcMetaTags,
+  buildLrcExportMetadata,
   compileLRC,
   inferEndTimes,
 } from '../../utils/lrc.js';
 
 import { compileSRT } from '../../utils/srt.js';
+import { parseArtists, formatArtistDisplay } from '../../utils/artists.js';
 
 import {
   applyMark,
@@ -39,17 +42,31 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
   }
 
   const lines = parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {});
+  // Header tags ([ti:], [ar:], …) and what the shared parser makes of them, so the
+  // client can prefill artists and a cleaned title. SRT has no header tags.
+  const isSrt = normalizedName.endsWith('.srt');
+  const metadata = isSrt ? {} : parseLrcMetaTags(content);
+  const parsed = metadata.ar || metadata.ti ? parseArtists(metadata.ar ?? '', metadata.ti) : null;
   return reply.send({
     lines,
     detectedFormat: filename?.toLowerCase().endsWith('.srt') ? 'srt' : 'lrc',
     count: lines.length,
+    metadata,
+    artists: parsed && {
+      credits: parsed.credits,
+      title: parsed.title,
+      flags: parsed.flags,
+      display: formatArtistDisplay(parsed.credits),
+    },
   });
 }
 
 export async function compileLrc(req: FastifyRequest, reply: FastifyReply) {
   const body = req.body as Body;
-  const { lines, includeTranslations = false, precision = 'hundredths', metadata = {}, lineEndings = 'lf', includeSecondary = false, wordPrecision, exportTranslationIndex = 0 } = body;
-  const output = compileLRC(lines, includeTranslations, precision, metadata, lineEndings, includeSecondary, wordPrecision, exportTranslationIndex);
+  const { lines, includeTranslations = false, precision = 'hundredths', metadata = {}, includeFeaturedInTitle = false, lineEndings = 'lf', includeSecondary = false, wordPrecision, exportTranslationIndex = 0 } = body;
+  const header = buildLrcExportMetadata(metadata, includeFeaturedInTitle === true);
+  if (!header.ok) return reply.code(422).send({ error: header.message, code: header.code });
+  const output = compileLRC(lines, includeTranslations, precision, header.metadata, lineEndings, includeSecondary, wordPrecision, exportTranslationIndex);
   return reply.send({ output, format: 'lrc' });
 }
 
