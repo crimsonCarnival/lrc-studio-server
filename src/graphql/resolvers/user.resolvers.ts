@@ -43,6 +43,7 @@ export interface UpdateProfileInput {
   email?: string;
   bio?: string;
   avatarUrl?: string | null;
+  coverImageUrl?: string | null;
 }
 
 export interface BadgeInput {
@@ -678,7 +679,7 @@ export const userResolvers = {
       const user = await User.findById(context.userId);
       if (!user) throw new Error('User not found');
 
-      const { accountName, displayName, email, bio, avatarUrl } = input;
+      const { accountName, displayName, email, bio, avatarUrl, coverImageUrl } = input;
 
       if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
         const COOLDOWN_DAYS = 7;
@@ -717,6 +718,10 @@ export const userResolvers = {
 
       if (avatarUrl !== undefined) {
         user.avatarUrl = avatarUrl !== null ? sanitizeUrl(avatarUrl) : null;
+      }
+
+      if (coverImageUrl !== undefined) {
+        user.coverImageUrl = coverImageUrl !== null ? sanitizeUrl(coverImageUrl) : null;
       }
 
       await user.save();

@@ -103,6 +103,8 @@ export interface IUser extends Document {
   passwordChangedAt?: Date | null;
   avatarUrl?: string | null;
   avatarPublicId?: string | null;
+  coverImageUrl?: string | null;
+  coverImagePublicId?: string | null;
   isVerified: boolean;
   ban: IBan;
   appeal: IAppeal;
@@ -309,6 +311,14 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       default: null,
     },
+    coverImageUrl: {
+      type: String,
+      default: null,
+    },
+    coverImagePublicId: {
+      type: String,
+      default: null,
+    },
     isVerified: {
       type: Boolean,
       default: false,
@@ -458,6 +468,7 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
     email: this.email,
     pendingEmail: this.pendingEmail ?? null,
     avatarUrl: this.avatarUrl,
+    coverImageUrl: this.coverImageUrl ?? null,
     bio: this.bio || "",
     isVerified: this.isVerified,
     ban: {

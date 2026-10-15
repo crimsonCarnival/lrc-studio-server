@@ -26,6 +26,7 @@ export const userSchema = `
     displayName: String
     email: String
     avatarUrl: String
+    coverImageUrl: String
     bio: String
     isVerified: Boolean!
     ban: UserBan
@@ -105,6 +106,7 @@ export const userSchema = `
     accountName: String!
     displayName: String
     avatarUrl: String
+    coverImageUrl: String
     bio: String
     isVerified: Boolean!
     isAdmin: Boolean!
