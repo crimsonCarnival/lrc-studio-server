@@ -228,8 +228,10 @@ describe('GET /og/project/:publicId (legacy crawler page)', () => {
     await seedPublished();
     const res = await asCrawler('/og/project/pubsong001?s=42.5');
     expect(res.statusCode).toBe(200);
-    // Redirects to the canonical slug URL, keeping the seek time.
-    expect(res.body).toContain('/crawlerowner/projects/m83-midnight-city-pubsong001?s=42.5');
+    // People are redirected to the legacy URL every client resolves (keeping the seek time);
+    // the slug URL stays the canonical crawlers see.
+    expect(res.body).toContain('/project/pubsong001?s=42.5');
+    expect(res.body).toContain('<link rel="canonical" href="https://www.lrcstudio.app/crawlerowner/projects/m83-midnight-city-pubsong001">');
 
     const junk = await asCrawler('/og/project/pubsong001?s=%3Cscript%3E');
     expect(junk.statusCode).toBe(200);

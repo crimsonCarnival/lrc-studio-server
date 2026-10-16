@@ -169,7 +169,12 @@ export async function getProjectOgPage(
   const hidden = meta.robots !== 'index,follow';
   // A shared link can carry where to start (?s=); it rides along to the song page. Hidden
   // projects redirect home and keep nothing.
-  const redirectUrl = hidden ? `${clientOrigin}/` : withDeepLink(meta.canonical, request.query);
+  //
+  // People are sent to the legacy `/project/:id` URL, not to `meta.canonical`: it is the one
+  // route every deployed web client resolves (newer clients canonicalise it themselves). The
+  // slug URL stays in og:url / <link rel="canonical"> for crawlers. Redirecting to the slug URL
+  // before a client serves it lands visitors on the sign-in page.
+  const redirectUrl = hidden ? `${clientOrigin}/` : withDeepLink(`${clientOrigin}/project/${encodeURIComponent(publicId)}`, request.query);
 
   const send = (status: number, body: string): void => {
     reply
