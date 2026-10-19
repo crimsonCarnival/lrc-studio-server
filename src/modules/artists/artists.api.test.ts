@@ -15,6 +15,7 @@ vi.mock('../user_logs/logs.service.js', () => ({ logUserAction: () => undefined 
 vi.mock('../notifications/notifications.service.js', () => ({ upsertSocial: async () => undefined }));
 
 import Artist from '../../db/artist.model.js';
+import User from '../../db/user.model.js';
 import Project from '../projects/project.model.js';
 import ProjectFork from '../projects/projectFork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
@@ -28,17 +29,30 @@ let repl: MongoMemoryReplSet;
 beforeAll(async () => {
   repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(repl.getUri());
-  await Promise.all([Artist.init(), Project.init(), Lyrics.init(), ProjectFork.init()]);
+  await Promise.all([Artist.init(), Project.init(), Lyrics.init(), ProjectFork.init(), User.init()]);
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
   await repl.stop();
 });
 beforeEach(async () => {
-  await Promise.all([Artist.deleteMany({}), Project.deleteMany({}), Lyrics.deleteMany({}), ProjectFork.deleteMany({})]);
+  await Promise.all([Artist.deleteMany({}), Project.deleteMany({}), Lyrics.deleteMany({}), ProjectFork.deleteMany({}), User.deleteMany({})]);
 });
 
-const uid = () => new mongoose.Types.ObjectId().toString();
+// Owners must be real User documents with an accountName: project URLs are
+// owner-scoped (`/:accountName/projects/:slug-:publicId`) and projectPath()
+// throws for an owner without one, so a bare random ObjectId would fail every
+// create/clone here instead of exercising the real path.
+let userSeq = 0;
+const uid = async (): Promise<string> => {
+  const n = ++userSeq;
+  const { insertedId } = await User.collection.insertOne({
+    accountName: `owner${n}`,
+    email: `owner${n}@x.test`,
+    passwordHash: 'x',
+  });
+  return insertedId.toString();
+};
 const credit = (name: string, role: 'primary' | 'featured') => ({ name, role });
 
 async function create(userId: string, input: Record<string, unknown>) {
@@ -52,7 +66,7 @@ const stored = (publicId: string) => Project.findOne({ publicId }).lean<{
 
 describe('create', () => {
   it('stores credits, links the owner’s artist records and derives songArtist and slug', async () => {
-    const u = uid();
+    const u = await uid();
     const r = await create(u, {
       title: 'Song',
       metadata: { songName: 'Song', artists: [credit('Drake', 'primary'), credit('Rihanna', 'featured')] },
@@ -67,7 +81,7 @@ describe('create', () => {
   });
 
   it('ignores a legacy songArtist string (it is derived now) and a client-sent artistId', async () => {
-    const u = uid();
+    const u = await uid();
     const foreign = new mongoose.Types.ObjectId();
     const legacy = await create(u, { title: 'T', metadata: { songArtist: 'Drake feat. Rihanna' } });
     expect((await stored(legacy.publicId))!.metadata.songArtist).toBe('');
@@ -78,7 +92,7 @@ describe('create', () => {
   });
 
   it('rejects invalid credits with a code and creates nothing', async () => {
-    const u = uid();
+    const u = await uid();
     for (const [artists, code] of [
       [[credit('A', 'primary'), credit(' a ', 'featured')], 'artist_duplicate'],
       [[credit('A', 'featured')], 'artist_primary_required'],
@@ -93,7 +107,7 @@ describe('create', () => {
 
 describe('update', () => {
   it('adds featured artists, keeps them when artists is omitted, and clears with []', async () => {
-    const u = uid();
+    const u = await uid();
     const { publicId } = await create(u, { title: 'Song', metadata: { artists: [credit('Drake', 'primary')] } });
 
     await patchProject(publicId, { metadata: { artists: [credit('Drake', 'primary'), credit('A', 'featured'), credit('B', 'featured')] } }, u);
@@ -112,7 +126,7 @@ describe('update', () => {
   });
 
   it('rejects invalid credits and leaves the project as it was', async () => {
-    const u = uid();
+    const u = await uid();
     const { publicId } = await create(u, { title: 'Song', metadata: { artists: [credit('Drake', 'primary')] } });
     const r = await patchProject(publicId, { metadata: { artists: [credit('A', 'featured')] } }, u);
     expect(r).toMatchObject({ code: 'artist_primary_required' });
@@ -120,7 +134,7 @@ describe('update', () => {
   });
 
   it('a legacy row without artists keeps its songArtist through an unrelated edit', async () => {
-    const u = uid();
+    const u = await uid();
     const legacy = await Project.collection.insertOne({
       publicId: 'legacy0001', userId: new mongoose.Types.ObjectId(u), public: true, title: 'T',
       metadata: { songArtist: 'Old Text' },
@@ -133,7 +147,7 @@ describe('update', () => {
 
 describe('search', () => {
   it('a featured artist’s name matches the song (it is part of songArtist)', async () => {
-    const u = uid();
+    const u = await uid();
     await create(u, { title: 'Song', metadata: { artists: [credit('Drake', 'primary'), credit('Rihanna', 'featured')] } });
     const hits = await Project.find({ 'metadata.songArtist': /rihanna/i }).lean();
     expect(hits).toHaveLength(1);
@@ -142,7 +156,7 @@ describe('search', () => {
 
 describe('autocomplete scoping', () => {
   it('only returns the caller’s own artists, by prefix, paginated and capped', async () => {
-    const [a, b] = [uid(), uid()];
+    const [a, b] = [await uid(), await uid()];
     await create(a, { title: 'x', metadata: { artists: [credit('Drake', 'primary'), credit('Dua Lipa', 'featured'), credit('Daft Punk', 'featured')] } });
     await create(b, { title: 'y', metadata: { artists: [credit('Dracula Band', 'primary')] } });
 
@@ -159,7 +173,7 @@ describe('autocomplete scoping', () => {
   });
 
   it('treats the prefix as text, not a pattern', async () => {
-    const a = uid();
+    const a = await uid();
     await create(a, { title: 'x', metadata: { artists: [credit('A.B', 'primary'), credit('AxB', 'featured')] } });
     expect((await suggestArtists(a, 'a.')).items.map((i) => i.name)).toEqual(['A.B']);
     expect((await suggestArtists(a, '.*')).items).toEqual([]);
@@ -168,7 +182,7 @@ describe('autocomplete scoping', () => {
 
 describe('fork', () => {
   it('re-links credits to the forker’s own artist records', async () => {
-    const [owner, forker] = [uid(), uid()];
+    const [owner, forker] = [await uid(), await uid()];
     const { publicId } = await create(owner, { title: 'Song', metadata: { artists: [credit('Drake', 'primary'), credit('Rihanna', 'featured')] } });
     const forked = await cloneProject(publicId, forker);
     const f = await stored((forked as { publicId: string }).publicId);

@@ -70,7 +70,7 @@ const asCrawler = (url: string) =>
 describe('GET /og/meta as a crawler', () => {
   it('serves a published song with its real metadata', async () => {
     await seedPublished();
-    const res = await asCrawler('/og/meta?path=%2Fproject%2Fpubsong001');
+    const res = await asCrawler('/og/meta?path=' + encodeURIComponent('/crawlerowner/projects/m83-midnight-city-pubsong001'));
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('application/json');
@@ -93,7 +93,7 @@ describe('GET /og/meta as a crawler', () => {
       '/crawlerowner/projects/m83-midnight-city-pubsong001',
       '/crawlerowner/projects/m83-midnight-city-pubsong001/edit',
       '/old-name/projects/an-outdated-slug-pubsong001',
-      '/project/pubsong001',
+      '/crawlerowner/projects/m83-midnight-city-pubsong001/fork',
     ]) {
       const res = await asCrawler('/og/meta?path=' + encodeURIComponent(path));
       expect(res.json().canonical).toBe(canonical);
@@ -112,7 +112,7 @@ describe('GET /og/meta as a crawler', () => {
     expect(page.body).toContain(`<meta property="og:title" content="${title}">`);
     expect(page.body).toContain(`<meta name="twitter:title" content="${title}">`);
 
-    const es = await asCrawler('/og/meta?hl=es&path=' + encodeURIComponent('/project/pubsong001'));
+    const es = await asCrawler('/og/meta?hl=es&path=' + encodeURIComponent('/crawlerowner/projects/m83-midnight-city-pubsong001'));
     expect(es.json().title).toBe('Midnight City – M83, Sincronizado por crawlerowner | LRC Studio');
   });
 
@@ -159,7 +159,7 @@ describe('GET /og/meta as a crawler', () => {
     await seedPublished();
     const res = await app.inject({
       method: 'GET',
-      url: '/og/meta?path=%2Fproject%2Fpubsong001',
+      url: '/og/meta?path=' + encodeURIComponent('/crawlerowner/projects/m83-midnight-city-pubsong001'),
       headers: { 'user-agent': FACEBOOK_UA, 'x-forwarded-host': 'evil.example.com' },
     });
     expect(res.body).not.toContain('evil.example.com');
@@ -228,9 +228,9 @@ describe('GET /og/project/:publicId (legacy crawler page)', () => {
     await seedPublished();
     const res = await asCrawler('/og/project/pubsong001?s=42.5');
     expect(res.statusCode).toBe(200);
-    // People are redirected to the legacy URL every client resolves (keeping the seek time);
-    // the slug URL stays the canonical crawlers see.
-    expect(res.body).toContain('/project/pubsong001?s=42.5');
+    // People and crawlers now get the same URL — the canonical one — with the
+    // seek time carried onto it. There is no second project URL to prefer.
+    expect(res.body).toContain('/crawlerowner/projects/m83-midnight-city-pubsong001?s=42.5');
     expect(res.body).toContain('<link rel="canonical" href="https://www.lrcstudio.app/crawlerowner/projects/m83-midnight-city-pubsong001">');
 
     const junk = await asCrawler('/og/project/pubsong001?s=%3Cscript%3E');

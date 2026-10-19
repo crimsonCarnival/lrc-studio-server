@@ -14,7 +14,7 @@ vi.mock('./og.meta.service.js', async (orig) => {
   const real = await orig<typeof import('./og.meta.service.js')>();
   return {
     ...real,
-    resolveOgMeta: async () => state.hidden
+    resolveProjectMeta: async () => state.hidden
       ? real.buildHiddenMeta('en')
       : real.buildProjectMeta(
         { publicId: 'E46boTClMr', songName: 'Creep', songArtist: 'Radiohead', ownerAccountName: '32blunts', lyricLines: [] },
@@ -37,29 +37,32 @@ afterAll(async () => { await app.close(); });
 const get = (url: string) => app.inject({ method: 'GET', url, headers: { 'user-agent': 'facebookexternalhit/1.1' } });
 const redirectOf = (body: string) => /<meta http-equiv="refresh" content="0; url=([^"]+)">/.exec(body)?.[1];
 
+const CANONICAL = 'https://www.lrcstudio.app/32blunts/projects/radiohead-creep-E46boTClMr';
+
 describe('GET /og/project/:publicId redirect target', () => {
-  it('sends people to the legacy /project/:id URL every client resolves, never to the slug URL', async () => {
+  it('sends people to the canonical slug URL — the only project URL there is', async () => {
     state.hidden = false;
     const res = await get('/og/project/E46boTClMr');
     expect(res.statusCode).toBe(200);
-    expect(redirectOf(res.body)).toBe('https://www.lrcstudio.app/project/E46boTClMr');
-    expect(res.body).not.toMatch(/refresh[^>]*\/projects\//);
+    expect(redirectOf(res.body)).toBe(CANONICAL);
+    // The old /project/:id route is gone from the client, so redirecting there
+    // would land a visitor on the 404 page.
+    expect(res.body).not.toMatch(/refresh[^>]*\/project\/E46boTClMr/);
   });
 
-  it('keeps the slug URL as the canonical / og:url for crawlers', async () => {
+  it('sends crawlers to that same URL as canonical / og:url', async () => {
     state.hidden = false;
     const { body } = await get('/og/project/E46boTClMr');
-    const canonical = 'https://www.lrcstudio.app/32blunts/projects/radiohead-creep-E46boTClMr';
-    expect(body).toContain(`<link rel="canonical" href="${canonical}">`);
-    expect(body).toContain(`<meta property="og:url" content="${canonical}">`);
+    expect(body).toContain(`<link rel="canonical" href="${CANONICAL}">`);
+    expect(body).toContain(`<meta property="og:url" content="${CANONICAL}">`);
   });
 
   it('carries a valid ?s= and ?list= through, and drops junk', async () => {
     state.hidden = false;
     const ok = await get('/og/project/E46boTClMr?s=42.5&list=abc_1');
-    expect(redirectOf(ok.body)).toBe('https://www.lrcstudio.app/project/E46boTClMr?s=42.5&amp;list=abc_1');
+    expect(redirectOf(ok.body)).toBe(`${CANONICAL}?s=42.5&amp;list=abc_1`);
     const junk = await get('/og/project/E46boTClMr?s=%3Cx%3E&list=a%20b');
-    expect(redirectOf(junk.body)).toBe('https://www.lrcstudio.app/project/E46boTClMr');
+    expect(redirectOf(junk.body)).toBe(CANONICAL);
   });
 
   it('a hidden project redirects home and leaks nothing', async () => {

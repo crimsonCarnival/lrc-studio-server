@@ -17,6 +17,7 @@ import Activity from '../../db/activity.model.js';
 import HeatmapDay from '../../db/heatmap-day.model.js';
 import HeatmapProjectEdit from '../../db/heatmap-project-edit.model.js';
 import Project from '../projects/project.model.js';
+import User from '../../db/user.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import { recordHeatmapEvent, getUserActivityHeatmap } from './activity.service.js';
 import { createProject, patchProject } from '../projects/projects.crud.service.js';
@@ -26,7 +27,7 @@ let repl: MongoMemoryReplSet;
 beforeAll(async () => {
   repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(repl.getUri());
-  await Promise.all([HeatmapDay.init(), HeatmapProjectEdit.init(), Project.init(), Lyrics.init(), Activity.init()]);
+  await Promise.all([HeatmapDay.init(), HeatmapProjectEdit.init(), Project.init(), Lyrics.init(), Activity.init(), User.init()]);
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
@@ -35,7 +36,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await Promise.all([
     HeatmapDay.deleteMany({}), HeatmapProjectEdit.deleteMany({}), Activity.deleteMany({}),
-    Project.deleteMany({}), Lyrics.deleteMany({}),
+    Project.deleteMany({}), Lyrics.deleteMany({}), User.deleteMany({}),
   ]);
 });
 
@@ -112,6 +113,20 @@ describe('getUserActivityHeatmap', () => {
 });
 
 describe('project hooks', () => {
+  // These go through createProject/patchProject, which build the project's
+  // owner-scoped URL — so unlike the pure recordHeatmapEvent tests above, the
+  // owner has to be a real User with an accountName or projectPath() throws.
+  let ownerSeq = 0;
+  async function mkOwner(): Promise<string> {
+    const n = ++ownerSeq;
+    const { insertedId } = await User.collection.insertOne({
+      accountName: `heatowner${n}`,
+      email: `heatowner${n}@x.test`,
+      passwordHash: 'x',
+    });
+    return insertedId.toString();
+  }
+
   async function mkProject(u: string): Promise<string> {
     const res = await createProject({
       title: 'T', lyrics: { editorMode: 'lrc', sections: [{ lines: [{ text: 'a', timestamp: 1 }] }] },
@@ -129,13 +144,13 @@ describe('project hooks', () => {
   const clearDedup = (u: string) => HeatmapProjectEdit.deleteMany({ userId: u });
 
   it('counts project creation', async () => {
-    const u = uid();
+    const u = await mkOwner();
     await mkProject(u);
     expect((await counters(u))?.projectsCreated).toBe(1);
   });
 
   it('ignores saves — manual or auto — that change nothing or only playback state / visibility', async () => {
-    const u = uid();
+    const u = await mkOwner();
     const id = await mkProject(u);
     await clearDedup(u);
     await patchProject(id, { title: 'T' }, u);
@@ -149,7 +164,7 @@ describe('project hooks', () => {
   });
 
   it('counts an autosave (no saveKind) that changes content, same as a manual save', async () => {
-    const u = uid();
+    const u = await mkOwner();
     const id = await mkProject(u);
     await clearDedup(u);
     await patchProject(id, { title: 'Changed by autosave' }, u);
@@ -158,7 +173,7 @@ describe('project hooks', () => {
   });
 
   it('counts one project once per day no matter how many times it is saved (manual and/or auto)', async () => {
-    const u = uid();
+    const u = await mkOwner();
     const id = await mkProject(u);
     await clearDedup(u);
     await patchProject(id, { saveKind: 'manual', title: 'New' }, u);
@@ -169,7 +184,7 @@ describe('project hooks', () => {
   });
 
   it('counts distinct projects edited the same day separately', async () => {
-    const u = uid();
+    const u = await mkOwner();
     const id1 = await mkProject(u);
     const id2 = await mkProject(u);
     await clearDedup(u);

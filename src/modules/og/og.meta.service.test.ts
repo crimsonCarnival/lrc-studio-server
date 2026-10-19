@@ -52,6 +52,14 @@ const API = 'https://api.lrcstudio.app';
 const meta = (path: string | null | undefined) =>
   resolveOgMeta({ path, locale: 'en', apiOrigin: API });
 
+/**
+ * The one project URL shape. The account name and slug are cosmetic — the parser
+ * reads the id off the tail — so these tests pass whatever is convenient and still
+ * exercise the real route.
+ */
+const projectUrl = (publicId: string, accountName = 'someone') =>
+  `/${accountName}/projects/a-song-${publicId}`;
+
 let seq = 0;
 async function mkUser(extra: Record<string, unknown> = {}) {
   seq++;
@@ -92,14 +100,21 @@ describe('parseClientPath', () => {
     expect(parseClientPath('/')).toEqual({ kind: 'home' });
     expect(parseClientPath('/explore')).toEqual({ kind: 'explore' });
     expect(parseClientPath('/leaderboard')).toEqual({ kind: 'leaderboard' });
-    expect(parseClientPath('/project/abc123XYZ_')).toEqual({ kind: 'project', publicId: 'abc123XYZ_' });
+    expect(parseClientPath(projectUrl('abc123XYZ_'))).toEqual({ kind: 'project', publicId: 'abc123XYZ_' });
     expect(parseClientPath('/profile/someone')).toEqual({ kind: 'profile', accountName: 'someone' });
     expect(parseClientPath('/profile/someone/lists/0123456789abcdef01234567'))
       .toEqual({ kind: 'list', accountName: 'someone', listId: '0123456789abcdef01234567' });
   });
 
   it('ignores query and hash', () => {
-    expect(parseClientPath('/project/abc?hl=es#x')).toEqual({ kind: 'project', publicId: 'abc' });
+    expect(parseClientPath(`${projectUrl('abc123XYZ_')}?hl=es#x`))
+      .toEqual({ kind: 'project', publicId: 'abc123XYZ_' });
+  });
+
+  it('no longer answers to the removed /project/:id URL', () => {
+    // Deleted outright rather than redirected: a second URL for one project
+    // splits crawlers and share counts between them.
+    expect(parseClientPath('/project/abc123XYZ_').kind).toBe('unknown');
   });
 
   it('accepts a full URL and uses only its path', () => {
@@ -117,7 +132,8 @@ describe('parseClientPath', () => {
 
   it('rejects an object-shaped segment rather than letting it reach a filter', () => {
     // A query operator smuggled through the path must never become a filter.
-    expect(parseClientPath('/project/%7B%22$ne%22:null%7D').kind).toBe('unknown');
+    expect(parseClientPath('/alice/projects/%7B%22$ne%22:null%7D').kind).toBe('unknown');
+    expect(parseClientPath('/%7B%22$ne%22:null%7D/projects/a-song-abc123XYZ_').kind).toBe('unknown');
   });
 
   it('rejects control characters and over-long paths', () => {
@@ -184,11 +200,11 @@ describe('published project', () => {
   it('is a music.song with the artist when one is set', async () => {
     const userId = await mkUser();
     await mkProject(
-      { publicId: 'song01', userId, metadata: { songName: 'Midnight City', songArtist: 'M83' } },
+      { publicId: 'song010001', userId, metadata: { songName: 'Midnight City', songArtist: 'M83' } },
       ['The stars align above the city lights', 'Midnight echoes through the empty halls'],
     );
 
-    const m = await meta('/project/song01');
+    const m = await meta(projectUrl('song010001'));
     expect(m.type).toBe('music.song');
     expect(m.music?.musician).toBe('M83');
     expect(m.title).toContain('Midnight City');
@@ -196,13 +212,13 @@ describe('published project', () => {
     expect(m.robots).toBe(ROBOTS_INDEX);
     expect(m.description).toContain('The stars align');
     expect(m.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX);
-    expect(m.image.url).toContain('/og/image/project/song01.png');
+    expect(m.image.url).toContain('/og/image/project/song010001.png');
   });
 
   it('falls back to article when there is no artist', async () => {
     const userId = await mkUser();
-    await mkProject({ publicId: 'song02', userId, metadata: { songName: 'Untitled Demo' } }, ['line one']);
-    const m = await meta('/project/song02');
+    await mkProject({ publicId: 'song020002', userId, metadata: { songName: 'Untitled Demo' } }, ['line one']);
+    const m = await meta(projectUrl('song020002'));
     expect(m.type).toBe('article');
     expect(m.music?.musician).toBeUndefined();
   });
@@ -229,14 +245,14 @@ describe('privacy', () => {
 
   it('an unpublished project is byte-identical to one that never existed', async () => {
     await seedPrivate();
-    const hidden = await meta('/project/privat0001');
-    const missing = await meta('/project/doesnotexi');
+    const hidden = await meta(projectUrl('privat0001'));
+    const missing = await meta(projectUrl('doesnotexi'));
     expect(JSON.stringify(hidden)).toBe(JSON.stringify(missing));
   });
 
   it('leaks no title, artist, lyric or owner for an unpublished project', async () => {
     await seedPrivate();
-    const body = JSON.stringify(await meta('/project/privat0001'));
+    const body = JSON.stringify(await meta(projectUrl('privat0001')));
     for (const secret of SECRETS) {
       expect(body.toLowerCase()).not.toContain(secret.toLowerCase());
     }
@@ -244,13 +260,13 @@ describe('privacy', () => {
 
   it('marks hidden resources noindex', async () => {
     await seedPrivate();
-    expect((await meta('/project/privat0001')).robots).toBe(ROBOTS_NOINDEX);
-    expect((await meta('/project/doesnotexi')).robots).toBe(ROBOTS_NOINDEX);
+    expect((await meta(projectUrl('privat0001'))).robots).toBe(ROBOTS_NOINDEX);
+    expect((await meta(projectUrl('doesnotexi'))).robots).toBe(ROBOTS_NOINDEX);
     expect((await meta('/profile/nosuchuser')).robots).toBe(ROBOTS_NOINDEX);
   });
 
   it('hides a project whose owner is deleted, banned or shadow-banned', async () => {
-    const missing = JSON.stringify(await meta('/project/doesnotexi'));
+    const missing = JSON.stringify(await meta(projectUrl('doesnotexi')));
     const cases = [
       { isDeleted: true },
       { ban: { active: true } },
@@ -259,10 +275,10 @@ describe('privacy', () => {
     let n = 0;
     for (const state of cases) {
       n++;
-      const publicId = `hid${n}00000`;
+      const publicId = `hid${n}000000`;
       const userId = await mkUser(state);
       await mkProject({ publicId, userId, metadata: { songName: 'Leaky', songArtist: 'Nope' } }, ['leak']);
-      const m = await meta(`/project/${publicId}`);
+      const m = await meta(projectUrl(publicId));
       expect(m.robots).toBe(ROBOTS_NOINDEX);
       expect(JSON.stringify(m).replace(publicId, 'doesnotexi')).toBe(missing);
     }
