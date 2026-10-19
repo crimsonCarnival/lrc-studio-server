@@ -50,12 +50,12 @@ export interface RegisterResult extends AuthTokenResult {
 }
 
 export async function registerAtomically(
-  userData: { accountName?: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string; userAgent?: string; platformVersion?: string },
+  userData: { accountName: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string; userAgent?: string; platformVersion?: string },
   jwt: JwtTools
 ): Promise<RegisterResult> {
   return withTransaction(async (session: ClientSession) => {
     const [user] = await User.create([{
-      ...(userData.accountName ? { accountName: userData.accountName } : {}),
+      accountName: userData.accountName,
       ...(userData.displayName ? { displayName: userData.displayName } : {}),
       ...(userData.email ? { email: userData.email } : {}),
       passwordHash: userData.passwordHash,

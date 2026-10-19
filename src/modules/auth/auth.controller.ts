@@ -100,7 +100,7 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
   const deviceId = extractDeviceId(req, reply);
   if (!deviceId) return;
   const body = req.body as {
-    accountName?: string;
+    accountName: string;
     displayName?: string;
     email?: string;
     password: string;

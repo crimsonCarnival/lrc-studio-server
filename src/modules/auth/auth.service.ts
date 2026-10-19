@@ -171,7 +171,7 @@ async function checkDevice(deviceId: string | null | undefined, user: IUser | nu
 }
 
 export async function register(
-  data: { accountName?: string; displayName?: string; email?: string; password: string; recaptchaToken?: string; userAgent?: string; platformVersion?: string },
+  data: { accountName: string; displayName?: string; email?: string; password: string; recaptchaToken?: string; userAgent?: string; platformVersion?: string },
   jwt: JwtTools,
   ip: string,
   deviceId: string
@@ -188,19 +188,21 @@ export async function register(
   if (deviceCheck.error) return deviceCheck;
 
   const { email, password } = data;
-  const accountName = data.accountName ? data.accountName.toLowerCase().trim() : undefined;
+  const accountName = (data.accountName ?? '').toLowerCase().trim();
   const displayName = data.displayName ? data.displayName.trim().slice(0, 50) : undefined;
 
-  if (accountName) {
-    if (!isValidAccountName(accountName) || isReservedAccountName(accountName)) {
-      return err('accountName_taken', 409);
-    }
-    // A former name of another user is never reissued: old links would land on a stranger.
-    if (await isAccountNameInHistoryOfOther(accountName)) return err('accountName_taken', 409);
-  }
+  // Second gate behind registerSchema's `required`. Every account must have a
+  // name: `/:accountName` is the profile URL and project URLs are scoped under
+  // it, so a nameless account is unaddressable (projectPath() throws on one).
+  if (!accountName) return err('accountName_invalid', 400);
 
-  const query: Record<string, unknown>[] = [];
-  if (accountName) query.push({ accountName });
+  if (!isValidAccountName(accountName) || isReservedAccountName(accountName)) {
+    return err('accountName_taken', 409);
+  }
+  // A former name of another user is never reissued: old links would land on a stranger.
+  if (await isAccountNameInHistoryOfOther(accountName)) return err('accountName_taken', 409);
+
+  const query: Record<string, unknown>[] = [{ accountName }];
   if (email) query.push({ email: email.toLowerCase() });
   const existing = await User.findOne({ $or: query });
   if (existing) {

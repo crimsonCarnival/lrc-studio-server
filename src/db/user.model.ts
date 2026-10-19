@@ -389,12 +389,17 @@ const userSchema = new mongoose.Schema<IUser>(
   { timestamps: true, collection: "users" },
 );
 
-// At least one identifier required
+// Every account must have an account name: `/:accountName` is the profile URL and
+// every project URL is scoped under it, so an account without one is unaddressable
+// and `projectPath()` throws for its projects. Registration and Google sign-up both
+// guarantee one; this is the last line of defence against a script or a future code
+// path creating a nameless account. Safe to enforce at this layer only because the
+// backfill has run and no nameless row remains (scripts/backfill-account-names.ts).
 userSchema.pre(
   "validate",
   function (this: IUser, next: mongoose.CallbackWithoutResultAndOptionalError) {
-    if (!this.accountName && !this.email) {
-      return next(new Error("Either accountName or email is required"));
+    if (!this.accountName) {
+      return next(new Error("accountName is required"));
     }
     next();
   },
