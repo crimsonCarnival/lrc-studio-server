@@ -102,6 +102,7 @@ export const settingsSchema = `
   type InterfaceSettings {
     defaultLanguage: String
     fontSize: String
+    fontWeight: String
     spacing: String
     previewAlignment: String
     focusMode: String
@@ -257,6 +258,7 @@ export const settingsSchema = `
   input InterfaceSettingsInput {
     defaultLanguage: String
     fontSize: String
+    fontWeight: String
     spacing: String
     previewAlignment: String
     focusMode: String
