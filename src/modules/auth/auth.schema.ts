@@ -18,8 +18,11 @@ export const registerSchema = {
       password: { type: 'string', minLength: 8, maxLength: 128 },
       recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
     },
-    required: ['password'],
-    anyOf: [{ required: ['accountName'] }, { required: ['email'] }],
+    // accountName is mandatory, not one-of-two with email: `/:accountName` is
+    // the profile URL and every project URL is owner-scoped under it, so an
+    // email-only account could not be addressed at all. Login still accepts
+    // either identifier — see loginSchema.
+    required: ['accountName', 'password'],
   },
 };
 

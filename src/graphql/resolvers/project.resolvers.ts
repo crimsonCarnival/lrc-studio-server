@@ -28,7 +28,7 @@ import type { SearchSort } from '../../modules/projects/projects.search.service.
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
 import { joinNames, primaryNames, type ArtistCredit } from '../../utils/artists.js';
-import { projectSlug } from '../../utils/project-slug.js';
+import { projectSlug, projectPath } from '../../utils/project-slug.js';
 import { registerProjectView } from '../../modules/projects/project-view.service.js';
 
 type LibraryMeta = {
@@ -44,6 +44,24 @@ type LibraryMeta = {
 function libraryArtist(meta: Pick<LibraryMeta, 'artists' | 'songArtist'> | undefined): string {
   const primaries = primaryNames(meta?.artists ?? []);
   return primaries.length > 0 ? joinNames(primaries) : (meta?.songArtist ?? '');
+}
+
+/**
+ * Canonical owner-scoped path for an activity row's target project, resolved
+ * the way playlist/user activities resolve theirs (one lookup for the owner's
+ * accountName). Best-effort by design: without it the web client falls back to
+ * building the URL itself, so an owner with no accountName — corrupt data now
+ * that registration requires one — leaves the field unset rather than failing
+ * the mutation that triggered the activity.
+ */
+async function activityTargetPath(project: Pick<IProject, 'publicId' | 'slug' | 'title' | 'metadata' | 'userId'> | null | undefined): Promise<string | undefined> {
+  if (!project?.publicId || !project.userId) return undefined;
+  const owner = await User.findById(project.userId.toString()).select('accountName').lean<IUser>();
+  if (!owner?.accountName) return undefined;
+  return projectPath(
+    { publicId: project.publicId, slug: project.slug, title: project.title, metadata: project.metadata },
+    owner.accountName,
+  );
 }
 
 export const projectResolvers = {
@@ -188,7 +206,7 @@ export const projectResolvers = {
 
       // Fetch source metadata before cloning — needed for the activity payload
       const sourceProject = await Project.findOne({ publicId: id })
-        .select('title coverImage userId')
+        .select('publicId title coverImage userId slug metadata')
         .lean<IProject>();
 
       // Dedup (already_forked), not-found, forks-disabled, and quota checks now live in
@@ -202,13 +220,14 @@ export const projectResolvers = {
       }
       const cloned = result as { publicId: string; url: string };
 
-      writeActivity({
-        actorId:      context.userId,
+      activityTargetPath(sourceProject).then((targetPath) => writeActivity({
+        actorId:      context.userId!,
         type:         'project_forked',
         publicId:    id,
         projectTitle: sourceProject?.title || '',
         coverImage:   sourceProject?.coverImage || '',
-      }).catch(() => {});
+        targetPath,
+      })).catch(() => {});
 
       // Badge: fork_received for source project owner
       const sourceOwnerId = sourceProject?.userId?.toString();
@@ -229,7 +248,7 @@ export const projectResolvers = {
         err.status = 401;
         throw err;
       }
-      const project = await Project.findOne({ publicId: id }).select('userId title coverImage').lean<IProject>();
+      const project = await Project.findOne({ publicId: id }).select('publicId userId title coverImage slug metadata').lean<IProject>();
       if (!project) throw new Error('Project not found');
 
       let isNewStar = false;
@@ -269,13 +288,14 @@ export const projectResolvers = {
       // writeActivity is outside the upsert try/catch so a duplicate-key swallow
       // doesn't silently suppress the activity error path
       if (isNewStar) {
-        writeActivity({
+        activityTargetPath(project).then((targetPath) => writeActivity({
           actorId:      context.userId!,
           type:         'project_starred',
           publicId:    id,
           projectTitle: project.title || '',
           coverImage:   project.coverImage || '',
-        }).catch(() => {});
+          targetPath,
+        })).catch(() => {});
       }
       const starred = await Project.findOne({ publicId: id });
       if (isNewStar && starred) {
@@ -341,13 +361,14 @@ export const projectResolvers = {
 
       const actor = await User.findById(ctx.userId).select('accountName').lean<IUser>();
       if (actor) {
+        const targetPath = await activityTargetPath(project);
         writeActivity({
           actorId: ctx.userId,
           type: 'project_boosted',
           publicId,
           projectTitle: project.title || (project.metadata as Record<string, unknown> | undefined)?.['songName'] as string || '',
           coverImage: project.coverImage ?? '',
-          targetPath: '',
+          targetPath,
         }).catch(() => {});
       }
 

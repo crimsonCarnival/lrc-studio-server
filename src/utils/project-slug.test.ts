@@ -72,8 +72,13 @@ describe('projectPath', () => {
     expect(projectPath({ publicId: 'k3x9a2c7qm' }, '32blunts')).toBe('/32blunts/projects/k3x9a2c7qm');
   });
 
-  it('falls back to the legacy URL without an owner', () => {
-    expect(projectPath(base, null)).toBe('/project/k3x9a2c7qm');
+  // There is no legacy `/project/:id` fallback any more. Registration requires
+  // an accountName, so an owner without one is corrupt data; minting a URL with
+  // an empty segment would 404 silently wherever it was pasted, so it throws.
+  it('throws rather than build a link for an owner with no account name', () => {
+    for (const owner of [null, undefined, '']) {
+      expect(() => projectPath(base, owner)).toThrow(/no accountName/);
+    }
   });
 
   it('percent-encodes non-ASCII slugs and account names', () => {

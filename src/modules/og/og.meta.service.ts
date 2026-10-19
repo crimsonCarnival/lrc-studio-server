@@ -231,17 +231,16 @@ export function parseClientPath(rawPath: string | null | undefined): ParsedOgRou
     return { kind: 'unknown' };
   }
 
-  if (first === 'project' && segments.length === 2 && PUBLIC_ID.test(second)) {
-    return { kind: 'project', publicId: second };
-  }
-
-  // /:accountName/projects/:slug-:publicId[/edit]. The slug and account name are
-  // cosmetic; the project is identified by the last 10 characters of the segment
+  // /:accountName/projects/:slug-:publicId[/edit|/fork]. The slug and account name
+  // are cosmetic; the project is identified by the last 10 characters of the segment
   // (the nanoid alphabet contains '-', so the id cannot be found by splitting).
+  //
+  // This is the only project shape. The former /project/:publicId is gone, not
+  // redirected: a second URL for one resource splits crawlers and share counts.
   if (
     second === 'projects'
     && ACCOUNT_NAME.test(first)
-    && (segments.length === 3 || (segments.length === 4 && fourth === 'edit'))
+    && (segments.length === 3 || (segments.length === 4 && (fourth === 'edit' || fourth === 'fork')))
     && third.length >= PROJECT_ID_LENGTH
   ) {
     const publicId = third.slice(-PROJECT_ID_LENGTH);
@@ -283,7 +282,10 @@ export type ProjectMetaInput = {
   songArtist?: string | null;
   /** Stored slug; recomputed from the song / title when absent. */
   slug?: string | null;
-  /** Current account name of the owner. Absent = fall back to the legacy /project/:id URL. */
+  /**
+   * Current account name of the owner. Required in practice: every project URL is
+   * owner-scoped, so building meta without one throws rather than inventing a path.
+   */
   ownerAccountName?: string | null;
   lyricLines: string[];
 };
@@ -413,7 +415,12 @@ function isUserPubliclyVisible(user: {
   return true;
 }
 
-async function resolveProject(
+/**
+ * Meta for one project, by id. Exported for `GET /og/project/:publicId`, which
+ * knows the id directly and has no client path to parse — and could not build
+ * one, since the canonical path needs the owner's name and the project's slug.
+ */
+export async function resolveProjectMeta(
   publicId: string,
   locale: OgLocale,
   apiOrigin: string,
@@ -442,6 +449,12 @@ async function resolveProject(
     if (!isUserPubliclyVisible(owner)) return buildHiddenMeta(locale);
     ownerAccountName = owner?.accountName ?? null;
   }
+
+  // Every project URL is owner-scoped, so a project with no owner name has no
+  // address to be canonical at. Registration makes that impossible going
+  // forward; a legacy row that slipped through is treated as hidden rather than
+  // throwing out of a crawler endpoint.
+  if (!ownerAccountName) return buildHiddenMeta(locale);
 
   const lyrics = await Lyrics.findOne({ publicId })
     .select('sections')
@@ -554,7 +567,7 @@ export async function resolveOgMeta(params: {
       case 'leaderboard':
         return buildBrandedMeta(locale, strings.leaderboardTitle, strings.leaderboardDescription, '/leaderboard');
       case 'project':
-        return await resolveProject(route.publicId, locale, apiOrigin);
+        return await resolveProjectMeta(route.publicId, locale, apiOrigin);
       case 'profile':
         return await resolveProfile(route.accountName, locale, apiOrigin);
       case 'list':

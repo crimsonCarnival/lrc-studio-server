@@ -35,8 +35,17 @@ describe('parseClientPath: slug project URLs', () => {
       .toEqual({ kind: 'project', publicId: 'k3x9a2c7qm' });
   });
 
-  it('still parses the legacy /project/:id and rejects malformed shapes', () => {
-    expect(parseClientPath('/project/k3x9a2c7qm')).toEqual({ kind: 'project', publicId: 'k3x9a2c7qm' });
+  it('parses the /edit and /fork variants', () => {
+    for (const suffix of ['edit', 'fork']) {
+      expect(parseClientPath(`/a/projects/x-k3x9a2c7qm/${suffix}`))
+        .toEqual({ kind: 'project', publicId: 'k3x9a2c7qm' });
+    }
+  });
+
+  it('no longer parses the removed /project/:id, and rejects malformed shapes', () => {
+    // The old URL was deleted from the client rather than redirected, so the
+    // parser must not keep a second address for the same project alive.
+    expect(parseClientPath('/project/k3x9a2c7qm').kind).toBe('unknown');
     for (const bad of ['/a/projects/short', '/a/projects/x-k3x9a2c7qm/other', '/a/projects/x/y/z', '/a/projects/' + 'x'.repeat(10) + '%00']) {
       expect(parseClientPath(bad).kind).toBe('unknown');
     }
@@ -62,8 +71,11 @@ describe('buildProjectMeta canonical', () => {
     expect(m.canonical).toBe('https://www.lrcstudio.app/u1/projects/stored-k3x9a2c7qm');
   });
 
-  it('falls back to the legacy URL for an ownerless project', () => {
-    expect(buildProjectMeta(base, 'en', 'https://api.example').canonical).toBe('https://www.lrcstudio.app/project/k3x9a2c7qm');
+  it('refuses to build a URL for an ownerless project rather than inventing one', () => {
+    // Every project URL is owner-scoped. A project whose owner has no account
+    // name is corrupt data (registration requires one), and a path with an
+    // empty segment would 404 wherever it was pasted — so this throws instead.
+    expect(() => buildProjectMeta(base, 'en', 'https://api.example')).toThrow(/accountName/);
   });
 });
 
@@ -118,11 +130,6 @@ describe('project link-preview title: "Song – Artist, Synced by owner | LRC St
 
   it('drops the artist when there is none', () => {
     expect(title({ songName: 'Creep', ownerAccountName: '32blunts' })).toBe('Creep, Synced by 32blunts | LRC Studio');
-  });
-
-  it('drops the credit without an owner (legacy URL fallback)', () => {
-    expect(title({ songName: 'Creep', songArtist: 'Radiohead' })).toBe('Creep – Radiohead | LRC Studio');
-    expect(title({ songName: 'Creep' })).toBe('Creep | LRC Studio');
   });
 
   it('falls back from song name to the project title, then to the site name', () => {

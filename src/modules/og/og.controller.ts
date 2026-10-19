@@ -8,6 +8,7 @@ import {
   getClientOrigin,
   resolveCardSourceUrl,
   resolveOgMeta,
+  resolveProjectMeta,
   isValidCardId,
   type OgCardType,
 } from './og.meta.service.js';
@@ -160,21 +161,19 @@ export async function getProjectOgPage(
   const nonce = crypto.randomBytes(16).toString('base64');
   const clientOrigin = getClientOrigin();
 
-  const meta = await resolveOgMeta({
-    path: `/project/${publicId}`,
-    locale,
-    apiOrigin: resolveApiOrigin(request),
-  });
+  // Resolved by id rather than by a synthesized client path: the canonical path
+  // needs the owner's name and the project's slug, which is exactly what this
+  // lookup is for.
+  const meta = await resolveProjectMeta(publicId, locale, resolveApiOrigin(request));
 
   const hidden = meta.robots !== 'index,follow';
   // A shared link can carry where to start (?s=); it rides along to the song page. Hidden
   // projects redirect home and keep nothing.
   //
-  // People are sent to the legacy `/project/:id` URL, not to `meta.canonical`: it is the one
-  // route every deployed web client resolves (newer clients canonicalise it themselves). The
-  // slug URL stays in og:url / <link rel="canonical"> for crawlers. Redirecting to the slug URL
-  // before a client serves it lands visitors on the sign-in page.
-  const redirectUrl = hidden ? `${clientOrigin}/` : withDeepLink(`${clientOrigin}/project/${encodeURIComponent(publicId)}`, request.query);
+  // People and crawlers are sent to the same place: `meta.canonical`, the owner-scoped
+  // slug URL. There is no second URL to prefer any more — the old `/project/:id` route
+  // is gone from the client, so redirecting there would land on the 404 page.
+  const redirectUrl = hidden ? `${clientOrigin}/` : withDeepLink(meta.canonical, request.query);
 
   const send = (status: number, body: string): void => {
     reply

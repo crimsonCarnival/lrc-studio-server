@@ -1,8 +1,48 @@
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
+import { isValidAccountName, isReservedAccountName } from '../auth/auth.validation.js';
 
 const norm = (name: string): string => name.toLowerCase().trim();
+
+/**
+ * Reduces an arbitrary display name to the account-name charset. Returns ''
+ * when nothing usable survives, so callers can fall back to a generic base.
+ */
+export function accountNameBase(input: string | null | undefined): string {
+  return (input ?? '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '')
+    // Leaves room for the `_NNNN` suffix inside the 30-char limit.
+    .slice(0, 22);
+}
+
+/**
+ * Mints an unused account name as `<base>_NNNN`. Used wherever an account is
+ * created without the user picking a name (Google sign-up, backfill), so every
+ * user satisfies the "every account has an addressable name" invariant.
+ *
+ * Rejects reserved names and names any user previously held — handing out a
+ * former name would silently repoint old links at a different person.
+ */
+export async function generateUniqueAccountName(
+  displayName?: string | null,
+  attempts = 25,
+): Promise<string> {
+  const base = accountNameBase(displayName) || 'user';
+  for (let i = 0; i < attempts; i++) {
+    const candidate = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
+    if (!isValidAccountName(candidate) || isReservedAccountName(candidate)) continue;
+    if (await User.exists({ accountName: candidate })) continue;
+    if (await isAccountNameInHistoryOfOther(candidate)) continue;
+    return candidate;
+  }
+  // Every random suffix collided — fall back to something that cannot.
+  return `user_${new mongoose.Types.ObjectId().toString().slice(-10)}`;
+}
 
 /**
  * Resolves an account name taken from a URL to its owner. A current account

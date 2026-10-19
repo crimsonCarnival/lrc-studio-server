@@ -603,13 +603,21 @@ export async function patchProject(
   });
 
   if (isPublishing && userId) {
-    writeActivity({
-      actorId:      userId,
-      type:         'project_published',
-      publicId,
-      projectTitle: updatedProject?.title || '',
-      coverImage:   updatedProject?.coverImage || '',
-    }).catch(() => {});
+    // targetPath spares the web client from rebuilding the owner-scoped URL.
+    // Best-effort: an owner with no accountName leaves it unset rather than
+    // throwing out of projectPath() and losing the activity row entirely.
+    User.findById(userId).select('accountName').lean<{ accountName?: string }>()
+      .then((owner) => writeActivity({
+        actorId:      userId,
+        type:         'project_published',
+        publicId,
+        projectTitle: updatedProject?.title || '',
+        coverImage:   updatedProject?.coverImage || '',
+        targetPath:   owner?.accountName && updatedProject
+          ? projectPath(updatedProject, owner.accountName)
+          : undefined,
+      }))
+      .catch(() => {});
   }
 
   if (data.lyrics !== undefined && userId) {

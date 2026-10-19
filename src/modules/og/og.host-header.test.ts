@@ -68,7 +68,7 @@ describe('host header cannot reach og:image in production', () => {
   const forged = (headers: Record<string, string>) =>
     app.inject({
       method: 'GET',
-      url: '/og/meta?path=%2Fproject%2Fhostsong01',
+      url: '/og/meta?path=' + encodeURIComponent('/hostowner/projects/someone-host-song-hostsong01'),
       headers: { 'user-agent': FACEBOOK_UA, ...headers },
     });
 

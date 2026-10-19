@@ -5,6 +5,7 @@ import { sendVerification } from '../email-verification/email-verification.servi
 import { createOnce } from '../notifications/notifications.service.js';
 import { triggerBadgeCheck } from '../badges/badge.service.js';
 import { grantSuperadminIfEnvMatch } from '../auth/superadmin-env.service.js';
+import { generateUniqueAccountName } from '../users/account-name.service.js';
 import type { JwtPayload } from '../../types/index.js';
 
 /**
@@ -188,6 +189,10 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
       user.google.name = name;
       user.google.pictureUrl = picture;
       if (!user.avatarUrl && picture) user.avatarUrl = picture || null;
+      // Legacy email-only accounts predate the "every account has a name"
+      // invariant; linking Google is a chance to satisfy it. Mirrors what the
+      // backfill script does, for accounts it hasn't reached yet.
+      if (!user.accountName) user.accountName = await generateUniqueAccountName(name || email);
       const wasVerified = user.isVerified;
       user.isVerified = true;
       await user.save();
@@ -196,22 +201,10 @@ export async function handleLoginCallback(code: string): Promise<Record<string, 
         triggerBadgeCheck(user._id.toString(), 'email_verified').catch(() => {});
       }
     } else {
-      // Auto-generate accountName from Google display name
-      const nameBase = (name || 'user')
-        .toLowerCase()
-        .normalize('NFD').replace(/[̀-ͯ]/g, '')
-        .replace(/[^a-z0-9_-]/g, '_')
-        .replace(/_{2,}/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 22);
-      const base = nameBase || 'user';
-
-      let accountName = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
-      let attempt = 0;
-      while (await User.findOne({ accountName }) && attempt < 10) {
-        accountName = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
-        attempt++;
-      }
+      // Auto-generate accountName from the Google display name. Shared with the
+      // backfill script so both honour the same reserved-name and
+      // former-name rules, and so neither can leave a user unnamed.
+      const accountName = await generateUniqueAccountName(name);
 
       // Brand-new user — seed avatarUrl from Google picture
       user = new User({

@@ -49,10 +49,29 @@ export interface PathSource extends SlugSource {
   slug?: string | null;
 }
 
-/** Canonical web path for a project. Prefers the stored slug over recomputing. */
+/**
+ * Canonical web path for a project. Prefers the stored slug over recomputing.
+ *
+ * There is exactly one shape. Account names are mandatory — `/:accountName` is
+ * the profile URL, so an account without one could not be addressed at all — and
+ * registration enforces it, so an owner without a name is corrupt data, not a
+ * case to route around. It throws rather than minting a half-built link, because
+ * a URL with an empty segment would 404 silently wherever it was pasted.
+ */
 export function projectPath(p: PathSource, ownerAccountName: string | null | undefined): string {
+  if (!ownerAccountName) {
+    throw new Error(`projectPath: project ${p.publicId} has an owner with no accountName`);
+  }
   const slug = p.slug || projectSlug(p);
   const segment = slug ? `${slug}-${p.publicId}` : p.publicId;
-  if (!ownerAccountName) return `/project/${encodeURIComponent(p.publicId)}`;
   return `/${encodeURIComponent(ownerAccountName)}/projects/${encodeURIComponent(segment)}`;
+}
+
+/** The `/edit` and `/fork` variants of the canonical path. */
+export function projectEditPath(p: PathSource, ownerAccountName: string | null | undefined): string {
+  return `${projectPath(p, ownerAccountName)}/edit`;
+}
+
+export function projectForkPath(p: PathSource, ownerAccountName: string | null | undefined): string {
+  return `${projectPath(p, ownerAccountName)}/fork`;
 }
