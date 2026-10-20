@@ -116,77 +116,124 @@ async function searchTrackId(songName: string, artistName?: string): Promise<str
   return data.tracks?.items?.[0]?.id ?? null;
 }
 
-async function fetchFallbackTrack(songName: string, artistName?: string): Promise<Record<string, unknown>> {
-  const apiKey = getEnv().LASTFM_API_KEY;
-  if (!apiKey) return { error: 'No track metadata provider configured', status: 503 };
+interface ITunesSearchResponse {
+  results?: {
+    trackId?: number;
+    trackName?: string;
+    artistName?: string;
+    collectionName?: string;
+    artworkUrl100?: string;
+    releaseDate?: string;
+    primaryGenreName?: string;
+    trackTimeMillis?: number;
+    trackNumber?: number;
+    trackCount?: number;
+  }[];
+}
 
+async function fetchFromItunes(songName: string, artistName?: string): Promise<Record<string, unknown>> {
   try {
-    const params = new URLSearchParams({
-      method: 'track.getInfo',
-      api_key: apiKey,
-      track: songName.trim(),
-      autocorrect: '1',
-      format: 'json',
-    });
-    if (artistName?.trim()) {
-      params.append('artist', artistName.trim());
-    }
+    const term = artistName?.trim() ? `${songName.trim()} ${artistName.trim()}` : songName.trim();
+    const params = new URLSearchParams({ term, entity: 'song', limit: '1', country: 'US' });
+    const res = await fetch(`https://itunes.apple.com/search?${params}`);
+    if (!res.ok) return { error: 'iTunes metadata search failed', status: 502 };
 
-    const res = await fetch(`https://ws.audioscrobbler.com/2.0/?${params}`);
-    if (!res.ok) return { error: 'Fallback metadata search failed', status: 502 };
-
-    interface FallbackTag { name: string }
-    interface FallbackTrackResponse {
-      error?: number;
-      track?: {
-        mbid?: string;
-        name?: string;
-        duration?: string;
-        artist?: { name?: string };
-        album?: { title?: string };
-        toptags?: { tag?: FallbackTag[] };
-      };
-    }
-    const data = await res.json() as FallbackTrackResponse;
-    if (!data || !data.track || data.error) return { error: 'No tracks found', status: 404 };
-
-    const track = data.track;
-    const genres = track.toptags?.tag?.map((t: FallbackTag) => t.name) || [];
+    const data = await res.json() as ITunesSearchResponse;
+    const track = data.results?.[0];
+    if (!track) return { error: 'No tracks found', status: 404 };
 
     return {
-      trackId: track.mbid || '',
-      name: track.name || songName,
-      artist: track.artist?.name || artistName || '',
-      album: track.album?.title || '',
-      albumArt: null,
-      duration: track.duration ? parseInt(track.duration, 10) : 0,
-      genres,
-      totalTracks: null,
+      trackId: track.trackId != null ? String(track.trackId) : '',
+      name: stripHtml(track.trackName || songName),
+      artist: stripHtml(track.artistName || artistName || ''),
+      album: stripHtml(track.collectionName || ''),
+      duration: track.trackTimeMillis ?? 0,
+      albumArt: track.artworkUrl100 ? track.artworkUrl100.replace('100x100', '600x600') : null,
+      releaseYear: track.releaseDate ? track.releaseDate.slice(0, 4) : null,
+      totalTracks: track.trackCount ?? null,
+      trackNumber: track.trackNumber ?? null,
+      genres: track.primaryGenreName ? [track.primaryGenreName] : [],
     };
   } catch (err) {
-    console.error('[song-metadata] Fallback fetch error:', err);
-    return { error: 'Failed to fetch fallback metadata', status: 500 };
+    console.error('[song-metadata] iTunes fetch error:', err);
+    return { error: 'Failed to fetch iTunes metadata', status: 500 };
+  }
+}
+
+interface DeezerSearchResponse {
+  data?: {
+    id?: number;
+    title?: string;
+    artist?: { name?: string };
+    album?: { id?: number; title?: string; cover_big?: string };
+    duration?: number;
+  }[];
+}
+
+interface DeezerAlbumResponse {
+  release_date?: string;
+  nb_tracks?: number;
+  genres?: { data?: { name?: string }[] };
+}
+
+async function fetchFromDeezer(songName: string, artistName?: string): Promise<Record<string, unknown>> {
+  try {
+    const q = artistName?.trim() ? `${songName.trim()} ${artistName.trim()}` : songName.trim();
+    const res = await fetch(`https://api.deezer.com/search?${new URLSearchParams({ q, limit: '1' })}`);
+    if (!res.ok) return { error: 'Deezer metadata search failed', status: 502 };
+
+    const data = await res.json() as DeezerSearchResponse;
+    const track = data.data?.[0];
+    if (!track) return { error: 'No tracks found', status: 404 };
+
+    let releaseYear: string | null = null;
+    let totalTracks: number | null = null;
+    let genres: string[] = [];
+    if (track.album?.id) {
+      try {
+        const albumRes = await fetch(`https://api.deezer.com/album/${track.album.id}`);
+        if (albumRes.ok) {
+          const album = await albumRes.json() as DeezerAlbumResponse;
+          releaseYear = album.release_date ? album.release_date.slice(0, 4) : null;
+          totalTracks = album.nb_tracks ?? null;
+          genres = (album.genres?.data ?? []).map((g) => g.name).filter((n): n is string => !!n);
+        }
+      } catch { /* album extras remain empty */ }
+    }
+
+    return {
+      trackId: track.id != null ? String(track.id) : '',
+      name: stripHtml(track.title || songName),
+      artist: stripHtml(track.artist?.name || artistName || ''),
+      album: stripHtml(track.album?.title || ''),
+      duration: track.duration ? track.duration * 1000 : 0,
+      albumArt: track.album?.cover_big || null,
+      releaseYear,
+      totalTracks,
+      trackNumber: null,
+      genres,
+    };
+  } catch (err) {
+    console.error('[song-metadata] Deezer fetch error:', err);
+    return { error: 'Failed to fetch Deezer metadata', status: 500 };
   }
 }
 
 export async function lookupTrack(songName: string, artistName?: string): Promise<Record<string, unknown>> {
-  let result: Record<string, unknown>;
-
   if (isProviderConfigured()) {
     try {
       const trackId = await searchTrackId(songName, artistName);
       if (trackId) {
         const details = await fetchTrackDetails(trackId);
-        if (!details.error) {
-          result = details;
-          return result;
-        }
+        if (!details.error) return details;
       }
     } catch (err) {
       console.error('[song-metadata] Primary lookup failed, falling back', err);
     }
   }
 
-  result = await fetchFallbackTrack(songName, artistName);
-  return result;
+  const fromItunes = await fetchFromItunes(songName, artistName);
+  if (!fromItunes.error) return fromItunes;
+
+  return await fetchFromDeezer(songName, artistName);
 }
