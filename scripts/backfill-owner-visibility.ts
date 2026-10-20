@@ -94,14 +94,23 @@ async function main(): Promise<void> {
   const hiddenIds = hidden.map((o) => o._id);
   if (!DRY_RUN) {
     const visible = { ownerActive: true, ownerListed: true };
+    // Matches docs explicitly flagged false AND docs that predate this field
+    // entirely (`$exists: false`) — the latter never got the schema default
+    // because it only applies at document construction, not to a raw query.
+    const needsRestore = {
+      $or: [
+        { ownerActive: false }, { ownerListed: false },
+        { ownerActive: { $exists: false } }, { ownerListed: { $exists: false } },
+      ],
+    };
     const [p, l] = await Promise.all([
       Project.updateMany(
-        { userId: { $nin: hiddenIds }, $or: [{ ownerActive: false }, { ownerListed: false }] },
+        { userId: { $nin: hiddenIds }, ...needsRestore },
         { $set: visible },
         { timestamps: false },
       ),
       Playlist.updateMany(
-        { userId: { $nin: hiddenIds }, $or: [{ ownerActive: false }, { ownerListed: false }] },
+        { userId: { $nin: hiddenIds }, ...needsRestore },
         { $set: visible },
       ),
     ]);

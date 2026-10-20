@@ -88,8 +88,14 @@ export const loaders: MercuriusLoaders = {
 
         queries.forEach(({ obj }, i) => {
           const user = obj.user as LoaderObj | undefined;
+          const userId = obj.userId as LoaderObj | unknown;
           if (user && (user.id || user._id)) {
             results[i] = user;
+          } else if (userId && typeof userId === 'object' && ((userId as LoaderObj)._id || (userId as LoaderObj).id)) {
+            // `.populate('userId', ...)` (explore/sharing services) replaces userId with the
+            // full user doc. Use it directly — passing it to the $in fetch below as if it
+            // were a raw id matches nothing, silently nulling Project.user for every row.
+            results[i] = userId as LoaderObj;
           } else {
             const id = obj.userId || obj.user; // fallback to obj.user if it's just an ID
             if (id) toFetch.push({ id, index: i });
