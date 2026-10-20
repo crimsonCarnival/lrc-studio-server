@@ -61,6 +61,8 @@ async function fetchTrackDetails(trackId: string): Promise<Record<string, unknow
     album: { name: string; images?: { url: string }[]; release_date?: string; total_tracks?: number };
     duration_ms: number;
     track_number?: number;
+    preview_url?: string | null;
+    explicit?: boolean;
   };
 
   const genres: string[] = [];
@@ -93,6 +95,8 @@ async function fetchTrackDetails(trackId: string): Promise<Record<string, unknow
     releaseYear: track.album?.release_date ? track.album.release_date.slice(0, 4) : null,
     totalTracks: track.album?.total_tracks ?? null,
     trackNumber: track.track_number ?? null,
+    previewUrl: track.preview_url || null,
+    explicit: !!track.explicit,
     genres,
   };
 
@@ -128,6 +132,8 @@ interface ITunesSearchResponse {
     trackTimeMillis?: number;
     trackNumber?: number;
     trackCount?: number;
+    previewUrl?: string;
+    trackExplicitness?: string;
   }[];
 }
 
@@ -152,6 +158,8 @@ async function fetchFromItunes(songName: string, artistName?: string): Promise<R
       releaseYear: track.releaseDate ? track.releaseDate.slice(0, 4) : null,
       totalTracks: track.trackCount ?? null,
       trackNumber: track.trackNumber ?? null,
+      previewUrl: track.previewUrl || null,
+      explicit: track.trackExplicitness === 'explicit',
       genres: track.primaryGenreName ? [track.primaryGenreName] : [],
     };
   } catch (err) {
@@ -167,6 +175,8 @@ interface DeezerSearchResponse {
     artist?: { name?: string };
     album?: { id?: number; title?: string; cover_big?: string };
     duration?: number;
+    preview?: string;
+    explicit_lyrics?: boolean;
   }[];
 }
 
@@ -211,6 +221,8 @@ async function fetchFromDeezer(songName: string, artistName?: string): Promise<R
       releaseYear,
       totalTracks,
       trackNumber: null,
+      previewUrl: track.preview || null,
+      explicit: !!track.explicit_lyrics,
       genres,
     };
   } catch (err) {

@@ -73,6 +73,8 @@ export const projectSchema = `
     trackNumber: Int
     trackCount: Int
     albumArt: String
+    previewUrl: String
+    explicit: Boolean
   }
 
   enum ArtistRole {
@@ -149,6 +151,8 @@ export const projectSchema = `
     trackNumber: Int
     trackCount: Int
     albumArt: String
+    previewUrl: String
+    explicit: Boolean
   }
 
   input ProjectLyricsInput {

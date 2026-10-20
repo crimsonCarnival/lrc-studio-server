@@ -121,6 +121,8 @@ const metadataSchema = new mongoose.Schema(
     trackNumber: { type: Number, default: null, min: 1, max: 999 },
     trackCount: { type: Number, default: null, min: 1, max: 999 },
     albumArt: { type: String, default: '', maxlength: 2000, set: textSetter },
+    previewUrl: { type: String, default: '', maxlength: 2000, set: textSetter },
+    explicit: { type: Boolean, default: false },
   },
   { _id: false }
 );
