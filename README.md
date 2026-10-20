@@ -611,7 +611,7 @@ docker-compose up -d --build
 | `CLOUDINARY_*` | No audio, avatar or cover uploads |
 | `EMAIL_SMTP_*` | Verification and password-reset emails don't send |
 | `RECAPTCHA_SECRET_KEY` | Bot protection on register/upload is inert |
-| `TRACK_METADATA_*`, `LASTFM_API_KEY` | Song metadata lookup unavailable. Last.fm's signup form asks for a callback URL, but only its *user* auth flow uses one — app-level lookup ignores it, so any URL will do |
+| `TRACK_METADATA_*` | Song metadata lookup skips straight to the iTunes/Deezer fallback chain (both keyless, so lookup still works) |
 
 Never commit `.env`. Never log or echo secret values.
 

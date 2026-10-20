@@ -611,7 +611,7 @@ docker-compose up -d --build
 | `CLOUDINARY_*` | Sin subidas de audio, avatar ni portada |
 | `EMAIL_SMTP_*` | No se envían correos de verificación ni de restablecimiento |
 | `RECAPTCHA_SECRET_KEY` | La protección antibots en registro y subidas queda inactiva |
-| `TRACK_METADATA_*`, `LASTFM_API_KEY` | Sin búsqueda de metadatos. El formulario de registro de Last.fm pide una URL de retorno, pero solo su flujo de autenticación *de usuario* la usa — la consulta a nivel de aplicación la ignora, así que cualquier URL sirve |
+| `TRACK_METADATA_*` | La búsqueda de metadatos salta directo a la cadena de respaldo iTunes/Deezer (ambas sin clave, así que la búsqueda sigue funcionando) |
 
 Nunca subas `.env` al repositorio. Nunca registres ni muestres valores secretos.
 
