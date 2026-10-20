@@ -23,7 +23,7 @@ import { emitProjectUpdated } from '../../modules/projects/projects.controller.j
 import { getIO } from '../../socket/socket.manager.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
-import { getBlockedSet } from '../../modules/blocks/block.service.js';
+import { getBlockedSet, isHiddenByBlock, ownerIdOf } from '../../modules/blocks/block.service.js';
 import type { SearchSort } from '../../modules/projects/projects.search.service.js';
 import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
@@ -68,7 +68,10 @@ export const projectResolvers = {
   Query: {
     // id is the publicId nanoid string, NOT the MongoDB _id
     project: async (_root: unknown, { id }: { id: string }, context: Context) => {
-      return getProject(id, context.userId ?? null);
+      const project = await getProject(id, context.userId ?? null);
+      // Blocked either way: the project does not exist for this viewer.
+      if (project && await isHiddenByBlock(context.userId, ownerIdOf(project as { userId?: unknown }))) return null;
+      return project;
     },
 
     projects: async (_root: unknown, { limit: _limit = 20, offset: _offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
@@ -98,13 +101,16 @@ export const projectResolvers = {
       return results;
     },
 
-    getShare: async (_root: unknown, { id }: { id: string }) => {
-      return getShareProject(id);
+    getShare: async (_root: unknown, { id }: { id: string }, context: Context) => {
+      const project = await getShareProject(id);
+      if (project && await isHiddenByBlock(context.userId, ownerIdOf(project as { userId?: unknown }))) return null;
+      return project;
     },
 
     publicProject: async (_root: unknown, { publicId }: { publicId: string }, context: Context) => {
       const project = await Project.findOne({ publicId }).lean<IProject>();
       if (!project) return null;
+      if (await isHiddenByBlock(context.userId, ownerIdOf(project))) return null;
       if (project.public) return project;
       if (context.userId && project.userId?.toString() === context.userId) return project;
       return null;
@@ -208,6 +214,9 @@ export const projectResolvers = {
       const sourceProject = await Project.findOne({ publicId: id })
         .select('publicId title coverImage userId slug metadata')
         .lean<IProject>();
+      if (sourceProject && await isHiddenByBlock(context.userId, ownerIdOf(sourceProject))) {
+        throw Object.assign(new Error('Project not found'), { extensions: { code: 'not_found', status: 404 } });
+      }
 
       // Dedup (already_forked), not-found, forks-disabled, and quota checks now live in
       // cloneProject() itself so every caller gets them consistently and the TOCTOU race is
@@ -249,7 +258,7 @@ export const projectResolvers = {
         throw err;
       }
       const project = await Project.findOne({ publicId: id }).select('publicId userId title coverImage slug metadata').lean<IProject>();
-      if (!project) throw new Error('Project not found');
+      if (!project || await isHiddenByBlock(context.userId, ownerIdOf(project))) throw new Error('Project not found');
 
       let isNewStar = false;
       try {
@@ -344,7 +353,7 @@ export const projectResolvers = {
       // ownerActive: boosting feeds the trending score, so content from a
       // deactivated or banned owner must not be boostable.
       const project = await Project.findOne({ publicId, public: true, ownerActive: { $ne: false } }).lean<IProject>();
-      if (!project) throw new Error('Project not found');
+      if (!project || await isHiddenByBlock(ctx.userId, ownerIdOf(project))) throw new Error('Project not found');
       if (project.userId?.toString() === ctx.userId) throw new Error('Cannot boost your own project');
 
       try {

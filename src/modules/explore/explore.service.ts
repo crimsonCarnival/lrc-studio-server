@@ -36,8 +36,12 @@ export async function getTrendingProjects(offset: number, limit: number, viewerI
   return { projects, total, hasMore: offset + projects.length < total };
 }
 
-export async function getPopularPlaylists(offset: number, limit: number) {
-  const filter = { isPublic: true, ownerListed: true };
+export async function getPopularPlaylists(offset: number, limit: number, viewerId?: string) {
+  const blockedSet = await getBlockedSet(viewerId);
+  const filter: Record<string, unknown> = { isPublic: true, ownerListed: true };
+  if (blockedSet.size > 0) {
+    filter.userId = { $nin: [...blockedSet].map((id) => new mongoose.Types.ObjectId(id)) };
+  }
   const [playlists, total] = await Promise.all([
     Playlist.find(filter)
       .sort({ trendingScore: -1, createdAt: -1 })

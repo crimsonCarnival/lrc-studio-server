@@ -5,6 +5,12 @@ import { getIO } from '../../socket/socket.manager.js';
 import Follow from '../../db/follow.model.js';
 import { enqueueNotif, enqueueNotifIfLoaded, peekNotifs, loadHeap, clearHeap } from '../../lib/notification-heap.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
+import { getCachedBlockedSet } from '../blocks/block-list.cache.js';
+
+// Nothing reaches a user from someone in a block relationship with them.
+async function blockedBetween(ownerId: string, actorId: string): Promise<boolean> {
+  return (await getCachedBlockedSet(ownerId)).has(actorId);
+}
 
 export type NotificationDoc = FlattenMaps<INotification> & { _id: mongoose.Types.ObjectId };
 
@@ -25,6 +31,7 @@ export interface UpsertSocialParams {
 export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
   const { ownerId, type, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl } = params;
   if (ownerId === actorId) return;
+  if (await blockedBetween(ownerId, actorId)) return;
 
   const prefs = await getPreferences(ownerId);
   const prefKey = type as keyof typeof prefs.notifications;
@@ -66,6 +73,7 @@ export interface UpsertReactionParams {
 export async function upsertReaction(params: UpsertReactionParams): Promise<void> {
   const { ownerId, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl, emoji } = params;
   if (ownerId === actorId) return;
+  if (await blockedBetween(ownerId, actorId)) return;
 
   const prefs = await getPreferences(ownerId);
   if (!prefs.notifications.reaction) return;
@@ -97,6 +105,7 @@ export interface UpsertFollowParams {
 export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
   const { ownerId, actorId, actorAccountName, actorAvatarUrl } = params;
   if (ownerId === actorId) return;
+  if (await blockedBetween(ownerId, actorId)) return;
 
   const prefs = await getPreferences(ownerId);
   if (!prefs.notifications.follow) return;
@@ -294,11 +303,26 @@ export async function listNotifications(
 ): Promise<{ notifications: NotificationDoc[]; unreadCount: number }> {
   // Returns unread notifications ordered by priority (heap). Previously returned all notifications by recency.
   const userObjId = new mongoose.Types.ObjectId(userId);
-  const [prioritized, unreadCount] = await Promise.all([
+  const [prioritized, unreadCount, blockedSet] = await Promise.all([
     getPrioritizedUnread(userId, 50),
     Notification.countDocuments({ userId: userObjId, read: false }),
+    getCachedBlockedSet(userId),
   ]);
-  return { notifications: prioritized as unknown as NotificationDoc[], unreadCount };
+  if (blockedSet.size === 0) return { notifications: prioritized as unknown as NotificationDoc[], unreadCount };
+
+  // Received before the block: drop the blocked actors, and the notification
+  // itself when nobody else is left on it. Notifications without actors
+  // (badges, XP, staff requests) are untouched.
+  const visible: INotification[] = [];
+  let hiddenUnread = 0;
+  for (const n of prioritized) {
+    const actors = (n.actors ?? []).filter((a) => !blockedSet.has(String(a.userId)));
+    const removed = (n.actors?.length ?? 0) - actors.length;
+    if (removed === 0) { visible.push(n); continue; }
+    if (actors.length === 0) { if (!n.read) hiddenUnread++; continue; }
+    visible.push({ ...n, actors, actorCount: Math.max(actors.length, (n.actorCount ?? 0) - removed) } as INotification);
+  }
+  return { notifications: visible as unknown as NotificationDoc[], unreadCount: Math.max(0, unreadCount - hiddenUnread) };
 }
 
 export async function markRead(userId: string, ids: string[]): Promise<void> {

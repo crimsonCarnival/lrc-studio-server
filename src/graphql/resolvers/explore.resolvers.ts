@@ -12,9 +12,10 @@ export const exploreResolvers = {
     },
     popularPlaylists: async (
       _root: unknown,
-      { offset = 0, limit = 12 }: { offset?: number; limit?: number }
+      { offset = 0, limit = 12 }: { offset?: number; limit?: number },
+      context: Context
     ) => {
-      return getPopularPlaylists(offset, limit);
+      return getPopularPlaylists(offset, limit, context.userId ?? undefined);
     },
     suggestedUsers: async (
       _root: unknown,

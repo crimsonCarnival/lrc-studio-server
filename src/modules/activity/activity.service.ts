@@ -4,6 +4,8 @@ import Follow from '../../db/follow.model.js';
 import HeatmapDay, { type IHeatmapDay } from '../../db/heatmap-day.model.js';
 import HeatmapProjectEdit from '../../db/heatmap-project-edit.model.js';
 import User from '../../db/user.model.js';
+import Project from '../projects/project.model.js';
+import { getCachedBlockedSet } from '../blocks/block-list.cache.js';
 import { enqueueFanOut } from './fan-out.queue.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 
@@ -81,9 +83,23 @@ export async function getFeed(
     .lean();
 
   return {
-    activities: items.slice(0, limit),
+    activities: await withoutBlockedTargets(userId, items.slice(0, limit)),
     hasMore: items.length > limit,
   };
+}
+
+// A followed user's activity on a project by someone in a block relationship
+// with the viewer (starring it, forking it, adding it to a list) would show
+// that person's work, so it is left out. A page can come back a little short;
+// `hasMore` still reflects the unfiltered query, so paging carries on.
+async function withoutBlockedTargets<T extends { publicId?: string | null }>(viewerId: string, items: T[]): Promise<T[]> {
+  const blockedSet = await getCachedBlockedSet(viewerId);
+  if (blockedSet.size === 0) return items;
+  const publicIds = [...new Set(items.map((i) => i.publicId).filter((id): id is string => !!id))];
+  if (publicIds.length === 0) return items;
+  const owners = await Project.find({ publicId: { $in: publicIds } }).select('publicId userId').lean<{ publicId: string; userId?: mongoose.Types.ObjectId | null }[]>();
+  const hidden = new Set(owners.filter((p) => p.userId && blockedSet.has(p.userId.toString())).map((p) => p.publicId));
+  return hidden.size === 0 ? items : items.filter((i) => !i.publicId || !hidden.has(i.publicId));
 }
 
 export async function getUserActivity(
