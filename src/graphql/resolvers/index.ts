@@ -11,6 +11,7 @@ import { reactionResolvers } from './reaction.resolvers.js';
 import { statsResolvers }    from './stats.resolvers.js';
 import { requestResolvers }  from './request.resolvers.js';
 import { artistResolvers }   from './artist.resolvers.js';
+import { badgeResolvers }    from './badge.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -26,6 +27,7 @@ export const resolvers = {
     ...statsResolvers.Query,
     ...requestResolvers.Query,
     ...artistResolvers.Query,
+    ...badgeResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -37,6 +39,7 @@ export const resolvers = {
     ...reactionResolvers.Mutation,
     ...statsResolvers.Mutation,
     ...requestResolvers.Mutation,
+    ...badgeResolvers.Mutation,
   },
   User:     userResolvers.User,
   PublicUser: publicUserResolvers,

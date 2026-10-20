@@ -8,9 +8,9 @@ import type { IProject } from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
-import { requirePermission, requireStaff } from './auth-guards.js';
+import { requirePermission } from './auth-guards.js';
 import { hasPermission, rankOf, ROLE_RANK } from '../../shared/permissions.js';
-import { logAdminAction, toggleShadowBan } from '../../modules/admin/admin.service.js';
+import { toggleShadowBan } from '../../modules/admin/admin.service.js';
 import AccountNameHistory from '../../db/account-name-history.model.js';
 import { findUserByAccountName, isAccountNameInHistoryOfOther, recordAccountNameChange } from '../../modules/users/account-name.service.js';
 import { isReservedAccountName } from '../../modules/auth/auth.validation.js';
@@ -31,7 +31,7 @@ import { upsertFollow } from '../../modules/notifications/notifications.service.
 import { getIO } from '../../socket/socket.manager.js';
 import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
 import { writeActivity, getPublicActivityHeatmap } from '../../modules/activity/activity.service.js';
-import { triggerBadgeCheck, updateShowcase, getBadgeRarity, getShowcaseSlots, getStreakView, listBadgeDefsWithHolders, listPublicBadgeDefs } from '../../modules/badges/badge.service.js';
+import { triggerBadgeCheck, getBadgeRarity, getShowcaseSlots, getStreakView } from '../../modules/badges/badge.service.js';
 import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
 import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
@@ -47,19 +47,6 @@ export interface UpdateProfileInput {
   bio?: string;
   avatarUrl?: string | null;
   coverImageUrl?: string | null;
-}
-
-export interface BadgeInput {
-  id?: string;
-  label?: { en: string; es?: string };
-  description?: { en: string; es?: string };
-  icon?: string;
-  color?: string;
-  rarity?: string;
-  conditionType?: string;
-  conditionValue?: number | null;
-  autoGrant?: boolean;
-  xpReward?: number;
 }
 
 /**
@@ -514,51 +501,6 @@ export const userResolvers = {
       };
     },
 
-    badgeDefinitions: async (_root: unknown, _args: unknown, context: Context) => {
-      // Staff-wide read: proposers without badges.manage need the list to propose edits.
-      await requireStaff(context);
-      return listBadgeDefsWithHolders();
-    },
-
-    // Display fields only (no condition/XP internals) — open to every viewer.
-    publicBadgeDefinitions: () => listPublicBadgeDefs(),
-
-    userShowcase: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
-      const user = await findUserByAccountName<IUser>(accountName, 'badges showcasedBadges');
-      if (!user || await isHiddenByBlock(context.userId, user._id)) return [];
-
-      const ownedMap = new Map<string, IUserBadge>(
-        (user.badges ?? []).map((b: IUserBadge) => [b.id, b])
-      );
-
-      const showcased = (user.showcasedBadges ?? [])
-        .filter((id: string) => ownedMap.has(id));
-
-      if (showcased.length === 0) return [];
-
-      const defs = await BadgeDefinition.find({ id: { $in: showcased } }).lean<IBadgeDefinition[]>();
-      const defMap = new Map<string, IBadgeDefinition>(defs.map(d => [d.id, d]));
-
-      return Promise.all(
-        showcased.map(async (id: string) => {
-          const def = defMap.get(id);
-          if (!def) return null;
-          const badge = ownedMap.get(id);
-          const { rarity, pct, holderCount } = await getBadgeRarity(id);
-          return {
-            id,
-            label: def.label,
-            icon: def.icon,
-            color: def.color,
-            rarity,
-            rarityPct: pct,
-            holderCount,
-            grantedAt: badge?.grantedAt ? new Date(badge.grantedAt).toISOString() : new Date().toISOString(),
-          };
-        })
-      ).then(r => r.filter(Boolean));
-    },
-
     followList: async (
       _root: unknown,
       { accountName, type, offset = 0 }: { accountName: string; type: 'FOLLOWERS' | 'FOLLOWING' | 'FRIENDS'; offset?: number },
@@ -851,75 +793,6 @@ export const userResolvers = {
       await svcUnblockUser(context.userId, target._id.toString());
       refreshNotifications(context.userId, target._id.toString());
       return true;
-    },
-
-    updateShowcase: async (_root: unknown, { badgeIds, showcasePublic }: { badgeIds: string[]; showcasePublic?: boolean }, context: Context) => {
-      if (!context.userId) throw new Error('Unauthorized');
-      const result = await updateShowcase(context.userId, badgeIds, showcasePublic);
-      const user = await User.findById(context.userId).select('progression showcasePublic').lean<IUser>();
-      const level = user?.progression?.level ?? 0;
-      return {
-        success: result.success,
-        error: result.error ?? null,
-        showcaseSlots: getShowcaseSlots(level),
-        level,
-        showcasePublic: user?.showcasePublic ?? true,
-      };
-    },
-
-    adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId }: { userIdentifier: string; badgeId: string }, context: Context) => {
-      const { userId: adminId } = await requirePermission(context, 'badges.manage');
-      // Accept accountName or MongoDB _id
-      let resolvedId = userIdentifier.trim();
-      if (!/^[a-f\d]{24}$/i.test(resolvedId)) {
-        const target = await User.findOne({ accountName: resolvedId }).select('_id').lean<IUser>();
-        if (!target) throw new Error(`User "${resolvedId}" not found`);
-        resolvedId = target._id.toString();
-      }
-      const { grantBadge } = await import('../../modules/badges/badge.service.js');
-      const result = await grantBadge(resolvedId, badgeId, adminId);
-      logAdminAction({ adminId, action: 'grant_badge', targetId: resolvedId, targetName: badgeId, ip: context.ip }).catch(() => {});
-      return result;
-    },
-
-    adminRevokeBadge: async (_root: unknown, { userId, badgeId }: { userId: string; badgeId: string }, context: Context) => {
-      const { userId: adminId } = await requirePermission(context, 'badges.manage');
-      const { revokeBadge } = await import('../../modules/badges/badge.service.js');
-      const result = await revokeBadge(userId, badgeId);
-      logAdminAction({ adminId, action: 'revoke_badge', targetId: userId, targetName: badgeId, ip: context.ip }).catch(() => {});
-      return result;
-    },
-
-    adminCreateBadge: async (_root: unknown, { input }: { input: BadgeInput }, context: Context) => {
-      const { userId: adminId } = await requirePermission(context, 'badges.manage');
-      const { createBadgeDef } = await import('../../modules/badges/badge.service.js');
-      const def = await createBadgeDef(input, context.userId ?? undefined);
-      logAdminAction({ adminId, action: 'create_badge', targetName: String(def.id ?? ''), details: input.label?.en ?? null, ip: context.ip }).catch(() => {});
-      return def;
-    },
-
-    adminUpdateBadge: async (_root: unknown, { id, input }: { id: string; input: BadgeInput }, context: Context) => {
-      const { userId: adminId } = await requirePermission(context, 'badges.manage');
-      const { updateBadgeDef } = await import('../../modules/badges/badge.service.js');
-      const def = await updateBadgeDef(id, input);
-      logAdminAction({ adminId, action: 'update_badge', targetName: id, ip: context.ip }).catch(() => {});
-      return def;
-    },
-
-    adminDeleteBadge: async (_root: unknown, { id }: { id: string }, context: Context) => {
-      const { userId: adminId } = await requirePermission(context, 'badges.manage');
-      const { deleteBadgeDef } = await import('../../modules/badges/badge.service.js');
-      const result = await deleteBadgeDef(id);
-      logAdminAction({ adminId, action: 'delete_badge', targetName: id, ip: context.ip }).catch(() => {});
-      return result;
-    },
-
-    adminRetroactiveScan: async (_root: unknown, { badgeId }: { badgeId: string }, context: Context) => {
-      const { userId: adminId } = await requirePermission(context, 'badges.manage');
-      const { retroactiveGrant } = await import('../../modules/badges/badge.service.js');
-      const result = await retroactiveGrant(badgeId);
-      logAdminAction({ adminId, action: 'retroactive_scan', targetName: badgeId, details: `granted ${result?.granted ?? 0}/${result?.scanned ?? 0}`, ip: context.ip }).catch(() => {});
-      return result;
     },
 
     adminShadowBan: async (_root: unknown, { userId, feed, search, reason }: { userId: string; feed: boolean; search: boolean; reason?: string | null }, context: Context) => {
