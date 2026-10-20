@@ -162,7 +162,7 @@ export async function cloneProject(
     await newProject.save({ session });
 
     await Promise.all([
-      Project.updateOne({ publicId: sourcepublicId }, { $inc: { forkCount: 1 } }, { session }),
+      Project.updateOne({ publicId: sourcepublicId }, { $inc: { forkCount: 1 } }, { session, timestamps: false }),
       ProjectFork.create([{
         sourcepublicId,
         forkedpublicId: newProject.publicId,

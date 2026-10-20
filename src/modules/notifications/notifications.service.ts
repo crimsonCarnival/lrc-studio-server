@@ -303,26 +303,38 @@ export async function listNotifications(
 ): Promise<{ notifications: NotificationDoc[]; unreadCount: number }> {
   // Returns unread notifications ordered by priority (heap). Previously returned all notifications by recency.
   const userObjId = new mongoose.Types.ObjectId(userId);
-  const [prioritized, unreadCount, blockedSet] = await Promise.all([
+  const blockedSet = await getCachedBlockedSet(userId);
+  const blockedIds = [...blockedSet].map((id) => new mongoose.Types.ObjectId(id));
+  // Unread, not counting anything that only came from users in a block
+  // relationship with this user: either it has no actors at all (badges, XP,
+  // staff requests) or at least one actor who is not blocked.
+  const unreadFilter = blockedIds.length === 0
+    ? { userId: userObjId, read: false }
+    : {
+        userId: userObjId,
+        read: false,
+        $or: [
+          { 'actors.0': { $exists: false } },
+          { actors: { $elemMatch: { userId: { $nin: blockedIds } } } },
+        ],
+      };
+  const [prioritized, unreadCount] = await Promise.all([
     getPrioritizedUnread(userId, 50),
-    Notification.countDocuments({ userId: userObjId, read: false }),
-    getCachedBlockedSet(userId),
+    Notification.countDocuments(unreadFilter),
   ]);
   if (blockedSet.size === 0) return { notifications: prioritized as unknown as NotificationDoc[], unreadCount };
 
   // Received before the block: drop the blocked actors, and the notification
-  // itself when nobody else is left on it. Notifications without actors
-  // (badges, XP, staff requests) are untouched.
+  // itself when nobody else is left on it. Notifications without actors are untouched.
   const visible: INotification[] = [];
-  let hiddenUnread = 0;
   for (const n of prioritized) {
     const actors = (n.actors ?? []).filter((a) => !blockedSet.has(String(a.userId)));
     const removed = (n.actors?.length ?? 0) - actors.length;
     if (removed === 0) { visible.push(n); continue; }
-    if (actors.length === 0) { if (!n.read) hiddenUnread++; continue; }
+    if (actors.length === 0) continue;
     visible.push({ ...n, actors, actorCount: Math.max(actors.length, (n.actorCount ?? 0) - removed) } as INotification);
   }
-  return { notifications: visible as unknown as NotificationDoc[], unreadCount: Math.max(0, unreadCount - hiddenUnread) };
+  return { notifications: visible as unknown as NotificationDoc[], unreadCount };
 }
 
 export async function markRead(userId: string, ids: string[]): Promise<void> {

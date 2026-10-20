@@ -289,7 +289,7 @@ export const playlistResolvers = {
           playlistId: new mongoose.Types.ObjectId(playlistId),
           savedAt: new Date(),
         });
-        await Playlist.updateOne({ _id: playlistId }, { $inc: { savedCount: 1 } });
+        await Playlist.updateOne({ _id: playlistId }, { $inc: { savedCount: 1 } }, { timestamps: false });
       } catch (err: unknown) {
         if ((err as { code?: number }).code !== 11000) throw err;
         // duplicate key = already saved, silent
@@ -306,19 +306,20 @@ export const playlistResolvers = {
       if (result.deletedCount > 0) {
         await Playlist.updateOne(
           { _id: playlistId, savedCount: { $gt: 0 } },
-          { $inc: { savedCount: -1 } }
+          { $inc: { savedCount: -1 } },
+          { timestamps: false }
         );
       }
       return true;
     },
 
     incrementPlaylistView: async (_: unknown, { id }: { id: string }) => {
-      await Playlist.updateOne({ _id: id }, { $inc: { viewCount: 1 } });
+      await Playlist.updateOne({ _id: id }, { $inc: { viewCount: 1 } }, { timestamps: false });
       return true;
     },
 
     incrementPlaylistShare: async (_: unknown, { id }: { id: string }) => {
-      await Playlist.updateOne({ _id: id }, { $inc: { shareCount: 1 } });
+      await Playlist.updateOne({ _id: id }, { $inc: { shareCount: 1 } }, { timestamps: false });
       return true;
     },
   },

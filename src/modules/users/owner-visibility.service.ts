@@ -97,8 +97,9 @@ export async function syncOwnerVisibility(
   const visibility = computeOwnerVisibility(user);
 
   await Promise.all([
-    Project.updateMany({ userId }, { $set: visibility }),
-    Playlist.updateMany({ userId }, { $set: visibility }),
+    // Moderation state, not an edit: the owner's "edited" times stay as they were.
+    Project.updateMany({ userId }, { $set: visibility }, { timestamps: false }),
+    Playlist.updateMany({ userId }, { $set: visibility }, { timestamps: false }),
   ]);
 
   return visibility;

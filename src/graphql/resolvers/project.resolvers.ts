@@ -269,7 +269,7 @@ export const projectResolvers = {
         );
         if (!existing) {
           isNewStar = true;
-          await Project.updateOne({ publicId: id }, { $inc: { starCount: 1 } });
+          await Project.updateOne({ publicId: id }, { $inc: { starCount: 1 } }, { timestamps: false });
           const ownerId = project.userId?.toString();
           if (ownerId) {
             User.findById(context.userId).select('accountName avatarUrl').lean<IUser>().then(actor => {
@@ -326,7 +326,8 @@ export const projectResolvers = {
       if (deletedCount > 0) {
         await Project.updateOne(
           { publicId: id, starCount: { $gt: 0 } },
-          { $inc: { starCount: -1 } }
+          { $inc: { starCount: -1 } },
+          { timestamps: false }
         );
       }
       const unstarred = await Project.findOne({ publicId: id });
@@ -392,7 +393,7 @@ export const projectResolvers = {
     ) => registerProjectView({ publicId, userId: ctx.userId, deviceId: ctx.deviceId }),
 
     incrementProjectShare: async (_: unknown, { id }: { id: string }) => {
-      await Project.updateOne({ publicId: id }, { $inc: { shareCount: 1 } });
+      await Project.updateOne({ publicId: id }, { $inc: { shareCount: 1 } }, { timestamps: false });
       return true;
     },
   },

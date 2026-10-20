@@ -840,6 +840,7 @@ export const userResolvers = {
       const targetId = target._id.toString();
       if (targetId === context.userId) throw new Error('Cannot block yourself');
       await svcBlockUser(context.userId, targetId);
+      refreshNotifications(context.userId, targetId);
       return true;
     },
 
@@ -848,6 +849,7 @@ export const userResolvers = {
       const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!target) return true;
       await svcUnblockUser(context.userId, target._id.toString());
+      refreshNotifications(context.userId, target._id.toString());
       return true;
     },
 
@@ -1174,6 +1176,14 @@ export const userResolvers = {
     },
   },
 };
+
+// A block hides notifications in both directions (and an unblock brings them
+// back), so both users' open clients refetch their list and unread count.
+function refreshNotifications(...userIds: string[]): void {
+  try {
+    for (const id of userIds) getIO().to(`user:${id}`).emit('notifications:refresh');
+  } catch { /* socket not ready */ }
+}
 
 type PublicUserParent = IUser & { id?: string; asVisitor?: boolean; blockedStub?: boolean };
 
