@@ -842,7 +842,7 @@ export async function deleteProject(
       await Project.updateOne(
         { publicId: project.forkedFrom.publicId, forkCount: { $gt: 0 } },
         { $inc: { forkCount: -1 } },
-        { session }
+        { session, timestamps: false }
       );
       await ProjectFork.deleteOne({ forkedpublicId: publicId }, { session });
     }
@@ -856,7 +856,7 @@ export async function deleteProject(
       await Project.updateMany(
         { publicId: { $in: childForks.map((f) => f.forkedpublicId) } },
         { $set: { 'forkedFrom.sourceDeleted': true } },
-        { session }
+        { session, timestamps: false }
       );
     }
 

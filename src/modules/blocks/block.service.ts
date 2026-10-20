@@ -100,6 +100,25 @@ export async function getBlockedSet(viewerId?: string | null): Promise<Set<strin
   return getCachedBlockedSet(viewerId);
 }
 
+// Either-direction check from the viewer's cached block set: the cheap form for
+// read paths that run on every request. False for anonymous viewers and for
+// the viewer themself.
+export async function isHiddenByBlock(viewerId: string | null | undefined, otherId: unknown): Promise<boolean> {
+  if (!viewerId || otherId == null) return false;
+  const other = String(otherId);
+  if (!other || other === viewerId) return false;
+  return (await getBlockedSet(viewerId)).has(other);
+}
+
+// The owner id of a project/playlist in any of its shapes: an ObjectId, a
+// string, or a populated `{ _id }` user document.
+export function ownerIdOf(doc: { userId?: unknown } | null | undefined): string | null {
+  const raw = doc?.userId as { _id?: unknown } | string | null | undefined;
+  if (raw == null) return null;
+  if (typeof raw === 'object' && '_id' in raw && raw._id != null) return String(raw._id);
+  return String(raw);
+}
+
 // Directional check: did `blockerId` block `blockedId`?
 export async function hasBlocked(blockerId: string, blockedId: string): Promise<boolean> {
   return !!(await Block.exists({ blockerId: oid(blockerId), blockedId: oid(blockedId) }));

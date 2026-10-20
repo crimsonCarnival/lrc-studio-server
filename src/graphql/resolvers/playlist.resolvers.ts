@@ -10,6 +10,7 @@ import type { IUser } from '../../db/user.model.js';
 import { Context } from './context.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { visibilityForNewContent } from '../../modules/users/owner-visibility.service.js';
+import { getBlockedSet, isHiddenByBlock } from '../../modules/blocks/block.service.js';
 
 type LeanPlaylist = IPlaylist & { _id: mongoose.Types.ObjectId };
 type LeanProject = IProject & { _id: mongoose.Types.ObjectId; publicId: string };
@@ -25,9 +26,12 @@ export interface PlaylistInput {
   publicIds?: string[];
 }
 
-async function resolveProjects(playlist: LeanPlaylist) {
+async function resolveProjects(playlist: LeanPlaylist, viewerId?: string | null) {
   if (!playlist.publicIds?.length) return [];
-  const docs = await Project.find({ _id: { $in: playlist.publicIds } }).lean<IProject[]>();
+  // Projects by someone in a block relationship with the viewer drop out of the list.
+  const blockedSet = await getBlockedSet(viewerId);
+  const docs = (await Project.find({ _id: { $in: playlist.publicIds } }).lean<IProject[]>())
+    .filter((d) => !d.userId || !blockedSet.has(d.userId.toString()));
   const mode = playlist.sortMode;
   if (mode === 'STARS') {
     return docs.sort((a, b) => (b.starCount ?? 0) - (a.starCount ?? 0));
@@ -43,7 +47,7 @@ async function resolveProjects(playlist: LeanPlaylist) {
 
 async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
   const [projects, owner, isSavedByMe] = await Promise.all([
-    resolveProjects(playlist),
+    resolveProjects(playlist, context.userId),
     User.findById(playlist.userId).lean<LeanUser>(),
     context.userId
       ? SavedPlaylist.exists({ userId: context.userId, playlistId: playlist._id })
@@ -101,12 +105,14 @@ export const playlistResolvers = {
       if (playlist.ownerActive === false && context.userId !== playlist.userId.toString()) {
         throw new Error('not_found');
       }
+      if (await isHiddenByBlock(context.userId, playlist.userId)) throw new Error('not_found');
       return formatPlaylist(playlist, context);
     },
 
     playlists: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
       const user = await findUserByAccountName<LeanUser>(accountName);
       if (!user || user.isDeleted || user.ban?.active) return [];
+      if (await isHiddenByBlock(context.userId, user._id)) return [];
       const isOwner = context.userId && context.userId === user._id.toString();
       const filter: { userId: mongoose.Types.ObjectId; isPublic?: boolean } = { userId: user._id };
       if (!isOwner) filter.isPublic = true;
@@ -127,7 +133,10 @@ export const playlistResolvers = {
         isPublic: true,
         ownerActive: { $ne: false },
       }).lean<LeanPlaylist[]>();
-      return Promise.all(playlists.map(p => formatPlaylist(p, context)));
+      const blockedSet = await getBlockedSet(context.userId);
+      return Promise.all(playlists
+        .filter(p => !blockedSet.has(p.userId.toString()))
+        .map(p => formatPlaylist(p, context)));
     },
   },
 
@@ -215,7 +224,7 @@ export const playlistResolvers = {
       if (!playlist) throw new Error('not_found');
       if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
       const project = await Project.findOne({ publicId }).lean<LeanProject>();
-      if (!project) throw new Error('not_found');
+      if (!project || await isHiddenByBlock(context.userId, project.userId)) throw new Error('not_found');
       if (project.userId?.toString() !== context.userId && !project.public) throw new Error('forbidden');
       const updated = await Playlist.findByIdAndUpdate(
         playlistId,
@@ -273,13 +282,14 @@ export const playlistResolvers = {
       if (!context.userId) throw new Error('unauthorized');
       const playlist = await Playlist.findById(playlistId).lean<LeanPlaylist>();
       if (!playlist || !playlist.isPublic) throw new Error('not_found');
+      if (await isHiddenByBlock(context.userId, playlist.userId)) throw new Error('not_found');
       try {
         await SavedPlaylist.create({
           userId: context.userId,
           playlistId: new mongoose.Types.ObjectId(playlistId),
           savedAt: new Date(),
         });
-        await Playlist.updateOne({ _id: playlistId }, { $inc: { savedCount: 1 } });
+        await Playlist.updateOne({ _id: playlistId }, { $inc: { savedCount: 1 } }, { timestamps: false });
       } catch (err: unknown) {
         if ((err as { code?: number }).code !== 11000) throw err;
         // duplicate key = already saved, silent
@@ -296,19 +306,20 @@ export const playlistResolvers = {
       if (result.deletedCount > 0) {
         await Playlist.updateOne(
           { _id: playlistId, savedCount: { $gt: 0 } },
-          { $inc: { savedCount: -1 } }
+          { $inc: { savedCount: -1 } },
+          { timestamps: false }
         );
       }
       return true;
     },
 
     incrementPlaylistView: async (_: unknown, { id }: { id: string }) => {
-      await Playlist.updateOne({ _id: id }, { $inc: { viewCount: 1 } });
+      await Playlist.updateOne({ _id: id }, { $inc: { viewCount: 1 } }, { timestamps: false });
       return true;
     },
 
     incrementPlaylistShare: async (_: unknown, { id }: { id: string }) => {
-      await Playlist.updateOne({ _id: id }, { $inc: { shareCount: 1 } });
+      await Playlist.updateOne({ _id: id }, { $inc: { shareCount: 1 } }, { timestamps: false });
       return true;
     },
   },

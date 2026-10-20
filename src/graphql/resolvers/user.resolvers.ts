@@ -23,6 +23,7 @@ import {
   unblockUser as svcUnblockUser,
   listBlocked,
   getBlockedSet,
+  isHiddenByBlock,
   hasBlocked,
   isBlockedEitherWay,
 } from '../../modules/blocks/block.service.js';
@@ -296,10 +297,11 @@ export const userResolvers = {
       // (owner's "view as others" preview). It can only remove data, never add.
       const viewerId = asVisitor ? null : (context.userId ?? null);
 
-      // A user blocked by the profile owner cannot view that profile.
-      if (context.userId && context.userId !== user._id.toString()
-          && await hasBlocked(user._id.toString(), context.userId)) {
-        return null;
+      // A user blocked by the profile owner cannot view that profile; a user the
+      // viewer blocked shows as a name only, with nothing they made or said.
+      if (context.userId && context.userId !== user._id.toString()) {
+        if (await hasBlocked(user._id.toString(), context.userId)) return null;
+        if (await hasBlocked(context.userId, user._id.toString())) return blockedProfileStub(user);
       }
 
       const isOwner = !!viewerId && viewerId === user._id.toString();
@@ -415,22 +417,26 @@ export const userResolvers = {
 
     leaderboard: async (
       _root: unknown,
-      { limit = 25, offset = 0, timeframe = 'ALL_TIME', sortBy = 'RANK', sortDir = 'DESC' }: LeaderboardArgs
+      { limit = 25, offset = 0, timeframe = 'ALL_TIME', sortBy = 'RANK', sortDir = 'DESC' }: LeaderboardArgs,
+      context: Context,
     ): Promise<LeaderboardResultView> => {
       const cap = Math.max(1, Math.min(limit ?? 25, 50));
+      // Users in a block relationship with the viewer are left off the board.
+      const blockedIds = [...await getBlockedSet(context?.userId)].map((id) => new mongoose.Types.ObjectId(id));
+      const visible = blockedIds.length > 0 ? { ...LEADERBOARD_VISIBLE, _id: { $nin: blockedIds } } : LEADERBOARD_VISIBLE;
       const skip = Math.max(0, offset ?? 0);
       const dir: 1 | -1 = sortDir === 'ASC' ? 1 : -1;
 
       // ── ALL_TIME: indexed find, no XP window ──────────────────────────────
       if (timeframe === 'ALL_TIME') {
         const [users, total] = await Promise.all([
-          User.find(LEADERBOARD_VISIBLE)
+          User.find(visible)
             .sort(buildLeaderboardSort(sortBy, dir))
             .skip(skip)
             .limit(cap + 1)
             .select('_id accountName displayName avatarUrl badges stats streak progression social rankScore projectCount')
             .lean<IUser[]>(),
-          User.countDocuments(LEADERBOARD_VISIBLE),
+          User.countDocuments(visible),
         ]);
 
         const hasMore = users.length > cap;
@@ -461,7 +467,7 @@ export const userResolvers = {
       const basePipeline: mongoose.PipelineStage[] = [
         { $match: { createdAt: { $gte: cutoff } } },
         { $group: { _id: '$userId', periodXp: { $sum: '$delta' } } },
-        { $match: { periodXp: { $gt: 0 } } },
+        { $match: blockedIds.length > 0 ? { periodXp: { $gt: 0 }, _id: { $nin: blockedIds } } : { periodXp: { $gt: 0 } } },
         { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
         // $unwind drops rows whose lookup found nothing (deleted/purged user).
         { $unwind: '$user' },
@@ -517,9 +523,9 @@ export const userResolvers = {
     // Display fields only (no condition/XP internals) — open to every viewer.
     publicBadgeDefinitions: () => listPublicBadgeDefs(),
 
-    userShowcase: async (_root: unknown, { accountName }: { accountName: string }, _context: Context) => {
+    userShowcase: async (_root: unknown, { accountName }: { accountName: string }, context: Context) => {
       const user = await findUserByAccountName<IUser>(accountName, 'badges showcasedBadges');
-      if (!user) return [];
+      if (!user || await isHiddenByBlock(context.userId, user._id)) return [];
 
       const ownedMap = new Map<string, IUserBadge>(
         (user.badges ?? []).map((b: IUserBadge) => [b.id, b])
@@ -560,6 +566,7 @@ export const userResolvers = {
     ) => {
       const user = await findUserByAccountName<IUser>(accountName);
       if (!user || user.isDeleted || user.ban?.active) return { users: [], total: 0 };
+      if (await isHiddenByBlock(context.userId, user._id)) return { users: [], total: 0 };
       const isOwner = context.userId && context.userId === user._id.toString();
       const prefs = await getPreferences(user._id.toString());
       if (!prefs.showFollowers && !isOwner) return { users: [], total: 0 };
@@ -833,6 +840,7 @@ export const userResolvers = {
       const targetId = target._id.toString();
       if (targetId === context.userId) throw new Error('Cannot block yourself');
       await svcBlockUser(context.userId, targetId);
+      refreshNotifications(context.userId, targetId);
       return true;
     },
 
@@ -841,6 +849,7 @@ export const userResolvers = {
       const target = await User.findOne({ accountName: accountName.toLowerCase() }).lean<IUser>();
       if (!target) return true;
       await svcUnblockUser(context.userId, target._id.toString());
+      refreshNotifications(context.userId, target._id.toString());
       return true;
     },
 
@@ -1168,7 +1177,60 @@ export const userResolvers = {
   },
 };
 
-type PublicUserParent = IUser & { id?: string; asVisitor?: boolean };
+// A block hides notifications in both directions (and an unblock brings them
+// back), so both users' open clients refetch their list and unread count.
+function refreshNotifications(...userIds: string[]): void {
+  try {
+    for (const id of userIds) getIO().to(`user:${id}`).emit('notifications:refresh');
+  } catch { /* socket not ready */ }
+}
+
+type PublicUserParent = IUser & { id?: string; asVisitor?: boolean; blockedStub?: boolean };
+
+/**
+ * The profile of someone the viewer blocked: enough to recognise them and undo
+ * the block, nothing they made (projects, playlists, badges, bio, cover, stats)
+ * and nothing about their presence (country, last seen). Field resolvers that
+ * load more see `blockedStub` and return nothing — see `unlessBlocked`.
+ */
+function blockedProfileStub(user: IUser) {
+  return {
+    id: user._id.toString(),
+    accountName: user.accountName,
+    displayName: user.displayName ?? null,
+    avatarUrl: user.avatarUrl ?? null,
+    coverImageUrl: null,
+    bio: null,
+    isVerified: false,
+    isAdmin: false,
+    createdAt: null,
+    projects: [],
+    projectCount: 0,
+    playlistCount: 0,
+    totalStarsReceived: 0,
+    totalForksReceived: 0,
+    followerCount: 0,
+    followingCount: 0,
+    isFollowedByMe: false,
+    isFollowingMe: false,
+    isBlockedByMe: true,
+    miniProfileBadgeIds: [],
+    showFollowers: false,
+    badges: [],
+    showcasedBadges: [],
+    showcasePublic: false,
+    stats: null,
+    streak: null,
+    progression: null,
+    lastOnlineAt: null,
+    asVisitor: false,
+    blockedStub: true,
+  };
+}
+
+function unlessBlocked<R, E>(resolver: UserFieldResolver<R>, empty: E): UserFieldResolver<R | E> {
+  return (user, args, context) => (user.blockedStub ? Promise.resolve(empty) : resolver(user, args, context));
+}
 type UserFieldResolver<R> = (user: PublicUserParent, args: unknown, context: Context) => Promise<R>;
 
 /**
@@ -1194,11 +1256,11 @@ export const followUserResolvers = {
 
 // PublicUser reuses the same field resolvers as User (privacy/permission logic is identical)
 export const publicUserResolvers = {
-  showFollowers: asViewer(userResolvers.User.showFollowers),
-  miniProfileBadgeIds: asViewer(userResolvers.User.miniProfileBadgeIds),
-  lastOnlineAt: asViewer(userResolvers.User.lastOnlineAt),
-  country: asViewer(userResolvers.User.country),
-  activityHeatmap: (user: { id: string }) => getPublicActivityHeatmap(user.id),
-  showXpProgress: async (user: { id: string }) => (await getPreferences(user.id)).showXpProgress,
+  showFollowers: unlessBlocked(asViewer(userResolvers.User.showFollowers), false),
+  miniProfileBadgeIds: unlessBlocked(asViewer(userResolvers.User.miniProfileBadgeIds), []),
+  lastOnlineAt: unlessBlocked(asViewer(userResolvers.User.lastOnlineAt), null),
+  country: unlessBlocked(asViewer(userResolvers.User.country), null),
+  activityHeatmap: unlessBlocked(async (user) => getPublicActivityHeatmap(String(user.id)), null),
+  showXpProgress: unlessBlocked(async (user) => (await getPreferences(String(user.id))).showXpProgress, false),
 };
 

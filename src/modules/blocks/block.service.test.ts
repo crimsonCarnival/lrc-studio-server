@@ -20,6 +20,8 @@ import {
   getBlockedSet,
   hasBlocked,
   isBlockedEitherWay,
+  isHiddenByBlock,
+  ownerIdOf,
 } from './block.service.js';
 
 let mongo: MongoMemoryServer;
@@ -266,5 +268,37 @@ describe('listBlocked', () => {
     await blockUser(viewer, gone);
     await User.deleteOne({ _id: gone });
     expect(await listBlocked(viewer)).toEqual([]);
+  });
+});
+
+describe('isHiddenByBlock', () => {
+  it('hides in both directions, and follows unblock', async () => {
+    const a = await mkUser();
+    const b = await mkUser();
+    const c = await mkUser();
+    await blockUser(a, b);
+    expect(await isHiddenByBlock(a, b)).toBe(true);
+    expect(await isHiddenByBlock(b, new mongoose.Types.ObjectId(a))).toBe(true);
+    expect(await isHiddenByBlock(a, c)).toBe(false);
+    await unblockUser(a, b);
+    expect(await isHiddenByBlock(a, b)).toBe(false);
+  });
+
+  it('never hides anything from an anonymous viewer or from yourself', async () => {
+    const a = await mkUser();
+    expect(await isHiddenByBlock(null, a)).toBe(false);
+    expect(await isHiddenByBlock(a, a)).toBe(false);
+    expect(await isHiddenByBlock(a, null)).toBe(false);
+  });
+});
+
+describe('ownerIdOf', () => {
+  it('reads the owner from an ObjectId, a string or a populated user', () => {
+    const id = new mongoose.Types.ObjectId();
+    expect(ownerIdOf({ userId: id })).toBe(id.toString());
+    expect(ownerIdOf({ userId: id.toString() })).toBe(id.toString());
+    expect(ownerIdOf({ userId: { _id: id, accountName: 'x' } })).toBe(id.toString());
+    expect(ownerIdOf({ userId: null })).toBeNull();
+    expect(ownerIdOf(null)).toBeNull();
   });
 });

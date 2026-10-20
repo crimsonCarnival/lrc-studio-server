@@ -81,7 +81,8 @@ export async function registerProjectView(args: {
   const updated = await Project.findOneAndUpdate(
     { publicId },
     { $inc: { viewCount: 1 } },
-    { new: true, projection: { viewCount: 1 } }
+    // A view is not an edit: leave updatedAt (the "edited …" time) alone.
+    { new: true, projection: { viewCount: 1 }, timestamps: false }
   ).lean<{ viewCount?: number }>();
 
   return { counted: true, viewCount: updated?.viewCount ?? viewCount + 1 };
