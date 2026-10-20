@@ -79,7 +79,8 @@ async function main(): Promise<void> {
     }
 
     const [p, l] = await Promise.all([
-      Project.updateMany({ userId: owner._id }, { $set: visibility }),
+      // Visibility flags are not an edit: never bump the projects' updatedAt.
+      Project.updateMany({ userId: owner._id }, { $set: visibility }, { timestamps: false }),
       Playlist.updateMany({ userId: owner._id }, { $set: visibility }),
     ]);
     projectsChanged += p.modifiedCount;
@@ -97,6 +98,7 @@ async function main(): Promise<void> {
       Project.updateMany(
         { userId: { $nin: hiddenIds }, $or: [{ ownerActive: false }, { ownerListed: false }] },
         { $set: visible },
+        { timestamps: false },
       ),
       Playlist.updateMany(
         { userId: { $nin: hiddenIds }, $or: [{ ownerActive: false }, { ownerListed: false }] },

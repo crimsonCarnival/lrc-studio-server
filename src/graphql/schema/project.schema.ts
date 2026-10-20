@@ -21,6 +21,10 @@ export const projectSchema = `
     expiresAt: String
     createdAt: String
     updatedAt: String
+    # When the project's content (lyrics, title/metadata, cover, media) last
+    # changed. Unlike updatedAt it ignores editor-state saves, counters and
+    # maintenance writes. Null on rows last written before this field existed.
+    contentUpdatedAt: String
     coverImage: String
     forkedFrom: ForkedFrom
     forkCount: Int

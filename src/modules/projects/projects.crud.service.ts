@@ -199,6 +199,7 @@ export async function createProject(
       coverImage: coverImage ? sanitizeUrl(coverImage) : '',
       readOnly: readOnly ?? true,
       public: finalIsPublic,
+      contentUpdatedAt: new Date(),
     }], { session });
 
     const incomingSections: SectionEntry[] = lyrics?.sections
@@ -431,6 +432,13 @@ export async function updateProject(
   if (identityError) return identityError as ServiceResult;
   await linkMetadataArtists(userId, projectUpdate.metadata);
 
+  // Stamped in the same write, so no extra round trip. Lyrics in the payload
+  // count as an edit without diffing them: the client only sends them when its
+  // own diff found a change.
+  if (lyrics !== undefined || updateTouchesContent(project, projectUpdate)) {
+    projectUpdate.contentUpdatedAt = new Date();
+  }
+
   const lyricsPromise = (() => {
     if (lyrics === undefined) return Lyrics.findOne({ publicId });
     const lyricsUpdate: Record<string, unknown> = {};
@@ -541,7 +549,13 @@ export async function patchProject(
   if (identityError) return identityError as ServiceResult;
   await linkMetadataArtists(userId, projectUpdate.metadata);
 
-  const hasProjectUpdate = allowed.some(k => data[k] !== undefined);
+  // Same stamp as updateProject, set before `hasProjectUpdate` so a lyrics-only
+  // patch still writes the project doc to record when its content last changed.
+  if (data.lyrics !== undefined || updateTouchesContent(project, projectUpdate)) {
+    projectUpdate.contentUpdatedAt = new Date();
+  }
+
+  const hasProjectUpdate = Object.keys(projectUpdate).length > 0;
   // Any save by an authenticated user is a heatmap candidate now — manual and
   // auto both count, deduped to one contribution per project per day (see
   // recordHeatmapEvent). `saveKind` is no longer part of this gate; it's kept
@@ -675,6 +689,22 @@ export function applyProjectIdentity(
 // `state` (playback position / active line / saveTime move on every save),
 // and `public` / `readOnly` (visibility toggles; publishing has its own activity).
 const CONTENT_PROJECT_FIELDS = ['title', 'metadata', 'coverImage'] as const;
+
+/**
+ * True when a pending `$set` would change something a reader would call an edit.
+ * Deliberately blind to `state` (playback position, active line, sync mode),
+ * visibility flags and counters: those move on autosaves and background writes,
+ * which is exactly why `updatedAt` cannot be shown as the "edited ..." time.
+ * Compared against the stored values, so re-sending an unchanged field is not
+ * an edit either.
+ */
+function updateTouchesContent(existing: ProjectDocLike, update: Record<string, unknown>): boolean {
+  const before = existing.toObject({ depopulate: true });
+  if ('uploadId' in update && String(update.uploadId ?? '') !== String(before.uploadId ?? '')) return true;
+  return CONTENT_PROJECT_FIELDS.some(
+    (k) => k in update && !isDeepStrictEqual(update[k] ?? null, before[k] ?? null)
+  );
+}
 
 type ProjectDocLike = { toObject(opts?: { depopulate?: boolean }): Record<string, unknown> };
 

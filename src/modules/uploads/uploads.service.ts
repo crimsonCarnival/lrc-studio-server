@@ -315,7 +315,9 @@ export async function deleteMedia(uploadId: string, userId: string, logger: Reco
   }
 
   await upload.deleteOne();
-  await Project.updateMany({ uploadId }, { $unset: { uploadId: 1 } });
+  // Losing its media IS a content change for every project that referenced it,
+  // so the edited stamp moves with it (see projectEditedAt on the client).
+  await Project.updateMany({ uploadId }, { $unset: { uploadId: 1 }, $set: { contentUpdatedAt: new Date() } });
   return {};
 }
 

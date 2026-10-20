@@ -35,6 +35,14 @@ export interface IProject extends Document {
   shareCount: number;
   createdAt?: Date;
   updatedAt?: Date;
+  /**
+   * Last time the project's *content* actually changed (lyrics, title/metadata,
+   * cover, attached media). `updatedAt` is a Mongoose write stamp: editor-state
+   * saves, counters and maintenance writes bump it too, so it is not the
+   * "edited ..." time a reader expects. Unset on rows written before this field
+   * existed; readers fall back to updatedAt.
+   */
+  contentUpdatedAt?: Date;
 }
 
 const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
@@ -185,6 +193,7 @@ const projectSchema = new mongoose.Schema(
     starCount: { type: Number, default: 0 },
     viewCount: { type: Number, default: 0 },
     shareCount: { type: Number, default: 0 },
+    contentUpdatedAt: { type: Date },
   },
   { timestamps: true, collection: 'projects' }
 );
