@@ -42,7 +42,6 @@ export interface Env {
   GOOGLE_REDIRECT_URI?: string;
   TRACK_METADATA_CLIENT_ID?: string;
   TRACK_METADATA_CLIENT_SECRET?: string;
-  LASTFM_API_KEY?: string;
   /**
    * Email address to auto-grant the `superadmin` role to (case-insensitive
    * exact match, no wildcards). See modules/auth/superadmin-env.service.ts.
@@ -116,7 +115,6 @@ export function loadEnv(): Env {
     GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
     TRACK_METADATA_CLIENT_ID: process.env.TRACK_METADATA_CLIENT_ID,
     TRACK_METADATA_CLIENT_SECRET: process.env.TRACK_METADATA_CLIENT_SECRET,
-    LASTFM_API_KEY: process.env.LASTFM_API_KEY,
     SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL,
     OG_DEFAULT_IMAGE_URL: process.env.OG_DEFAULT_IMAGE_URL?.trim() || 'https://www.lrcstudio.app/og-default.png',
     OG_API_ORIGIN: process.env.OG_API_ORIGIN?.trim() || undefined,
