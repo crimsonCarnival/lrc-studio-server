@@ -172,6 +172,28 @@ describe('autocomplete scoping', () => {
     expect((await suggestArtists(a, '', 1000)).items.length).toBeLessThanOrEqual(SUGGESTION_MAX_LIMIT);
   });
 
+  it('suggests artists from projects saved before artist records existed', async () => {
+    const [a, b] = [await uid(), await uid()];
+    const owner = new mongoose.Types.ObjectId(a);
+    // Written straight to the collection: no artist records, as for older projects.
+    await Project.collection.insertMany([
+      { publicId: 'legacy1', userId: owner, title: 'x', metadata: { songArtist: 'Drake feat. Rihanna' } },
+      { publicId: 'legacy2', userId: owner, title: 'y', metadata: { songArtist: 'Simon & Garfunkel' } },
+      { publicId: 'legacy3', userId: owner, title: 'z', metadata: { songArtist: 'Ignored', artists: [credit('Daft Punk', 'primary')] } },
+    ]);
+    expect(await Artist.countDocuments({ userId: owner })).toBe(0);
+
+    expect((await suggestArtists(a, 'dr')).items.map((i) => i.name)).toEqual(['Drake']);
+    expect((await suggestArtists(a, 'ri')).items.map((i) => i.name)).toEqual(['Rihanna']);
+    // A doubtful split stays one name rather than two acts.
+    expect((await suggestArtists(a, 'si')).items.map((i) => i.name)).toEqual(['Simon & Garfunkel']);
+    // Structured credits win over the display string.
+    expect((await suggestArtists(a, 'da')).items.map((i) => i.name)).toEqual(['Daft Punk']);
+    expect((await suggestArtists(a, 'ig')).items).toEqual([]);
+    // Someone else's projects never leak in.
+    expect((await suggestArtists(b, 'd')).items).toEqual([]);
+  });
+
   it('treats the prefix as text, not a pattern', async () => {
     const a = await uid();
     await create(a, { title: 'x', metadata: { artists: [credit('A.B', 'primary'), credit('AxB', 'featured')] } });
