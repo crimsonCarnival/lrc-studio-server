@@ -25,6 +25,7 @@ export const projectSchema = `
     # changed. Unlike updatedAt it ignores editor-state saves, counters and
     # maintenance writes. Null on rows last written before this field existed.
     contentUpdatedAt: String
+    createdFrom: String
     coverImage: String
     forkedFrom: ForkedFrom
     forkCount: Int
@@ -192,6 +193,9 @@ export const projectSchema = `
     state: ProjectStateInput
     lyrics: ProjectLyricsInput
     recaptchaToken: String
+    # Attribution for what triggered creation (e.g. "uploads_library"), carried
+    # from the ref URL param. Set once at creation; ignored on update.
+    createdFrom: String
   }
 
   input UpdateProjectInput {

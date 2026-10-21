@@ -123,6 +123,16 @@ export interface IUser extends Document {
   lastOnlineAt?: Date | null;
   lastIp?: string | null;
   bio: string;
+  // Attribution captured client-side before registration (URL `ref`/`utm_*` or
+  // referrer-domain fallback). Written once at account creation, never updated
+  // afterwards — a later visit with different params must not rewrite how an
+  // existing account was acquired.
+  signupSource?: {
+    ref?: string | null;
+    utmSource?: string | null;
+    utmMedium?: string | null;
+    utmCampaign?: string | null;
+  } | null;
   currentChallenge?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
@@ -362,6 +372,15 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       default: "",
       maxlength: 160,
+    },
+    signupSource: {
+      type: {
+        ref: { type: String, default: null, maxlength: 64 },
+        utmSource: { type: String, default: null, maxlength: 64 },
+        utmMedium: { type: String, default: null, maxlength: 64 },
+        utmCampaign: { type: String, default: null, maxlength: 64 },
+      },
+      default: null,
     },
     social: { type: socialSchema, default: () => ({}) },
     currentChallenge: {

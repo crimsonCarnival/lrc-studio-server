@@ -33,6 +33,8 @@ export interface IProject extends Document {
   starCount: number;
   viewCount: number;
   shareCount: number;
+  /** Attribution for what triggered creation (e.g. `uploads_library`). Set once at creation, never updated. */
+  createdFrom?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   /**
@@ -203,6 +205,7 @@ const projectSchema = new mongoose.Schema(
     starCount: { type: Number, default: 0 },
     viewCount: { type: Number, default: 0 },
     shareCount: { type: Number, default: 0 },
+    createdFrom: { type: String, default: null, maxlength: 64 },
     contentUpdatedAt: { type: Date },
   },
   { timestamps: true, collection: 'projects' }

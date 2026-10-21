@@ -49,8 +49,15 @@ export interface RegisterResult extends AuthTokenResult {
   user: IUser;
 }
 
+export interface SignupSource {
+  ref?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+}
+
 export async function registerAtomically(
-  userData: { accountName: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string; userAgent?: string; platformVersion?: string },
+  userData: { accountName: string; displayName?: string; email?: string; passwordHash: string; ip: string; deviceId?: string; userAgent?: string; platformVersion?: string; signupSource?: SignupSource },
   jwt: JwtTools
 ): Promise<RegisterResult> {
   return withTransaction(async (session: ClientSession) => {
@@ -60,6 +67,7 @@ export async function registerAtomically(
       ...(userData.email ? { email: userData.email } : {}),
       passwordHash: userData.passwordHash,
       lastIp: userData.ip,
+      ...(userData.signupSource ? { signupSource: userData.signupSource } : {}),
     }], { session });
 
     if (userData.deviceId) {

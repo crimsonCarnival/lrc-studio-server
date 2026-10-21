@@ -176,7 +176,7 @@ async function checkDevice(deviceId: string | null | undefined, user: IUser | nu
 }
 
 export async function register(
-  data: { accountName: string; displayName?: string; email?: string; password: string; recaptchaToken?: string; userAgent?: string; platformVersion?: string },
+  data: { accountName: string; displayName?: string; email?: string; password: string; recaptchaToken?: string; userAgent?: string; platformVersion?: string; signupSource?: { ref?: string; utmSource?: string; utmMedium?: string; utmCampaign?: string } },
   jwt: JwtTools,
   ip: string,
   deviceId: string
@@ -234,6 +234,7 @@ export async function register(
       deviceId,
       userAgent: data.userAgent,
       platformVersion: data.platformVersion,
+      signupSource: data.signupSource,
     },
     jwt
   );

@@ -64,6 +64,8 @@ interface CreateProjectData {
   uploadPublicId?: string;
   fileName?: string;
   duration?: number;
+  /** Attribution for what triggered creation (e.g. `uploads_library`), carried from the `ref` URL param. */
+  createdFrom?: string;
 }
 
 // Incoming request body for updateProject / patchProject
@@ -107,7 +109,7 @@ export async function createProject(
   const data = rawData as CreateProjectData;
   const {
     title, uploadId, lyrics, state, metadata, readOnly, public: isPublic,
-    coverImage, recaptchaToken, ytUrl, uploadUrl, uploadPublicId, fileName, duration,
+    coverImage, recaptchaToken, ytUrl, uploadUrl, uploadPublicId, fileName, duration, createdFrom,
   } = data;
 
   if (!userId) {
@@ -203,6 +205,7 @@ export async function createProject(
       coverImage: coverImage ? sanitizeUrl(coverImage) : '',
       readOnly: readOnly ?? true,
       public: finalIsPublic,
+      createdFrom: createdFrom ? createdFrom.slice(0, 64) : null,
       contentUpdatedAt: new Date(),
     }], { session });
 

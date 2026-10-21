@@ -105,6 +105,7 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
     email?: string;
     password: string;
     recaptchaToken?: string;
+    signupSource?: { ref?: string; utmSource?: string; utmMedium?: string; utmCampaign?: string };
   };
   const userAgent = (req.headers['user-agent'] as string) || '';
   const platformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
@@ -117,6 +118,7 @@ export async function register(req: FastifyRequest, reply: FastifyReply): Promis
       recaptchaToken: body.recaptchaToken,
       userAgent,
       platformVersion,
+      signupSource: body.signupSource,
     },
     req.server.jwt,
     req.ip,

@@ -17,6 +17,18 @@ export const registerSchema = {
       email: { type: 'string', format: 'email', maxLength: 254 },
       password: { type: 'string', minLength: 8, maxLength: 128 },
       recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
+      // Attribution captured client-side pre-registration. Allowlisted free text,
+      // not an enum: `ref`/utm values come from external links we don't control.
+      signupSource: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string', minLength: 1, maxLength: 64 },
+          utmSource: { type: 'string', minLength: 1, maxLength: 64 },
+          utmMedium: { type: 'string', minLength: 1, maxLength: 64 },
+          utmCampaign: { type: 'string', minLength: 1, maxLength: 64 },
+        },
+        additionalProperties: false,
+      },
     },
     // accountName is mandatory, not one-of-two with email: `/:accountName` is
     // the profile URL and every project URL is owner-scoped under it, so an
