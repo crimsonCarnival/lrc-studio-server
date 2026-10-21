@@ -317,7 +317,7 @@ export async function login(
       action: 'FAILED_LOGIN',
       ip,
       deviceId,
-      metadata: { identifier },
+      metadata: { identifier, reason: user ? 'password_mismatch' : 'user_not_found' },
     });
     return err('invalid_credentials', 401);
   }
