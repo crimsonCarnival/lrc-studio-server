@@ -131,7 +131,7 @@ export async function callback(req: FastifyRequest, reply: FastifyReply): Promis
       return reply.code(500).type('text/html').send(callbackHtml(false, (tokensResult?.error as string) || 'Failed to create session', appOrigin));
     }
 
-    const ott = createOtt({
+    const ott = await createOtt({
       accessToken: tokensResult.accessToken as string,
       refreshToken: tokensResult.refreshToken as string,
     });

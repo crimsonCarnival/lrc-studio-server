@@ -77,6 +77,17 @@ function sanitizeLrcTag(s: unknown): string {
 const LRC_META_KEYS = ['ti', 'ar', 'al', 'au', 'by', 'lg'] as const;
 export type LrcMetaKey = typeof LRC_META_KEYS[number];
 
+// Sticky (`y`) so it only matches at `lastIndex` rather than scanning ahead —
+// that's what lets the leading-timestamp loop below advance an index instead
+// of `slice()`-ing the line on every stacked `[mm:ss.xx]` tag. A line with k
+// stacked timestamps was O(k^2) in line length before this; reused across
+// lines (with `lastIndex` reset per line) rather than re-allocated inside the
+// per-line loop.
+const LEADING_TIMESTAMP_RE = /\[(\d{1,2}):(\d{2}\.\d{2,3})\]/y;
+// Hoisted for the same reason: this used to be a fresh RegExp literal
+// allocated on every character of every word in parseWordTimestamps.
+const CJK_CHAR_RE = /[\u3000-\u9FFF\uF900-\uFAFF]/;
+
 /** Reads the `[ti:]` / `[ar:]` / `[al:]` … header tags of an LRC file. Last occurrence of a key wins; empty values are skipped. */
 export function parseLrcMetaTags(content: string): Partial<Record<LrcMetaKey, string>> {
   const out: Partial<Record<LrcMetaKey, string>> = {};
@@ -152,10 +163,10 @@ export function parseWordTimestamps(text: string): WordEntry[] {
     const word = match[3].trimEnd();
     if (word) words.push({ word, time });
   }
-  const hasCJK = words.some(w => /[\u3000-\u9FFF\uF900-\uFAFF]/.test(w.word));
+  const hasCJK = words.some(w => CJK_CHAR_RE.test(w.word));
   if (hasCJK && words.length > 0) {
     const expanded: WordEntry[] = [];
-    const isCJKChar = (ch: string) => /[\u3000-\u9FFF\uF900-\uFAFF]/.test(ch);
+    const isCJKChar = (ch: string) => CJK_CHAR_RE.test(ch);
     words.forEach((w, wi) => {
       const codePoints = [...w.word].filter(ch => ch.trim());
       if (!codePoints.some(isCJKChar)) { expanded.push(w); return; }
@@ -256,14 +267,20 @@ export function parseLrcSrtFile(content: string, filename: string, options: { pr
   } else {
     const lrcLines = content.replace(/\r\n/g, '\n').split('\n');
     lrcLines.forEach(line => {
-      let remaining = line.trim();
-      const tsStepRe = /^\[(\d{1,2}):(\d{2}\.\d{2,3})\]/;
+      const trimmedLine = line.trim();
       const collectedTs: number[] = [];
-      let step: RegExpMatchArray | null;
-      while ((step = remaining.match(tsStepRe))) {
+      LEADING_TIMESTAMP_RE.lastIndex = 0;
+      let step: RegExpExecArray | null;
+      let tagsEnd = 0;
+      while ((step = LEADING_TIMESTAMP_RE.exec(trimmedLine))) {
         collectedTs.push(parseInt(step[1], 10) * 60 + parseFloat(step[2]));
-        remaining = remaining.slice(step[0].length);
+        // Capture immediately: a sticky regex's lastIndex resets to 0 on the
+        // next, failing exec() that ends this loop, so reading it afterward
+        // would silently throw away everything but a single timestamp.
+        tagsEnd = LEADING_TIMESTAMP_RE.lastIndex;
       }
+      // One slice at the end instead of one per stacked timestamp.
+      const remaining = trimmedLine.slice(tagsEnd);
       if (collectedTs.length > 0) {
         const rawText = remaining.trim();
         const words = parseWordTimestamps(rawText);

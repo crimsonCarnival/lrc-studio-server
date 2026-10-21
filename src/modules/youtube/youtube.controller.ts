@@ -52,7 +52,9 @@ export async function searchYoutube(request: FastifyRequest, reply: FastifyReply
       key: apiKey,
     });
 
-    const response = await fetch('https://www.googleapis.com/youtube/v3/search?' + params.toString());
+    const response = await fetch('https://www.googleapis.com/youtube/v3/search?' + params.toString(), {
+      signal: AbortSignal.timeout(8000),
+    });
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));

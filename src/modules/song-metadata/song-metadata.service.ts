@@ -4,6 +4,10 @@ import { LRUCache } from '@crimson-carnival/ds-js';
 
 const PROVIDER_TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const PROVIDER_API_BASE = 'https://api.spotify.com/v1';
+// None of these seven upstream calls had a timeout before; every call site
+// below is already wrapped (directly or via its caller) in a try/catch with
+// a fallback, so an abort just falls through the existing error path.
+const FETCH_TIMEOUT_MS = 8000;
 
 const trackCache = new LRUCache(100);
 
@@ -28,6 +32,7 @@ async function getProviderToken(): Promise<string> {
       Authorization: basicAuth,
     },
     body: 'grant_type=client_credentials',
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -47,6 +52,7 @@ async function fetchTrackDetails(trackId: string): Promise<Record<string, unknow
   const token = await getProviderToken();
   const response = await fetch(`${PROVIDER_API_BASE}/tracks/${encodeURIComponent(trackId)}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -72,6 +78,7 @@ async function fetchTrackDetails(trackId: string): Promise<Record<string, unknow
       const token2 = await getProviderToken();
       const artistRes = await fetch(`${PROVIDER_API_BASE}/artists?ids=${artistIds.join(',')}`, {
         headers: { Authorization: `Bearer ${token2}` },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (artistRes.ok) {
         const artistData = await artistRes.json() as { artists: { genres?: string[] }[] };
@@ -113,6 +120,7 @@ async function searchTrackId(songName: string, artistName?: string): Promise<str
   const params = new URLSearchParams({ q, type: 'track', limit: '1', market: 'US' });
   const res = await fetch(`${PROVIDER_API_BASE}/search?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!res.ok) return null;
@@ -141,7 +149,9 @@ async function fetchFromItunes(songName: string, artistName?: string): Promise<R
   try {
     const term = artistName?.trim() ? `${songName.trim()} ${artistName.trim()}` : songName.trim();
     const params = new URLSearchParams({ term, entity: 'song', limit: '1', country: 'US' });
-    const res = await fetch(`https://itunes.apple.com/search?${params}`);
+    const res = await fetch(`https://itunes.apple.com/search?${params}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) return { error: 'iTunes metadata search failed', status: 502 };
 
     const data = await res.json() as ITunesSearchResponse;
@@ -189,7 +199,9 @@ interface DeezerAlbumResponse {
 async function fetchFromDeezer(songName: string, artistName?: string): Promise<Record<string, unknown>> {
   try {
     const q = artistName?.trim() ? `${songName.trim()} ${artistName.trim()}` : songName.trim();
-    const res = await fetch(`https://api.deezer.com/search?${new URLSearchParams({ q, limit: '1' })}`);
+    const res = await fetch(`https://api.deezer.com/search?${new URLSearchParams({ q, limit: '1' })}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) return { error: 'Deezer metadata search failed', status: 502 };
 
     const data = await res.json() as DeezerSearchResponse;
@@ -201,7 +213,9 @@ async function fetchFromDeezer(songName: string, artistName?: string): Promise<R
     let genres: string[] = [];
     if (track.album?.id) {
       try {
-        const albumRes = await fetch(`https://api.deezer.com/album/${track.album.id}`);
+        const albumRes = await fetch(`https://api.deezer.com/album/${track.album.id}`, {
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         if (albumRes.ok) {
           const album = await albumRes.json() as DeezerAlbumResponse;
           releaseYear = album.release_date ? album.release_date.slice(0, 4) : null;

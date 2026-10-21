@@ -31,6 +31,7 @@ export const lineItemSchema = {
           text: { type: 'string', maxLength: 2000 },
         },
       },
+      maxItems: 10,
     },
     words: {
       type: ['array', 'null'],
@@ -43,6 +44,11 @@ export const lineItemSchema = {
           singerIndex: { type: ['number', 'null'], minimum: 0 },
         },
       },
+      // Previously unbounded — one line could carry an arbitrarily large
+      // word array, bounded only by the global 5MB body limit, feeding
+      // straight into the synchronous LRC/SRT compile on the event loop.
+      // 200 is generous for any real lyric line, even dense karaoke.
+      maxItems: 200,
     },
     secondaryWords: {
       type: ['array', 'null'],
@@ -54,6 +60,7 @@ export const lineItemSchema = {
           singerIndex: { type: ['number', 'null'], minimum: 0 },
         },
       },
+      maxItems: 200,
     },
     source: { type: ['string', 'null'], enum: ['manual', 'asr', null] },
     adLibOf: { type: ['number', 'null'] },

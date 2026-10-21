@@ -158,12 +158,32 @@ export async function getSuggestedUsers(viewerId: string, limit: number) {
   }));
 }
 
+// Three full-collection counts for three numbers that change slowly — same
+// cache shape as addiction-level.service.ts's getLevelsSorted. No
+// invalidation hook: these are advisory totals shown on an explore page, not
+// values anything else reads back for correctness, so going briefly stale
+// between recomputes is the right trade against recounting on every view.
+let cachedExploreStats: { totalProjects: number; totalUsers: number; totalPlaylists: number } | null = null;
+let exploreStatsCachedAt = 0;
+const EXPLORE_STATS_TTL_MS = 60_000; // 1 minute
+
 export async function getExploreStats() {
+  const now = Date.now();
+  if (cachedExploreStats && now - exploreStatsCachedAt < EXPLORE_STATS_TTL_MS) return cachedExploreStats;
+
   const [totalProjects, totalUsers, totalPlaylists] = await Promise.all([
     Project.countDocuments({ public: true, ownerListed: true }),
     User.countDocuments({ isVerified: true }),
     Playlist.countDocuments({ isPublic: true, ownerListed: true }),
   ]);
 
-  return { totalProjects, totalUsers, totalPlaylists };
+  cachedExploreStats = { totalProjects, totalUsers, totalPlaylists };
+  exploreStatsCachedAt = now;
+  return cachedExploreStats;
+}
+
+/** Test-only escape hatch — same shape as addiction-level.service.ts's invalidateLevelCache. */
+export function invalidateExploreStatsCache(): void {
+  cachedExploreStats = null;
+  exploreStatsCachedAt = 0;
 }

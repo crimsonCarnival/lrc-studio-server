@@ -17,6 +17,7 @@ export async function searchSongs(query: string): Promise<GeniusSong[]> {
   const params = new URLSearchParams({ q: query });
   const response = await fetch(`${GENIUS_API_BASE}/search?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(8000),
   });
 
   if (response.status === 429) {

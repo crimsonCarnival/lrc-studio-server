@@ -4,7 +4,10 @@ export const parseSchema = {
   body: {
     type: 'object',
     properties: {
-      content: { type: 'string', maxLength: 5242880 },
+      // 1 MiB: generous for a real LRC/SRT file (incl. word-level timestamps
+      // and translations) while bounding the unauthenticated parse route's
+      // worst-case input. Was 5 MiB with no auth at all on this route.
+      content: { type: 'string', maxLength: 1048576 },
       filename: { type: 'string', maxLength: 255 },
     },
     required: ['content'],

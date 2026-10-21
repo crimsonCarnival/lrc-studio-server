@@ -31,7 +31,7 @@ import Playlist from '../../db/playlist.model.js';
 import Follow from '../../db/follow.model.js';
 import Activity from '../../db/activity.model.js';
 import { getProject } from '../projects/projects.crud.service.js';
-import { getTrendingProjects, getPopularPlaylists, getExploreStats } from '../explore/explore.service.js';
+import { getTrendingProjects, getPopularPlaylists, getExploreStats, invalidateExploreStatsCache } from '../explore/explore.service.js';
 import { getFeed } from '../activity/activity.service.js';
 import { syncOwnerVisibility } from './owner-visibility.service.js';
 
@@ -51,6 +51,9 @@ beforeEach(async () => {
     User.deleteMany({}), Project.deleteMany({}), Playlist.deleteMany({}),
     Follow.deleteMany({}), Activity.deleteMany({}),
   ]);
+  // getExploreStats is cached (60s TTL) in production; without busting it
+  // here, a test later in this file can read the previous test's counts.
+  invalidateExploreStatsCache();
 });
 
 let n = 0;
