@@ -304,6 +304,12 @@ export async function login(
   if (ipBanned) return BAN_ERRORS.IP_BANNED_LOGIN;
   if (deviceCheck.error) return deviceCheck;
 
+  // Google-only accounts have no password to check. Say so instead of the generic
+  // credentials error; check-identifier already exposes hasPassword, so this leaks nothing new.
+  if (user && !user.isDeleted && user.passwordHash === 'OAUTH_NO_PASSWORD') {
+    return err('no_password_set', 401);
+  }
+
   const passwordValid = user ? await user.verifyPassword(password) : false;
   if (!user || !passwordValid) {
     logUserAction({
