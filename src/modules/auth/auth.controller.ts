@@ -532,7 +532,7 @@ export async function exchangeOtt(req: FastifyRequest, reply: FastifyReply): Pro
   if (!ott || typeof ott !== 'string' || ott.trim().length === 0) {
     return reply.code(400).send({ error: 'ott_required' });
   }
-  const tokens = consumeOtt(ott.trim());
+  const tokens = await consumeOtt(ott.trim());
   if (!tokens) {
     return reply.code(400).send({ error: 'ott_invalid_or_expired' });
   }

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import OneTimeToken from './ott.model.js';
 
 /**
  * One-Time Token (OTT) store for the Google OAuth login flow.
@@ -13,51 +14,40 @@ import crypto from 'crypto';
  * browser scopes them to lrc-studio.vercel.app. ✓
  *
  * Security properties:
- *  - Single-use: consumed on first call, removed immediately
- *  - 60-second TTL: stale tokens auto-reaped by background cleanup
+ *  - Single-use: consumed atomically on first call (findOneAndDelete), so two
+ *    concurrent redemptions of the same id can't both succeed
+ *  - 60-second TTL: a MongoDB TTL index reaps expired entries — no per-process
+ *    timer, no step to keep in sync across instances
  *  - Cryptographically random ID (16 bytes / 32 hex chars)
- *  - In-memory only: never written to disk or DB (safe for single instance)
+ *  - Mongo-backed: the mint (OAuth callback) and the consume
+ *    (POST /auth/exchange-ott) can land on different instances behind a load
+ *    balancer; a process-local store made that fail non-deterministically.
  */
 
-interface OttEntry {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number; // Date.now() + TTL_MS
-}
-
 const TTL_MS = 60_000; // 60 seconds
-const store = new Map<string, OttEntry>();
-
-// Reap expired tokens every 2 minutes — keeps memory bounded
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, entry] of store) {
-    if (entry.expiresAt <= now) store.delete(id);
-  }
-}, 2 * 60_000).unref(); // .unref() so the timer doesn't keep Node alive
 
 /**
  * Mints a new OTT for the given token pair. Returns the opaque ID to embed
  * in the callback postMessage / redirect URL.
  */
-export function createOtt(tokens: { accessToken: string; refreshToken: string }): string {
+export async function createOtt(tokens: { accessToken: string; refreshToken: string }): Promise<string> {
   const id = crypto.randomBytes(16).toString('hex');
-  store.set(id, {
+  await OneTimeToken.create({
+    _id: id,
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,
-    expiresAt: Date.now() + TTL_MS,
+    expiresAt: new Date(Date.now() + TTL_MS),
   });
   return id;
 }
 
 /**
  * Consumes an OTT. Returns the token pair on success, or null if the ID is
- * unknown or expired. The entry is deleted immediately — single-use.
+ * unknown or expired. findOneAndDelete is the atomic single-use guarantee —
+ * a second concurrent call with the same id finds nothing to delete.
  */
-export function consumeOtt(id: string): { accessToken: string; refreshToken: string } | null {
-  const entry = store.get(id);
+export async function consumeOtt(id: string): Promise<{ accessToken: string; refreshToken: string } | null> {
+  const entry = await OneTimeToken.findOneAndDelete({ _id: id, expiresAt: { $gt: new Date() } }).lean();
   if (!entry) return null;
-  store.delete(id); // single-use: remove before returning
-  if (entry.expiresAt <= Date.now()) return null;
   return { accessToken: entry.accessToken, refreshToken: entry.refreshToken };
 }

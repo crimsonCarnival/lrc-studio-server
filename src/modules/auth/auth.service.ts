@@ -140,7 +140,12 @@ export async function verifyRecaptcha(token: string | undefined, ip: string): Pr
     const res = await fetch('https://www.google.com/recaptcha/api/siteverify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `secret=${secret}&response=${token}&remoteip=${ip}`
+      body: `secret=${secret}&response=${token}&remoteip=${ip}`,
+      // Unbounded before this: a hung connection to Google held the request
+      // open indefinitely on register/login/forgot-password and project
+      // create (the first save a new user ever makes). Abort falls into the
+      // catch below and fails closed, same as any other verification failure.
+      signal: AbortSignal.timeout(5000),
     });
     const data = await res.json() as { success: boolean; score?: number };
     return data.success && (data.score === undefined || data.score >= 0.5);
@@ -438,47 +443,79 @@ export async function refresh(
   const familyId = decoded.familyId as string | undefined;
   if (!familyId) return err('token_expired', 401);
 
-  // Find the session for this token family
-  const session = await Session.findOne({ familyId, userId: user._id });
-  if (!session) return err('token_expired', 401);
-
-  // Breach Detection: if the session is already invalidated, someone is trying to reuse an old token
-  if (!session.isValid) {
-    // Revoke all sessions for this user!
-    await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
-    return err('token_reused', 401);
-  }
-
-  // Verify the hash of the provided refresh token matches the one in DB
   const providedHash = hashToken(refreshToken);
-  if (session.refreshTokenHash !== providedHash) {
-    const isGracePeriodValid =
-      session.previousRefreshTokenHash === providedHash &&
-      session.previousRefreshTokenExpiry &&
-      session.previousRefreshTokenExpiry > new Date();
+  const now = new Date();
 
-    if (!isGracePeriodValid) {
-      // Token mismatch within a valid family implies reuse
-      await Session.updateMany({ userId: user._id }, { $set: { isValid: false } });
-      return err('token_reused', 401);
-    }
-    // If it is within the grace period, we allow it to proceed and generate a new token
-  }
-
-  // Issue new tokens
+  // Issue new tokens up front so the hash is available for the atomic filter below.
   const tokenPayload = { sub: user._id.toString(), accountName: user.accountName, role: user.role, familyId };
   const newAccessToken = jwt.signAccess(tokenPayload);
   const newRefreshToken = jwt.signRefresh(tokenPayload);
+  const newHash = hashToken(newRefreshToken);
+  const newExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const graceExpiry = new Date(now.getTime() + 60 * 1000); // 60 seconds grace period
 
-  // Update session with new token hash and extended expiry
-  session.previousRefreshTokenHash = session.refreshTokenHash;
-  session.previousRefreshTokenExpiry = new Date(Date.now() + 60 * 1000); // 60 seconds grace period
-  session.refreshTokenHash = hashToken(newRefreshToken);
-  session.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  session.ip = ip || session.ip;
-  session.deviceId = deviceId || session.deviceId;
-  session.lastUsedAt = new Date();
-  await session.save();
+  // Rotation must be a single atomic write: read-then-write here let two
+  // concurrent refreshes (two tabs, two devices) both pass the check and
+  // both save, with the second silently clobbering the first's rotation —
+  // the loser's next refresh then matches neither hash and trips breach
+  // detection, revoking every session the user has. The precondition that
+  // used to be a separate read lives in the filter instead, so only the
+  // request that still matches the live state can win the write.
+  const touchFields: Record<string, unknown> = { expiresAt: newExpiresAt, lastUsedAt: now };
+  if (ip) touchFields.ip = ip;
+  if (deviceId) touchFields.deviceId = deviceId;
+
+  // Primary path: the provided token is still the session's current one.
+  let session = await Session.findOneAndUpdate(
+    { familyId, userId: user._id, isValid: true, refreshTokenHash: providedHash },
+    {
+      $set: {
+        ...touchFields,
+        previousRefreshTokenHash: providedHash,
+        previousRefreshTokenExpiry: graceExpiry,
+        refreshTokenHash: newHash,
+      },
+    },
+    { new: true }
+  );
+
+  if (!session) {
+    // Grace path: the provided token is the one just rotated away (e.g. a
+    // client retry that raced its own successful rotation). Still atomic —
+    // the filter re-checks previousRefreshTokenHash so two grace-reuses of
+    // the same stale token can't both succeed.
+    session = await Session.findOneAndUpdate(
+      {
+        familyId,
+        userId: user._id,
+        isValid: true,
+        previousRefreshTokenHash: providedHash,
+        previousRefreshTokenExpiry: { $gt: now },
+      },
+      {
+        $set: {
+          ...touchFields,
+          refreshTokenHash: newHash,
+        },
+      },
+      { new: true }
+    );
+  }
+
+  if (!session) {
+    // Neither atomic path matched. Load the session only to pick the right
+    // error — never to decide what to write, so there is no window to race.
+    const current = await Session.findOne({ familyId, userId: user._id });
+    if (!current) return err('token_expired', 401);
+    if (current.isValid) {
+      // Token matched neither the current nor the grace-period hash within a
+      // still-valid family: treat as reuse and revoke this session only —
+      // familyId already identifies a single session document, so this is
+      // the "entire token family" security.md describes, not every device.
+      await Session.updateOne({ _id: current._id, isValid: true }, { $set: { isValid: false } });
+    }
+    return err('token_reused', 401);
+  }
 
   return {
     accessToken: newAccessToken,
