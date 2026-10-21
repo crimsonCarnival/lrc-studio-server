@@ -161,9 +161,16 @@ export const loaders: MercuriusLoaders = {
 
         if (toFetch.length > 0) {
           const ids = toFetch.map(tf => tf.id);
-          const lyricsList = await Lyrics.find({ _id: { $in: ids } });
+          // No .select() here on purpose — Project.lyrics is only resolved
+          // when a query actually selects it (editor/share views need the
+          // whole tree), so narrowing fields would be wrong. .lean() alone
+          // avoids hydrating full Mongoose documents — with per-word
+          // subdocuments, this is the largest document shape in the schema
+          // — when the GraphQL Lyrics resolvers below only read plain
+          // fields (_id/createdAt/updatedAt), never instance methods.
+          const lyricsList = await Lyrics.find({ _id: { $in: ids } }).lean();
           toFetch.forEach(tf => {
-            results[tf.index] = lyricsList.find(l => l._id.toString() === String(tf.id)) || null;
+            results[tf.index] = lyricsList.find((l) => (l._id as { toString(): string }).toString() === String(tf.id)) || null;
           });
         }
         return results;
@@ -224,13 +231,19 @@ export const loaders: MercuriusLoaders = {
       },
     },
 
-    // Batches lineCount across all projects in a single query per request
+    // Batches lineCount across all projects in a single query per request.
+    // Projects only what countLyricLines actually reads (array length +
+    // timestamp, plus `type` to skip legacy section-marker rows in the flat
+    // fallback) — `sections: 1, lines: 1` used to pull every line's full
+    // text/words/translations/singers, and `lines: 1` additionally
+    // re-enabled the legacy flat array the schema's `select: false` exists
+    // to keep off the wire by default.
     lineCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const publicIds = queries.map(({ obj }) => obj.publicId);
         const lyricsList = await Lyrics.find(
           { publicId: { $in: publicIds } },
-          { publicId: 1, sections: 1, lines: 1 }
+          { publicId: 1, 'sections.lines.timestamp': 1, 'lines.timestamp': 1, 'lines.type': 1 }
         ).lean<LyricsCountDoc[]>();
         const map = new Map(lyricsList.map((l) => [l.publicId, l]));
         return queries.map(({ obj }) => {
@@ -240,13 +253,13 @@ export const loaders: MercuriusLoaders = {
       },
     },
 
-    // Batches syncedLineCount across all projects in a single query per request
+    // Same narrowing as lineCount, for the same reason.
     syncedLineCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
         const publicIds = queries.map(({ obj }) => obj.publicId);
         const lyricsList = await Lyrics.find(
           { publicId: { $in: publicIds } },
-          { publicId: 1, sections: 1, lines: 1 }
+          { publicId: 1, 'sections.lines.timestamp': 1, 'lines.timestamp': 1, 'lines.type': 1 }
         ).lean<LyricsCountDoc[]>();
         const map = new Map(lyricsList.map((l) => [l.publicId, l]));
         return queries.map(({ obj }) => {
@@ -302,9 +315,15 @@ export const loaders: MercuriusLoaders = {
 
         if (toFetch.length > 0) {
           const ids = toFetch.map(tf => tf.id);
-          const users = await User.find({ _id: { $in: ids } });
+          // Mirrors the Project.user loader above — this one had no
+          // .select()/.lean() at all, hydrating full Mongoose documents
+          // (including passwordHash, permissions, badges[], musicLibrary[])
+          // into the resolver layer just to resolve a public-facing field.
+          const users = await User.find({ _id: { $in: ids } })
+            .select('accountName displayName avatarUrl role isVerified ban progression')
+            .lean();
           toFetch.forEach(tf => {
-            results[tf.index] = users.find(u => u._id.toString() === String(tf.id)) || null;
+            results[tf.index] = users.find((u) => (u._id as { toString(): string }).toString() === String(tf.id)) || null;
           });
         }
         return results;
