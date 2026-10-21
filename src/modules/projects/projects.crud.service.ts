@@ -82,6 +82,10 @@ interface UpdateProjectData {
     // Positional word patch (sections-based)
     wordIndex?: number;
     word?: Record<string, unknown>;
+    // Positional multi-line patch: several lines changed, line count and
+    // section markers unchanged. Checked before the single-line shape above
+    // since that shape's fields (sectionIdx/lineIdx/line) are absent here.
+    lines?: Array<{ sectionIdx: number; lineIdx: number; line: Record<string, unknown> }>;
   };
   state?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -522,11 +526,6 @@ export async function patchProject(
     return { error: 'Not authorized to edit this project', status: 403 } as ServiceResult;
   }
 
-  const projectWithVersion = project as unknown as { version?: number };
-  if (data.version !== undefined && data.version !== projectWithVersion.version) {
-    return { error: 'Version conflict — reload and retry', status: 409 } as ServiceResult;
-  }
-
   if (data.uploadId !== undefined) {
     const ownedUpload = await Upload.findOne({ _id: data.uploadId, userId });
     if (!ownedUpload) {
@@ -556,6 +555,16 @@ export async function patchProject(
   }
 
   const hasProjectUpdate = Object.keys(projectUpdate).length > 0;
+  // No client sends `version` today — opt-in, same as before — but when one
+  // does, the check now lives in the update's own filter instead of a
+  // separate read-then-compare ahead of the transaction. The gap between
+  // that read and the write below was a real race: two concurrent patches
+  // could both pass the check against the same stale value and both write,
+  // the second silently clobbering the first. Forcing a write even when
+  // nothing else changed is what lets a lyrics-only patch still be gated by
+  // the project's version — it only ever adds the version-matching
+  // precondition and the version bump the code already did unconditionally.
+  const needsProjectWrite = hasProjectUpdate || data.version !== undefined;
   // Any save by an authenticated user is a heatmap candidate now — manual and
   // auto both count, deduped to one contribution per project per day (see
   // recordHeatmapEvent). `saveKind` is no longer part of this gate; it's kept
@@ -567,13 +576,30 @@ export async function patchProject(
 
   const result = await withTransaction(async (session) => {
     let updatedProject = project;
-    if (hasProjectUpdate) {
+    if (needsProjectWrite) {
+      const filter: Record<string, unknown> = { publicId };
+      if (data.version !== undefined) filter.version = data.version;
       const found = await Project.findOneAndUpdate(
-        { publicId },
+        filter,
         { $set: projectUpdate, $inc: { version: 1 } },
         { new: true, session }
       ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist');
-      if (found) updatedProject = found;
+      // No match means either the project vanished, or (when a version was
+      // given) it moved since this request read it — a real conflict, not
+      // something to fall back to a stale `project` for. Nothing was
+      // written, so there is nothing to roll back; the transaction still
+      // commits empty and patchProject reports it below.
+      // No match means either a concurrent delete (no version was given —
+      // genuinely gone) or the version moved since this request read it (a
+      // version was given and didn't match — a real conflict). Nothing was
+      // written either way, so there is nothing to roll back; the
+      // transaction still commits empty and patchProject reports it below.
+      if (!found) {
+        return data.version !== undefined
+          ? { ok: false as const, reason: 'version_conflict' as const }
+          : { ok: false as const, reason: 'not_found' as const };
+      }
+      updatedProject = found;
     }
 
     let updatedLyrics;
@@ -585,9 +611,14 @@ export async function patchProject(
       updatedLyrics = await Lyrics.findOne({ publicId }, null, { session });
     }
 
-    return { updatedProject, updatedLyrics };
+    return { ok: true as const, updatedProject, updatedLyrics };
   }, { operation: 'patchProject', publicId, userId: userId ?? null });
 
+  if (!result.ok) {
+    return result.reason === 'version_conflict'
+      ? ({ error: 'Version conflict — reload and retry', status: 409 } as ServiceResult)
+      : ({ error: 'Project not found', status: 404 } as ServiceResult);
+  }
   const { updatedProject, updatedLyrics } = result;
 
   const pub: Record<string, unknown> = updatedProject.toPublic();
@@ -778,6 +809,34 @@ async function patchLyricsWithSession(
   lyricsData: NonNullable<UpdateProjectData['lyrics']>,
   session: mongoose.ClientSession
 ): Promise<LyricsDoc | null> {
+  // Positional multi-line patch: several lines changed in one save (the
+  // common case during active syncing — the single-line shape below only
+  // fires when exactly one line differs), line count and section markers
+  // both unchanged. One findOneAndUpdate with one dotted $set path per
+  // changed line, same mechanism as the single-line branch just repeated.
+  if (Array.isArray(lyricsData.lines)) {
+    if (lyricsData.lines.length === 0 || lyricsData.lines.length > MAX_LINE_INDEX) {
+      throw Object.assign(new Error('Invalid lines patch size'), { status: 400 });
+    }
+    const update: Record<string, unknown> = {};
+    for (const entry of lyricsData.lines) {
+      if (!isValidIndex(entry?.sectionIdx, MAX_SECTION_INDEX) || !isValidIndex(entry?.lineIdx, MAX_LINE_INDEX) || !entry?.line) {
+        throw Object.assign(new Error('Invalid sectionIdx/lineIdx in lines patch'), { status: 400 });
+      }
+      assertValidLineTiming(entry.line, `Section ${entry.sectionIdx} line ${entry.lineIdx}`);
+      for (const [key, value] of Object.entries(entry.line)) {
+        if (!LINE_FIELDS.has(key)) continue;
+        update[`sections.${entry.sectionIdx}.lines.${entry.lineIdx}.${key}`] = value;
+      }
+    }
+    if (Object.keys(update).length === 0) return Lyrics.findOne({ publicId }, null, { session }) as Promise<LyricsDoc | null>;
+    return Lyrics.findOneAndUpdate(
+      { publicId },
+      { $set: update, $inc: { version: 1 } },
+      { upsert: true, new: true, session }
+    ) as Promise<LyricsDoc | null>;
+  }
+
   // Positional single-line patch: sections.S.lines.L.field
   if (lyricsData.sectionIdx !== undefined && lyricsData.lineIdx !== undefined && lyricsData.line !== undefined && lyricsData.wordIndex === undefined) {
     if (!isValidIndex(lyricsData.sectionIdx, MAX_SECTION_INDEX) || !isValidIndex(lyricsData.lineIdx, MAX_LINE_INDEX)) {

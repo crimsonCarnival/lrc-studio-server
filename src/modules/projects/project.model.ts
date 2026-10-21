@@ -136,6 +136,14 @@ const projectSchema = new mongoose.Schema(
       unique: true,
       default: () => nanoid(10),
     },
+    // Application-level optimistic-concurrency counter for patchProject's
+    // version check — distinct from Mongoose's own `__v`. Every
+    // `$inc: { version: 1 }` call site in projects.crud.service.ts predates
+    // this field: under the schema's default `strict: true`, an $inc on an
+    // undeclared path is silently stripped before Mongoose sends the update
+    // to MongoDB, so the counter never actually persisted and the version
+    // check it backs has never been able to detect a real conflict.
+    version: { type: Number, default: 0 },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
