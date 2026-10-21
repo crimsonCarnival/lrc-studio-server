@@ -612,6 +612,7 @@ docker-compose up -d --build
 | `EMAIL_SMTP_*` | Verification and password-reset emails don't send |
 | `RECAPTCHA_SECRET_KEY` | Bot protection on register/upload is inert |
 | `TRACK_METADATA_*` | Song metadata lookup skips straight to the iTunes/Deezer fallback chain (both keyless, so lookup still works) |
+| `SOCKET_IO_ADAPTER` | Socket.IO uses its in-memory adapter — correct and cheaper for a **single** instance. Set to `mongo` when running more than one: without it each instance only reaches its own sockets, so autosave acks, notifications, `session:revoked` and `user:banned` are silently delivered to a fraction of their recipients. Needs a replica set (change streams); the adapter in use is logged at boot |
 
 Never commit `.env`. Never log or echo secret values.
 
