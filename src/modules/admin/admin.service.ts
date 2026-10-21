@@ -14,7 +14,6 @@ import Settings from '../settings/settings.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import type { IUser } from '../../db/user.model.js';
 import { PERMISSIONS, ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole, type Permission, type Role } from '../../shared/permissions.js';
-import geoip from 'geoip-lite';
 import JobLog from '../../db/job-log.model.js';
 import { getOnlineUserIds } from '../../socket/presence.js';
 import RolePermissionsConfig from './rolePermissionsConfig.model.js';
@@ -97,6 +96,11 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   const uploadCountMap = new Map((uploadCounts as { _id: string; count: number; storageUsed: number }[]).map(r => [r._id.toString(), { count: r.count, storageUsed: r.storageUsed || 0 }]));
   const sessionMap = new Map((sessionData as { _id: mongoose.Types.ObjectId; deviceId: string; deviceName: string }[]).map(s => [s._id.toString(), { lastDeviceId: s.deviceId, lastDeviceName: s.deviceName }]));
 
+  // Dynamic: geoip-lite reads its binary dataset synchronously at module
+  // load. A static import here loaded that dataset into every instance at
+  // startup whether or not this (admin-only, list-paginated) path was ever
+  // hit — the three other call sites already do it this way.
+  const geoip = (await import('geoip-lite')).default;
   const users = page.map((u: Record<string, unknown>) => {
     const { _id, __v, ...rest } = u;
     return {
@@ -249,7 +253,19 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     await BannedDevice.deleteMany({ userId: user._id });
   }
 
-  await user.save();
+  // Targeted $set instead of user.save(). Correction to an earlier version
+  // of this comment: Mongoose's save() already scopes its update to only
+  // the paths actually assigned on this document instance (its dirty-path
+  // tracking), so it was NOT silently clobbering fields a concurrent write
+  // touched — verified directly against this exact document shape before
+  // writing this comment. This is a narrower, cheaper write (no full
+  // document load+hydration for a two-field update), not a concurrency fix.
+  // user.ban/user.appeal stay mutated in memory above so the
+  // user.toPublic() response below is unaffected.
+  await User.updateOne(
+    { _id: user._id },
+    { $set: banStatus ? { ban: user.ban } : { ban: user.ban, appeal: user.appeal } }
+  );
 
   // Hide (or restore) everything this user owns. Awaited, not fire-and-forget:
   // a ban that leaves the content visible is the bug this closes, so a failure
@@ -313,7 +329,10 @@ export async function toggleShadowBan(
     appliedBy: active && adminId ? new mongoose.Types.ObjectId(adminId) : null,
   };
 
-  await user.save();
+  // Targeted $set instead of user.save() — a narrower, cheaper write, not a
+  // concurrency fix; see toggleBan above for why (comment corrected there
+  // after this was initially mischaracterized as closing a save() race).
+  await User.updateOne({ _id: user._id }, { $set: { shadowBan: user.shadowBan } });
 
   // `search` feeds ownerListed, so the user's content must leave (or rejoin)
   // the discovery surfaces. Recomputed from scratch, so lifting a shadow ban on
@@ -346,7 +365,10 @@ export async function rejectAppeal(userId: string, adminId: string | null = null
   user.appeal.submittedAt = null;
   user.appeal.resolvedAt = new Date();
 
-  await user.save();
+  // Targeted $set instead of user.save() — a narrower, cheaper write, not a
+  // concurrency fix; see toggleBan above for why (comment corrected there
+  // after this was initially mischaracterized as closing a save() race).
+  await User.updateOne({ _id: user._id }, { $set: { appeal: user.appeal } });
 
   if (adminId) {
     const admin = await User.findById(adminId);
@@ -390,7 +412,10 @@ export async function changeUserRole(userId: string, newRole: string, adminId: s
   // so a superadmin's edited mod/admin defaults take effect immediately.
   const effectivePresets = await getEffectiveRolePresets();
   user.permissions = [...effectivePresets[newRole as Role]];
-  await user.save();
+  // Targeted $set instead of user.save() — a narrower, cheaper write, not a
+  // concurrency fix; see toggleBan above for why (comment corrected there
+  // after this was initially mischaracterized as closing a save() race).
+  await User.updateOne({ _id: user._id }, { $set: { role: user.role, permissions: user.permissions } });
 
   // Notify the affected user of the role change with before -> after.
   if (previousRole !== newRole) {
@@ -433,7 +458,13 @@ export async function deleteUser(userId: string, adminId: string | null = null, 
   user.appeal.text = null;
   user.appeal.status = 'none';
 
-  await user.save();
+  // Targeted $set instead of user.save() — a narrower, cheaper write, not a
+  // concurrency fix; see toggleBan above for why (comment corrected there
+  // after this was initially mischaracterized as closing a save() race).
+  await User.updateOne(
+    { _id: user._id },
+    { $set: { deletedAt: user.deletedAt, isDeleted: user.isDeleted, ban: user.ban, appeal: user.appeal } }
+  );
   await syncOwnerVisibility(user._id);
 
   if (adminId) {
@@ -459,7 +490,10 @@ export async function reactivateUser(userId: string, adminId: string | null = nu
   user.isDeleted = false;
   user.deletedAt = null;
 
-  await user.save();
+  // Targeted $set instead of user.save() — a narrower, cheaper write, not a
+  // concurrency fix; see toggleBan above for why (comment corrected there
+  // after this was initially mischaracterized as closing a save() race).
+  await User.updateOne({ _id: user._id }, { $set: { isDeleted: user.isDeleted, deletedAt: user.deletedAt } });
   await syncOwnerVisibility(user._id);
 
   if (adminId) {
@@ -771,7 +805,10 @@ export async function updateUserPermissions(
   const before = [...(user.permissions ?? [])];
   const deduped = Array.from(new Set(permissions));
   user.permissions = deduped;
-  await user.save();
+  // Targeted $set instead of user.save() — a narrower, cheaper write, not a
+  // concurrency fix; see toggleBan above for why (comment corrected there
+  // after this was initially mischaracterized as closing a save() race).
+  await User.updateOne({ _id: user._id }, { $set: { permissions: user.permissions } });
 
   await logAdminAction({
     adminId,
