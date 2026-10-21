@@ -19,6 +19,8 @@ interface CachedAuthUser {
 declare module 'fastify' {
   interface FastifyRequest {
     _cachedAuthUser?: CachedAuthUser | null; // cached to avoid duplicate DB lookups within one request
+    _cachedDeviceBan?: { deviceId: string } | null;
+    _cachedIpBan?: { ip: string } | null;
   }
 }
 
@@ -113,10 +115,32 @@ async function checkIpBan(ip: string): Promise<{ ip: string } | null> {
 }
 
 async function getOrFetchUser(request: FastifyRequest, userId: string | undefined) {
-  if (request._cachedAuthUser) return request._cachedAuthUser;
+  // `!== undefined`, not truthiness: a legitimately cached `null` (deleted
+  // or nonexistent user) is falsy, so a truthiness check here re-queried on
+  // every preHandler in the chain for exactly the requests that most need
+  // to fail fast.
+  if (request._cachedAuthUser !== undefined) return request._cachedAuthUser;
   const user = await lookupUser(userId);
   request._cachedAuthUser = user;
   return user;
+}
+
+// Same caching as getOrFetchUser, for the device/IP ban lookups. Multiple
+// preHandlers in one chain (requireStaff then requirePermission on the same
+// /admin route, for example) each used to re-run both of these — this makes
+// the second call free, same as the user lookup already was.
+async function getOrCheckDeviceBan(request: FastifyRequest, deviceId: string | undefined): Promise<{ deviceId: string } | null> {
+  if (request._cachedDeviceBan !== undefined) return request._cachedDeviceBan;
+  const result = deviceId ? await checkDeviceBan(deviceId) : null;
+  request._cachedDeviceBan = result;
+  return result;
+}
+
+async function getOrCheckIpBan(request: FastifyRequest, ip: string | undefined): Promise<{ ip: string } | null> {
+  if (request._cachedIpBan !== undefined) return request._cachedIpBan;
+  const result = ip ? await checkIpBan(ip) : null;
+  request._cachedIpBan = result;
+  return result;
 }
 
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
@@ -177,8 +201,8 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     const ip = request.ip;
 
     const [deviceBanned, ipBanned] = await Promise.all([
-      deviceId ? checkDeviceBan(deviceId) : Promise.resolve(null),
-      ip ? checkIpBan(ip) : Promise.resolve(null),
+      getOrCheckDeviceBan(request, deviceId),
+      getOrCheckIpBan(request, ip),
     ]);
 
     if (deviceBanned) {
@@ -224,8 +248,8 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     const ip = request.ip;
 
     const [deviceBanned, ipBanned] = await Promise.all([
-      deviceId ? checkDeviceBan(deviceId) : Promise.resolve(null),
-      ip ? checkIpBan(ip) : Promise.resolve(null),
+      getOrCheckDeviceBan(request, deviceId),
+      getOrCheckIpBan(request, ip),
     ]);
 
     if (deviceBanned) {

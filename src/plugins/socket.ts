@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { Server } from 'socket.io';
+import { createAdapter } from '@socket.io/mongo-adapter';
 import jwt from 'jsonwebtoken';
 import { parse as parseCookie } from 'cookie';
 import { setIO } from '../socket/socket.manager.js';
@@ -14,6 +15,7 @@ import User from '../db/user.model.js';
 import type { IUser } from '../db/user.model.js';
 import { hasPermission } from '../shared/permissions.js';
 import mongoose from 'mongoose';
+import { getEnv } from '../config/env.js';
 import { getPreferences } from '../modules/user-preferences/user-preferences.service.js';
 import Project from '../modules/projects/project.model.js';
 import {
@@ -27,6 +29,64 @@ import { parseAllowedOrigins } from '../config/allowed-origins.js';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 
+
+/** Collection the Mongo adapter writes broadcast + heartbeat documents to. */
+const ADAPTER_COLLECTION = 'socket_io_adapter_events';
+/** Adapter documents are transient routing traffic — an hour is ample. */
+const ADAPTER_EVENT_TTL_SECONDS = 3600;
+
+/**
+ * Installs a cross-instance Socket.IO adapter when SOCKET_IO_ADAPTER=mongo.
+ *
+ * Without one, `io.to(room).emit(...)` only reaches sockets held by the
+ * emitting process, so with more than one instance every broadcast is
+ * silently partial. Opt-in because the adapter is pure overhead on a single
+ * instance (a change stream plus a heartbeat write every 5s, and every
+ * broadcast round-tripped through a collection write).
+ *
+ * Fails soft on purpose: a dev database without change streams (a standalone
+ * mongod, e.g. the one in docker-compose.yml) logs a warning and keeps the
+ * default in-memory adapter rather than refusing to boot — single-instance
+ * dev is exactly the case the in-memory adapter already handles correctly.
+ */
+async function setupSocketAdapter(fastify: FastifyInstance, io: Server): Promise<void> {
+  if (getEnv().SOCKET_IO_ADAPTER !== 'mongo') {
+    fastify.log.info('Socket.IO adapter: in-memory (single instance; set SOCKET_IO_ADAPTER=mongo to scale out)');
+    return;
+  }
+
+  const db = mongoose.connection.db;
+  if (!db) {
+    fastify.log.error('Socket.IO adapter: SOCKET_IO_ADAPTER=mongo but no database connection — falling back to in-memory');
+    return;
+  }
+
+  try {
+    const collection = db.collection(ADAPTER_COLLECTION);
+    // TTL rather than a capped collection: it matches how every other
+    // transient collection here is bounded (sessions, email verifications,
+    // one-time tokens) and needs no createCollection-then-ignore-the-error
+    // dance. `addCreatedAtField` below is what populates the indexed field.
+    await collection.createIndex({ createdAt: 1 }, { expireAfterSeconds: ADAPTER_EVENT_TTL_SECONDS });
+
+    // Probe before installing: the adapter opens its change stream lazily, so
+    // on a cluster that doesn't support them the failure would otherwise
+    // surface as an unhandled async error well after boot, with broadcasts
+    // quietly not working in the meantime.
+    const probe = collection.watch();
+    try {
+      await probe.close();
+    } catch { /* already closed */ }
+
+    io.adapter(createAdapter(collection, { addCreatedAtField: true }));
+    fastify.log.info({ collection: ADAPTER_COLLECTION }, 'Socket.IO adapter: mongo (cross-instance broadcasts enabled)');
+  } catch (err) {
+    fastify.log.error(
+      { err },
+      'Socket.IO adapter: mongo requested but change streams are unavailable (needs a replica set or sharded cluster) — falling back to in-memory. Cross-instance broadcasts will NOT work.'
+    );
+  }
+}
 
 async function getMutualFollowIds(userId: string): Promise<string[]> {
   const userOid = new mongoose.Types.ObjectId(userId);
@@ -52,6 +112,15 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     },
     pingInterval: 25000,
     pingTimeout: 60000,
+    // Off by default since Socket.IO v3. Unlike REST/GraphQL, these frames
+    // never cross the Vercel/Cloudflare edge — the client connects straight
+    // to the API origin — so there is no CDN compressing them as a
+    // backstop. `project:updated` in particular can carry a full lyrics
+    // document (see emitProjectUpdated), which compresses well: repeated
+    // field names, repeated chorus lines. Threshold keeps small frames
+    // (pings, acks, presence) from paying compression overhead that costs
+    // more than it saves.
+    perMessageDeflate: { threshold: 1024 },
   });
 
   setIO(io);
@@ -148,6 +217,11 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
   }
 
   fastify.addHook('onListen', async () => {
+    // Before any connection handler is wired, so no socket can join a room
+    // the adapter isn't yet aware of. This plugin registers ahead of the
+    // mongoose one in server.ts, so the connection isn't open at
+    // registration time — onListen is the first point where it is.
+    await setupSocketAdapter(fastify, io);
     await initSocialGraph();
     fastify.log.info('Social graph initialized');
     await initRequestQueue();
@@ -257,9 +331,28 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         }
       });
 
-      socket.on('join:project', (publicId: string) => {
-        if (typeof publicId === 'string' && publicId.length > 0) {
+      // The `project:{id}` room carries the full `project:updated` payload
+      // (lyrics content on an autosave, reactions, etc.), so joining it must
+      // require the same visibility rule the REST/GraphQL share path uses —
+      // the owner, or a project that is actually public. Unlike
+      // `viewers:watch` below this is reachable by anonymous sockets (public
+      // viewers are allowed), so ownership is just one of two valid cases
+      // rather than the only one. A failure is a silent no-op, matching the
+      // other identity-requiring handlers — it must not let a client probe
+      // which `publicId`s exist or are private.
+      socket.on('join:project', async (publicId: unknown) => {
+        if (!isValidPublicId(publicId)) return;
+        try {
+          const project = await Project.findOne({ publicId })
+            .select('userId public')
+            .lean<{ userId?: mongoose.Types.ObjectId | null; public?: boolean }>();
+          if (!project) return;
+          const userId = socket.data.userId as string | undefined;
+          const isOwner = !!userId && !!project.userId && project.userId.toString() === userId;
+          if (!isOwner && project.public !== true) return;
           socket.join(`project:${publicId}`);
+        } catch {
+          // DB hiccup: fail closed, same as the other ownership checks here.
         }
       });
 
