@@ -180,7 +180,7 @@ export const projectResolvers = {
         throw statusErr;
       }
       const patched = result as { project: unknown };
-      emitProjectUpdated(id, input);
+      emitProjectUpdated(id, input, context.socketId);
       try {
         if (context.socketId) {
           getIO().to(context.socketId).emit('autosave:ack', { publicId: id, savedAt: Date.now() });

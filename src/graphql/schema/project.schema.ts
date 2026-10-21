@@ -155,6 +155,13 @@ export const projectSchema = `
     explicit: Boolean
   }
 
+  # One positional line write within a multi-line patch (see ProjectLyricsInput.lines).
+  input LinePatchInput {
+    sectionIdx: Int!
+    lineIdx: Int!
+    line: LineInput!
+  }
+
   input ProjectLyricsInput {
     editorMode: String
     language: String
@@ -167,6 +174,11 @@ export const projectSchema = `
     # Positional word patch
     wordIndex: Int
     word: WordInput
+    # Positional multi-line patch: several lines changed in one save, line
+    # count and section markers both unchanged. Additive alongside the
+    # single-line and full-sections shapes above — a client that doesn't
+    # send this still works exactly as before.
+    lines: [LinePatchInput!]
   }
 
   input CreateProjectInput {
