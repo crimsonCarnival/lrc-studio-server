@@ -67,6 +67,25 @@ export interface Env {
    * falls back to APP_URL.
    */
   CLIENT_ORIGIN?: string;
+  /**
+   * Cross-instance Socket.IO delivery. Set to `mongo` when running MORE THAN
+   * ONE server instance — without it, every room broadcast reaches only the
+   * sockets connected to the instance that emitted it, so autosave acks,
+   * notifications, `session:revoked` and `user:banned` are silently delivered
+   * to a fraction of their intended recipients (several emit sites swallow
+   * their own failure in a bare catch, so nothing shows up in logs either).
+   *
+   * Left unset the in-memory adapter is used, which is correct and cheaper
+   * for a single instance: the Mongo adapter routes every broadcast through
+   * a collection write + change-stream read and writes a heartbeat document
+   * every 5s, all pointless overhead with one instance. The active adapter
+   * is logged at boot so which one is live is always auditable.
+   *
+   * Requires a replica set or sharded cluster (the adapter uses change
+   * streams). The app already requires one for its transactions, so any
+   * deployment running today qualifies.
+   */
+  SOCKET_IO_ADAPTER?: 'mongo';
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -119,6 +138,7 @@ export function loadEnv(): Env {
     OG_DEFAULT_IMAGE_URL: process.env.OG_DEFAULT_IMAGE_URL?.trim() || 'https://www.lrcstudio.app/og-default.png',
     OG_API_ORIGIN: process.env.OG_API_ORIGIN?.trim() || undefined,
     CLIENT_ORIGIN: process.env.CLIENT_ORIGIN?.trim() || undefined,
+    SOCKET_IO_ADAPTER: process.env.SOCKET_IO_ADAPTER?.trim() === 'mongo' ? 'mongo' : undefined,
   };
 }
 
