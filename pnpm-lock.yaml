@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@socket.io/mongo-adapter>mongodb': ~6.20.0
+
 importers:
 
   .:
@@ -35,6 +38,9 @@ importers:
       '@simplewebauthn/server':
         specifier: 13.3.0
         version: 13.3.0
+      '@socket.io/mongo-adapter':
+        specifier: ^0.4.0
+        version: 0.4.0(socket.io-adapter@2.5.7)
       argon2:
         specifier: 0.44.0
         version: 0.44.0
@@ -639,6 +645,12 @@ packages:
 
   '@socket.io/component-emitter@3.1.2':
     resolution: {integrity: sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA==}
+
+  '@socket.io/mongo-adapter@0.4.0':
+    resolution: {integrity: sha512-yP9OVpYI+ELDWPAAMHNgGFgUGnr2IFmHbgcGUqrKFzumHJH1+51PzveGt1If2tQcOdRX9fOR8GzdoRiFF0Nk8g==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      socket.io-adapter: ^2.5.2
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -2871,6 +2883,21 @@ snapshots:
       '@peculiar/x509': 1.14.3
 
   '@socket.io/component-emitter@3.1.2': {}
+
+  '@socket.io/mongo-adapter@0.4.0(socket.io-adapter@2.5.7)':
+    dependencies:
+      debug: 4.3.7
+      mongodb: 6.20.0
+      socket.io-adapter: 2.5.7
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-providers'
+      - '@mongodb-js/zstd'
+      - gcp-metadata
+      - kerberos
+      - mongodb-client-encryption
+      - snappy
+      - socks
+      - supports-color
 
   '@standard-schema/spec@1.1.0': {}
 
