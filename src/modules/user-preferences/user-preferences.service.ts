@@ -1,8 +1,20 @@
 import { LRUCache } from '@crimson-carnival/ds-js';
 import UserPreferences, { type IUserPreferences } from '../../db/user-preferences.model.js';
 
+interface CacheEntry {
+  prefs: IUserPreferences;
+  cachedAt: number;
+}
+
 // Cache 1000 most-recently-accessed preference docs
-const cache = new LRUCache<string, IUserPreferences>(1000);
+const cache = new LRUCache<string, CacheEntry>(1000);
+// This process's own writes invalidate correctly (updatePreferences below
+// re-puts after every save). The gap is cross-instance: another process
+// holding a stale entry — e.g. a visibility change made on instance A isn't
+// seen by instance B until its entry naturally evicts, which may be never
+// under light traffic. TTL bounds that window; see block-list.cache.ts for
+// the same fix with the fuller reasoning.
+const CACHE_TTL_MS = 5 * 60_000; // 5 minutes
 
 // `.lean()` does not apply schema defaults, so documents created before a field
 // existed come back without it. Fill in the defaults for fields added later so
@@ -21,7 +33,7 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
 
 export async function getPreferences(userId: string): Promise<IUserPreferences> {
   const cached = cache.get(userId);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return cached.prefs;
 
   const prefs = withDefaults(await UserPreferences.findOneAndUpdate(
     { userId },
@@ -29,7 +41,7 @@ export async function getPreferences(userId: string): Promise<IUserPreferences> 
     { upsert: true, new: true }
   ).lean() as unknown as IUserPreferences);
 
-  cache.put(userId, prefs);
+  cache.put(userId, { prefs, cachedAt: Date.now() });
   return prefs;
 }
 
@@ -55,7 +67,7 @@ export async function updatePreferences(
     { upsert: true, new: true }
   ).lean() as unknown as IUserPreferences);
 
-  cache.put(userId, updated);
+  cache.put(userId, { prefs: updated, cachedAt: Date.now() });
   return updated;
 }
 
