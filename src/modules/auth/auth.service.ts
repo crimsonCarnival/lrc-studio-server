@@ -135,21 +135,35 @@ export async function verifyRecaptcha(token: string | undefined, ip: string): Pr
     }
     return true;
   }
-  if (!token) return false;
+  if (!token) {
+    console.warn('[verifyRecaptcha] rejected: no token supplied');
+    return false;
+  }
+  const minScore = Number(process.env.RECAPTCHA_MIN_SCORE ?? 0.5);
   try {
     const res = await fetch('https://www.google.com/recaptcha/api/siteverify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `secret=${secret}&response=${token}&remoteip=${ip}`,
+      body: new URLSearchParams({ secret, response: token, remoteip: ip }).toString(),
       // Unbounded before this: a hung connection to Google held the request
       // open indefinitely on register/login/forgot-password and project
       // create (the first save a new user ever makes). Abort falls into the
       // catch below and fails closed, same as any other verification failure.
       signal: AbortSignal.timeout(5000),
     });
-    const data = await res.json() as { success: boolean; score?: number };
-    return data.success && (data.score === undefined || data.score >= 0.5);
-  } catch {
+    const data = await res.json() as { success: boolean; score?: number; action?: string; hostname?: string; 'error-codes'?: string[] };
+    const ok = data.success && (data.score === undefined || data.score >= (Number.isFinite(minScore) ? minScore : 0.5));
+    if (!ok) {
+      // Without this every failure mode (bad secret, host mismatch, expired or
+      // reused token, low score) surfaces as the same opaque recaptcha_failed.
+      console.warn('[verifyRecaptcha] rejected:', JSON.stringify({
+        success: data.success, score: data.score, action: data.action,
+        hostname: data.hostname, errors: data['error-codes'],
+      }));
+    }
+    return ok;
+  } catch (e) {
+    console.warn('[verifyRecaptcha] verification request failed:', e instanceof Error ? e.message : e);
     return false;
   }
 }
