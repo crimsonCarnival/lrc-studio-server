@@ -25,7 +25,7 @@ import {
 import type {
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
+  AuthenticatorTransport,
 } from '@simplewebauthn/server';
 import { getEnv } from '../../config/env.js';
 import { isValidAccountName, isReservedAccountName } from './auth.validation.js';
@@ -854,7 +854,7 @@ export async function getPasskeyRegistrationOptions(userId: string): Promise<Ser
     attestationType: 'none',
     excludeCredentials: userPasskeys.map(passkey => ({
       id: passkey.credentialID,
-      transports: passkey.transports as AuthenticatorTransportFuture[],
+      transports: passkey.transports as AuthenticatorTransport[],
     })),
     authenticatorSelection: {
       residentKey: 'preferred',
@@ -943,7 +943,7 @@ export async function getPasskeyLoginOptions(identifier: string): Promise<Servic
     rpID,
     allowCredentials: userPasskeys.map(passkey => ({
       id: passkey.credentialID,
-      transports: passkey.transports as AuthenticatorTransportFuture[],
+      transports: passkey.transports as AuthenticatorTransport[],
     })),
     userVerification: 'preferred',
   });
@@ -1002,7 +1002,7 @@ export async function verifyPasskeyLogin(
         id: passkey.credentialID,
         publicKey: new Uint8Array(passkey.credentialPublicKey),
         counter: passkey.counter,
-        transports: passkey.transports as AuthenticatorTransportFuture[],
+        transports: passkey.transports as AuthenticatorTransport[],
       },
     });
   } catch (error: unknown) {
@@ -1103,7 +1103,7 @@ export async function getSudoPasskeyOptions(userId: string): Promise<ServiceResu
     rpID,
     allowCredentials: userPasskeys.map(passkey => ({
       id: passkey.credentialID,
-      transports: passkey.transports as AuthenticatorTransportFuture[],
+      transports: passkey.transports as AuthenticatorTransport[],
     })),
     userVerification: 'preferred',
   });
@@ -1143,7 +1143,7 @@ export async function verifySudoPasskey(
         id: passkey.credentialID,
         publicKey: new Uint8Array(passkey.credentialPublicKey),
         counter: passkey.counter,
-        transports: passkey.transports as AuthenticatorTransportFuture[],
+        transports: passkey.transports as AuthenticatorTransport[],
       },
     });
   } catch (error: unknown) {
