@@ -4,8 +4,9 @@
   "type": "module",
   "main": "dist/server.js",
   "engines": {
-    "node": ">=20.3.0"
+    "node": "24.x"
   },
+  "packageManager": "pnpm@10.34.8",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
