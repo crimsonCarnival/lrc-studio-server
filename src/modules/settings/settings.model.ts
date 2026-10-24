@@ -100,7 +100,7 @@ const exportSchema = sub({
 const interfaceSchema = sub({
   defaultLanguage: { type: String, maxlength: 10, match: /^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$/ },
   fontSize: { type: String, enum: ['small', 'normal', 'large', 'xlarge'] },
-  fontWeight: { type: String, enum: ['normal', 'light', 'lighter'] },
+  fontWeight: { type: String, enum: ['thinnest', 'lighter', 'light', 'normal', 'bold', 'bolder'] },
   spacing: { type: String, enum: ['compact', 'normal', 'relaxed'] },
   previewAlignment: { type: String, enum: ['left', 'center', 'right'] },
   focusContrast: { type: String, enum: ['off', 'low', 'medium', 'high'] },
