@@ -65,7 +65,7 @@ export const uploadResolvers = {
       const upload = await Upload.findOneAndUpdate(
         query,
         { ...input, title: resolvedTitle, userId: context.userId || null },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
       if (context.userId) triggerBadgeCheck(context.userId, 'upload_create').catch(() => {});
       return upload;
@@ -85,7 +85,7 @@ export const uploadResolvers = {
     projects: async (upload: UploadDoc) => {
       const uploadId = upload._id ?? upload.id;
       if (!uploadId) return [];
-      return Project.find({ uploadId }).sort({ updatedAt: -1 });
+      return Project.find({ uploadId: String(uploadId) }).sort({ updatedAt: -1 });
     }
   },
 };

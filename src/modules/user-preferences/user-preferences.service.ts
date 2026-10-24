@@ -38,7 +38,7 @@ export async function getPreferences(userId: string): Promise<IUserPreferences> 
   const prefs = withDefaults(await UserPreferences.findOneAndUpdate(
     { userId },
     { $setOnInsert: { userId } },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   ).lean() as unknown as IUserPreferences);
 
   cache.put(userId, { prefs, cachedAt: Date.now() });
@@ -64,7 +64,7 @@ export async function updatePreferences(
   const updated = withDefaults(await UserPreferences.findOneAndUpdate(
     { userId },
     { $set, $setOnInsert: { userId } },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   ).lean() as unknown as IUserPreferences);
 
   cache.put(userId, { prefs: updated, cachedAt: Date.now() });

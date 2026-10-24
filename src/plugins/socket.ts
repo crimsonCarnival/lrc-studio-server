@@ -78,7 +78,8 @@ async function setupSocketAdapter(fastify: FastifyInstance, io: Server): Promise
       await probe.close();
     } catch { /* already closed */ }
 
-    io.adapter(createAdapter(collection, { addCreatedAtField: true }));
+    // The adapter resolves mongodb@6 types; Mongoose 9 ships mongodb@7. Same runtime driver API.
+    io.adapter(createAdapter(collection as unknown as Parameters<typeof createAdapter>[0], { addCreatedAtField: true }));
     fastify.log.info({ collection: ADAPTER_COLLECTION }, 'Socket.IO adapter: mongo (cross-instance broadcasts enabled)');
   } catch (err) {
     fastify.log.error(

@@ -25,7 +25,8 @@ export async function startJobQueue(
 ): Promise<void> {
   const db = mongoose.connection.db;
   if (!db) throw new Error('Job queue needs an open MongoDB connection');
-  const instance = new Pulse({ mongo: db, processEvery });
+  // Pulse pins mongodb@6 while Mongoose 9 ships mongodb@7; the Db is passed across that boundary.
+  const instance = new Pulse({ mongo: db as unknown as NonNullable<ConstructorParameters<typeof Pulse>[0]>['mongo'], processEvery });
   instance.on('fail', (err: Error, job: Job) => onFail(err, job.attrs.name));
   pulse = instance;
 }

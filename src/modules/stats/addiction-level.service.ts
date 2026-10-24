@@ -240,7 +240,7 @@ export async function updateLevel(
   const level = await AddictionLevel.findOneAndUpdate(
     { id },
     { $set: input },
-    { new: true }
+    { returnDocument: 'after' }
   ).lean<IAddictionLevel>();
   invalidateLevelCache();
   return level;

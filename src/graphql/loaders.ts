@@ -104,7 +104,7 @@ export const loaders: MercuriusLoaders = {
         });
 
         if (toFetch.length > 0) {
-          const ids = toFetch.map(tf => tf.id);
+          const ids = toFetch.map(tf => tf.id as mongoose.Types.ObjectId);
           const users = await User.find({ _id: { $in: ids } })
             .select('accountName displayName avatarUrl role isVerified ban progression')
             .lean();
@@ -132,7 +132,7 @@ export const loaders: MercuriusLoaders = {
         });
 
         if (toFetch.length > 0) {
-          const ids = toFetch.map(tf => tf.id);
+          const ids = toFetch.map(tf => tf.id as mongoose.Types.ObjectId);
           const uploads = await Upload.find({ _id: { $in: ids } })
             .select('source fileName title uploadUrl publicId duration userId')
             .lean();
@@ -160,7 +160,7 @@ export const loaders: MercuriusLoaders = {
         });
 
         if (toFetch.length > 0) {
-          const ids = toFetch.map(tf => tf.id);
+          const ids = toFetch.map(tf => tf.id as mongoose.Types.ObjectId);
           // No .select() here on purpose — Project.lyrics is only resolved
           // when a query actually selects it (editor/share views need the
           // whole tree), so narrowing fields would be wrong. .lean() alone
@@ -181,7 +181,7 @@ export const loaders: MercuriusLoaders = {
     isStarredByMe: {
       loader: async (queries: Array<{ obj: LoaderObj }>, context: MercuriusContext & { userId?: string | null }) => {
         if (!context.userId) return queries.map(() => false);
-        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const publicIds = queries.map(({ obj }) => obj.publicId as string);
         const stars = await ProjectStar
           .find({ userId: context.userId, publicId: { $in: publicIds } })
           .select('publicId')
@@ -195,7 +195,7 @@ export const loaders: MercuriusLoaders = {
     // one grouped query per request rather than a countDocuments per project.
     boostCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
-        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const publicIds = queries.map(({ obj }) => obj.publicId as string);
         const counts = await Boost.aggregate<{ _id: string; count: number }>([
           { $match: { publicId: { $in: publicIds } } },
           { $group: { _id: '$publicId', count: { $sum: 1 } } },
@@ -208,7 +208,7 @@ export const loaders: MercuriusLoaders = {
     isBoostedByMe: {
       loader: async (queries: Array<{ obj: LoaderObj }>, context: MercuriusContext & { userId?: string | null }) => {
         if (!context.userId) return queries.map(() => false);
-        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const publicIds = queries.map(({ obj }) => obj.publicId as string);
         const boosts = await Boost
           .find({ userId: context.userId, publicId: { $in: publicIds } })
           .select('publicId')
@@ -221,7 +221,7 @@ export const loaders: MercuriusLoaders = {
     // Projects only the word times, not the lyric text, so a list of results stays cheap.
     hasWordSync: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
-        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const publicIds = queries.map(({ obj }) => obj.publicId as string);
         const lyricsList = await Lyrics.find(
           { publicId: { $in: publicIds } },
           { publicId: 1, 'sections.lines.words.time': 1, 'lines.words.time': 1 }
@@ -240,7 +240,7 @@ export const loaders: MercuriusLoaders = {
     // to keep off the wire by default.
     lineCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
-        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const publicIds = queries.map(({ obj }) => obj.publicId as string);
         const lyricsList = await Lyrics.find(
           { publicId: { $in: publicIds } },
           { publicId: 1, 'sections.lines.timestamp': 1, 'lines.timestamp': 1, 'lines.type': 1 }
@@ -256,7 +256,7 @@ export const loaders: MercuriusLoaders = {
     // Same narrowing as lineCount, for the same reason.
     syncedLineCount: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
-        const publicIds = queries.map(({ obj }) => obj.publicId);
+        const publicIds = queries.map(({ obj }) => obj.publicId as string);
         const lyricsList = await Lyrics.find(
           { publicId: { $in: publicIds } },
           { publicId: 1, 'sections.lines.timestamp': 1, 'lines.timestamp': 1, 'lines.type': 1 }
@@ -314,7 +314,7 @@ export const loaders: MercuriusLoaders = {
         });
 
         if (toFetch.length > 0) {
-          const ids = toFetch.map(tf => tf.id);
+          const ids = toFetch.map(tf => tf.id as mongoose.Types.ObjectId);
           // Mirrors the Project.user loader above — this one had no
           // .select()/.lean() at all, hydrating full Mongoose documents
           // (including passwordHash, permissions, badges[], musicLibrary[])

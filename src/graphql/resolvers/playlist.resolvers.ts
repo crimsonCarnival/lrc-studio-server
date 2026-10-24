@@ -160,11 +160,11 @@ export const playlistResolvers = {
         ...(await visibilityForNewContent(context.userId)),
         userId: context.userId,
         name: input.name,
-        description: input.description,
+        description: input.description as string | undefined,
         coverImage: input.coverImage,
         tags: input.tags ?? [],
         isPublic: input.isPublic ?? true,
-        sortMode: input.sortMode ?? 'DATE_ADDED',
+        sortMode: (input.sortMode ?? 'DATE_ADDED') as IPlaylist['sortMode'],
         publicIds: objectIds,
         savedCount: 0,
       });
@@ -229,7 +229,7 @@ export const playlistResolvers = {
       const updated = await Playlist.findByIdAndUpdate(
         playlistId,
         { $addToSet: { publicIds: project._id } },
-        { new: true }
+        { returnDocument: 'after' }
       ).lean<LeanPlaylist>();
       if (!updated) throw new Error('not_found');
       return formatPlaylist(updated, context);
@@ -249,7 +249,7 @@ export const playlistResolvers = {
       const updated = await Playlist.findByIdAndUpdate(
         playlistId,
         { $pull: { publicIds: project._id } },
-        { new: true }
+        { returnDocument: 'after' }
       ).lean<LeanPlaylist>();
       if (!updated) throw new Error('not_found');
       return formatPlaylist(updated, context);

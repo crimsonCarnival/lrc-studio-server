@@ -82,7 +82,7 @@ export async function registerProjectView(args: {
     { publicId },
     { $inc: { viewCount: 1 } },
     // A view is not an edit: leave updatedAt (the "edited …" time) alone.
-    { new: true, projection: { viewCount: 1 }, timestamps: false }
+    { returnDocument: 'after', projection: { viewCount: 1 }, timestamps: false }
   ).lean<{ viewCount?: number }>();
 
   return { counted: true, viewCount: updated?.viewCount ?? viewCount + 1 };

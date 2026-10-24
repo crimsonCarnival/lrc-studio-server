@@ -58,7 +58,7 @@ export async function verifyEmailToken(rawToken: string): Promise<void> {
   const doc = await EmailVerification.findOneAndUpdate(
     { tokenHash, isUsed: false, expiresAt: { $gt: new Date() } },
     { $set: { isUsed: true } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!doc) {

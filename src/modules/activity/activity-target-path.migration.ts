@@ -18,7 +18,7 @@ export interface BackfillResult {
 }
 
 /** The activity types that address a project; the rest set their own path at write time. */
-const PROJECT_TYPES = ['project_published', 'project_starred', 'project_forked', 'project_boosted'];
+const PROJECT_TYPES = ['project_published', 'project_starred', 'project_forked', 'project_boosted'] as const;
 
 /**
  * Fills `Activity.targetPath` for project activities written before the resolvers

@@ -160,7 +160,6 @@ export async function createProject(
       const [upload] = await Upload.create([{
         userId: userId || null,
         source: 'youtube',
-        youtubeUrl: ytUrl,
         fileName: fileName || '',
         title: title || '',
         duration: duration ?? null,
@@ -202,7 +201,7 @@ export async function createProject(
       uploadId: resolvedUploadId,
       state: state || {},
       metadata: cleanedMetadata,
-      coverImage: coverImage ? sanitizeUrl(coverImage) : '',
+      coverImage: (coverImage ? sanitizeUrl(coverImage) : '') as string,
       readOnly: readOnly ?? true,
       public: finalIsPublic,
       createdFrom: createdFrom ? createdFrom.slice(0, 64) : null,
@@ -215,7 +214,7 @@ export async function createProject(
 
     const [lyricsDoc] = await Lyrics.create([{
       publicId: project.publicId,
-      editorMode: lyrics?.editorMode || 'lrc',
+      editorMode: (lyrics?.editorMode || 'lrc') as 'lrc' | 'srt' | 'words',
       sections: incomingSections,
     }], { session });
 
@@ -338,7 +337,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       metadata: s.metadata || {},
       coverImage: s.coverImage || '',
       upload: uploadObj,
-      editorMode: lyrics?.editorMode || 'lrc',
+      editorMode: (lyrics?.editorMode || 'lrc') as 'lrc' | 'srt' | 'words',
       lineCount: lyrics?.lineCount ?? 0,
       syncedLineCount: lyrics?.syncedLineCount ?? 0,
       readOnly: s.readOnly,
@@ -456,7 +455,7 @@ export async function updateProject(
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
   })();
 
@@ -464,7 +463,7 @@ export async function updateProject(
     Project.findOneAndUpdate(
       { publicId },
       { $set: projectUpdate, $inc: { version: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist'),
     lyricsPromise,
   ]);
@@ -585,7 +584,7 @@ export async function patchProject(
       const found = await Project.findOneAndUpdate(
         filter,
         { $set: projectUpdate, $inc: { version: 1 } },
-        { new: true, session }
+        { returnDocument: 'after', session }
       ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist');
       // No match means either the project vanished, or (when a version was
       // given) it moved since this request read it — a real conflict, not
@@ -836,7 +835,7 @@ async function patchLyricsWithSession(
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: update, $inc: { version: 1 } },
-      { upsert: true, new: true, session }
+      { upsert: true, returnDocument: 'after', session }
     ) as Promise<LyricsDoc | null>;
   }
 
@@ -855,7 +854,7 @@ async function patchLyricsWithSession(
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: update, $inc: { version: 1 } },
-      { upsert: true, new: true, session }
+      { upsert: true, returnDocument: 'after', session }
     ) as Promise<LyricsDoc | null>;
   }
 
@@ -877,7 +876,7 @@ async function patchLyricsWithSession(
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: update, $inc: { version: 1 } },
-      { upsert: true, new: true, session }
+      { upsert: true, returnDocument: 'after', session }
     ) as Promise<LyricsDoc | null>;
   }
 
@@ -891,7 +890,7 @@ async function patchLyricsWithSession(
     return Lyrics.findOneAndUpdate(
       { publicId },
       { $set: lyricsUpdate, $unset: { lines: 1 }, $inc: { version: 1 } },
-      { upsert: true, new: true, session }
+      { upsert: true, returnDocument: 'after', session }
     ) as Promise<LyricsDoc | null>;
   }
 

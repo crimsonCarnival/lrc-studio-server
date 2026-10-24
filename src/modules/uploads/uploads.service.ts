@@ -199,7 +199,7 @@ export async function listMedia(userId: string, { limit = 50, offset = 0 }: { li
     .lean();
 
   return {
-    uploads: uploads.map((u: Record<string, unknown>) => ({
+    uploads: (uploads as unknown as Record<string, unknown>[]).map((u) => ({
       id: (u._id as Record<string, unknown>).toString(),
       source: u.source,
       uploadUrl: u.uploadUrl,
@@ -289,7 +289,7 @@ export async function createMedia(userId: string | null | undefined, data: Recor
       coverImage: finalCover,
       sizeBytes: sizeBytes ? Number(sizeBytes) : 0,
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
   return upload.toPublic();
@@ -342,7 +342,7 @@ export async function updateMedia(uploadId: string, userId: string, updates: Rec
   const updated = await Upload.findByIdAndUpdate(
     uploadId,
     { $set: updateData },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!updated) return { error: 'Upload not found after update', status: 404 };
@@ -358,7 +358,7 @@ export async function getMedia(uploadId: string, userId: string): Promise<Record
 
   return {
     ...upload.toPublic(),
-    projects: projects.map((p: Record<string, unknown>) => ({
+    projects: (projects as unknown as Record<string, unknown>[]).map((p) => ({
       publicId: p.publicId,
       title: (p as Record<string, string>).title || 'Untitled',
       updatedAt: p.updatedAt,

@@ -497,7 +497,7 @@ export async function refresh(
         refreshTokenHash: newHash,
       },
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!session) {
@@ -519,7 +519,7 @@ export async function refresh(
           refreshTokenHash: newHash,
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
   }
 

@@ -26,7 +26,7 @@ export const lyricsResolvers = {
       const result = await Lyrics.findOneAndUpdate(
         { publicId },
         { $set: update, $unset: { lines: 1 } },
-        { new: true, upsert: true }
+        { returnDocument: 'after', upsert: true }
       );
       // Fire-and-forget. Stats and badges are coalesced per user; ranking is left
       // to the hourly job — recomputing every user's score per call let one

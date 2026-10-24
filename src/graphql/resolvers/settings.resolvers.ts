@@ -23,7 +23,7 @@ export const settingsResolvers = {
         { userId: context.userId },
         // Per-field paths: a partial group (e.g. only `export.stripEmptyLines`) must not erase its siblings.
         { $set: flattenSettingsUpdate(input) },
-        { new: true, upsert: true }
+        { returnDocument: 'after', upsert: true }
       );
     },
 

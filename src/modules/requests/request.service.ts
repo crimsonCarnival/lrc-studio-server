@@ -272,7 +272,7 @@ export async function reviewRequest(
       resolvedAt: new Date(),
       error: null,
     } },
-    { new: true }
+    { returnDocument: 'after' }
   );
   if (!claimed) throw httpError('Request already resolved', 409);
 

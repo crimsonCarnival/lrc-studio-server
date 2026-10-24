@@ -24,7 +24,7 @@ export async function linkArtistIds(userId: string | mongoose.Types.ObjectId, cr
       const doc = await Artist.findOneAndUpdate(
         { userId: owner, nameLower },
         { $setOnInsert: { userId: owner, name: credit.name, nameLower } },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
       ).select('_id');
       credit.artistId = doc._id;
     }),

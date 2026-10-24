@@ -154,7 +154,7 @@ export async function grantBadge(
   const result = await User.findOneAndUpdate(
     { _id: userId, 'badges.id': { $ne: badgeId } },
     { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy } } },
-    { new: true }
+    { returnDocument: 'after' }
   );
   if (!result) return false; // already had it or user not found
 
@@ -244,13 +244,13 @@ export async function listPublicBadgeDefs(): Promise<PublicBadgeDef[]> {
 }
 
 export async function createBadgeDef(input: BadgeDefInput, createdBy?: string): Promise<Record<string, unknown>> {
-  const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy });
+  const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy } as unknown as IBadgeDefinition);
   invalidatePublicBadgeDefsCache();
   return { ...def.toObject(), holderCount: 0, holderPct: 0 };
 }
 
 export async function updateBadgeDef(id: string, input: BadgeDefInput): Promise<Record<string, unknown>> {
-  const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { new: true });
+  const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { returnDocument: 'after' });
   if (!def) throw new Error('Badge not found');
   invalidatePublicBadgeDefsCache();
   const [holderCount, totalUsers] = await Promise.all([
@@ -278,7 +278,7 @@ export async function triggerBadgeCheck(userId: string, event: BadgeEvent): Prom
 
   const [user, defs] = await Promise.all([
     User.findById(userId).lean<IUser>(),
-    BadgeDefinition.find({ autoGrant: true, conditionType: { $in: relevantConditions } }).lean<IBadgeDefinition[]>(),
+    BadgeDefinition.find({ autoGrant: true, conditionType: { $in: relevantConditions as IBadgeDefinition['conditionType'][] } }).lean<IBadgeDefinition[]>(),
   ]);
   if (!user) return [];
 
