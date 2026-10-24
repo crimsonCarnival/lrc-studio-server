@@ -5,7 +5,7 @@ import { ROLES, type Role } from "../shared/permissions.js";
 // Argon2id parameters — OWASP recommended minimums for interactive logins.
 // Argon2id is the hybrid variant: resistant to GPU/ASIC brute-force AND
 // side-channel attacks.
-const ARGON2_OPTIONS: argon2.Options = {
+const ARGON2_OPTIONS: argon2.HashOptions = {
   type: argon2.argon2id,
   memoryCost: 19 * 1024, // 19 MB — OWASP minimum; 64 MB caused OOM in constrained envs
   timeCost: 3, // 3 iterations
@@ -94,6 +94,8 @@ export interface IUserProgression {
 }
 
 export interface IUser extends Document {
+  // Mongoose 9 no longer declares the `id` virtual on Document.
+  id: string;
   accountName?: string;
   displayName?: string | null;
   lastAccountNameChangedAt?: Date | null;
@@ -414,15 +416,11 @@ const userSchema = new mongoose.Schema<IUser>(
 // guarantee one; this is the last line of defence against a script or a future code
 // path creating a nameless account. Safe to enforce at this layer only because the
 // backfill has run and no nameless row remains (scripts/backfill-account-names.ts).
-userSchema.pre(
-  "validate",
-  function (this: IUser, next: mongoose.CallbackWithoutResultAndOptionalError) {
-    if (!this.accountName) {
-      return next(new Error("accountName is required"));
-    }
-    next();
-  },
-);
+userSchema.pre("validate", function (this: IUser) {
+  if (!this.accountName) {
+    throw new Error("accountName is required");
+  }
+});
 
 // Prevent duplicate Google account links.
 //

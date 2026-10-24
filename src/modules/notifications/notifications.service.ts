@@ -53,7 +53,7 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
       $addToSet: { actors: actor },
       $inc: { actorCount: 1 },
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
   enqueueNotif(ownerId, notification.toObject() as unknown as INotification);
@@ -88,7 +88,7 @@ export async function upsertReaction(params: UpsertReactionParams): Promise<void
       $addToSet: { actors: actor },
       $inc: { actorCount: 1 },
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
   enqueueNotif(ownerId, notification.toObject() as unknown as INotification);
@@ -131,7 +131,7 @@ export async function upsertFollow(params: UpsertFollowParams): Promise<void> {
         },
       },
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
   enqueueNotif(ownerId, notification.toObject() as unknown as INotification);

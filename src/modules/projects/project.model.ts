@@ -5,6 +5,8 @@ import { projectSlug } from '../../utils/project-slug.js';
 import { PRIMARY_GENRES, type ProjectMetadata, type ProjectState } from '../../types/index.js';
 
 export interface IProject extends Document {
+  // Mongoose 9 no longer declares the `id` virtual on Document.
+  id: string;
   publicId: string;
   userId?: mongoose.Types.ObjectId | null;
   title?: string;
@@ -243,7 +245,7 @@ projectSchema.methods.isOwnedBy = function (this: mongoose.Document & { userId?:
   return this.userId.toString() === userId.toString();
 };
 
-projectSchema.methods.toPublic = function (this: mongoose.Document) {
+projectSchema.methods.toPublic = function (this: IProject) {
   const obj = this.toObject();
   obj.id = obj._id?.toString() || this.id;
   delete obj.__v;

@@ -74,7 +74,7 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
     return { users: [], nextCursor: null, hasMore: false, total };
   }
 
-  const userIds = page.map((u: Record<string, unknown>) => u._id);
+  const userIds = page.map((u) => u._id);
 
   const [projectCounts, uploadCounts, sessionData] = await Promise.all([
     Project.aggregate([
@@ -101,7 +101,7 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   // startup whether or not this (admin-only, list-paginated) path was ever
   // hit — the three other call sites already do it this way.
   const geoip = (await import('geoip-lite')).default;
-  const users = page.map((u: Record<string, unknown>) => {
+  const users = (page as unknown as Record<string, unknown>[]).map((u) => {
     const { _id, __v, ...rest } = u;
     return {
       ...rest,
@@ -680,7 +680,7 @@ export async function syncRolePermissions(): Promise<void> {
   for (const [role, presetPerms] of Object.entries(effectivePresets)) {
     if (presetPerms.length === 0) continue;
     await User.updateMany(
-      { role, isDeleted: { $ne: true } },
+      { role: role as Role, isDeleted: { $ne: true } },
       { $addToSet: { permissions: { $each: presetPerms } } }
     );
   }

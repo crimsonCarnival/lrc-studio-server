@@ -303,20 +303,12 @@ describe('block enforcement on engagement', () => {
   });
 
   /**
-   * FINDING G — a block is discovery-only; it does not stop engagement.
-   *
-   * starProject, cloneProject, boostProject and reactToProject have no block
-   * check, and getProject by publicId has none either. So a blocked user can
-   * open the blocker's public project by direct URL and star, fork, boost or
-   * react to it — and each of those fires a notification back to the blocker
-   * via upsertSocial/createOnce, which have no block filter either.
-   *
-   * followUser gets this right (isBlockedEitherWay, user.resolvers.ts:719).
-   * The engagement mutations should use the same guard.
-   *
-   * Remove the `.fails` marker once the guard is added.
+   * A block must stop engagement, not just discovery. starProject refuses a
+   * project whose owner is in a block relationship with the caller (same guard
+   * as followUser) and leaves no star, counter bump or notification behind.
+   * cloneProject, boostProject and reactToProject share the guard.
    */
-  it.fails('should reject starring a project owned by someone who blocked you (FINDING G)', async () => {
+  it('rejects starring a project owned by someone who blocked you, with no side effects', async () => {
     const owner = await mkUser();
     const blocked = await mkUser();
     await blockUser(owner.id, blocked.id);
@@ -324,18 +316,10 @@ describe('block enforcement on engagement', () => {
 
     await expect(
       pm.starProject(null, { id: 'proj-blk-1' }, ctx(blocked.id)),
-    ).rejects.toThrow();
-  });
+    ).rejects.toThrow(/not found/i);
 
-  it('confirms the star lands today, so the finding above is reproducible', async () => {
-    const owner = await mkUser();
-    const blocked = await mkUser();
-    await blockUser(owner.id, blocked.id);
-    await mkProject(owner.id, 'proj-blk-2');
-
-    await pm.starProject(null, { id: 'proj-blk-2' }, ctx(blocked.id));
-    expect(await ProjectStar.countDocuments({ publicId: 'proj-blk-2', userId: blocked.id })).toBe(1);
-    const doc = await Project.findOne({ publicId: 'proj-blk-2' }).lean<{ starCount?: number }>();
-    expect(doc?.starCount).toBe(1);
+    expect(await ProjectStar.countDocuments({ publicId: 'proj-blk-1' })).toBe(0);
+    const doc = await Project.findOne({ publicId: 'proj-blk-1' }).lean<{ starCount?: number }>();
+    expect(doc?.starCount ?? 0).toBe(0);
   });
 });

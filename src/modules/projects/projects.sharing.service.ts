@@ -1,3 +1,4 @@
+import type mongoose from 'mongoose';
 import type { ServiceResult, ProjectPublic } from '../../types/index.js';
 import Project from './project.model.js';
 import ProjectFork from './projectFork.model.js';
@@ -143,7 +144,7 @@ export async function cloneProject(
       readOnly: false,
       forkedFrom: {
         publicId: sourcepublicId,
-        userId: (sourceProject.userId as unknown as { _id?: unknown })?._id || sourceProject.userId || null,
+        userId: ((sourceProject.userId as unknown as { _id?: unknown })?._id || sourceProject.userId || null) as mongoose.Types.ObjectId | null,
         accountName: (sourceProject.userId as unknown as { accountName?: string })?.accountName || null,
       },
     }], { session });

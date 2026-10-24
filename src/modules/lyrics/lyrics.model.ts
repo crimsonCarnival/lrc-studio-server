@@ -88,16 +88,15 @@ const lyricsSchema = new mongoose.Schema(
 
 lyricsSchema.index({ updatedAt: -1 });
 
-lyricsSchema.pre('validate', function (next) {
+lyricsSchema.pre('validate', function () {
   for (const section of this.sections ?? []) {
     for (let i = 0; i < (section.lines ?? []).length; i++) {
       const line = section.lines[i];
       if (line.timestamp != null && line.endTime != null && line.endTime <= line.timestamp) {
-        return next(new Error(`Section line ${i}: endTime must be greater than timestamp`));
+        throw new Error(`Section line ${i}: endTime must be greater than timestamp`);
       }
     }
   }
-  next();
 });
 
 lyricsSchema.methods.toPublic = function () {

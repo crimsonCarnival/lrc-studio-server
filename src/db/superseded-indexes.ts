@@ -1,4 +1,4 @@
-import type { Collection, Model } from 'mongoose';
+import type { Collection } from 'mongoose';
 import Project from '../modules/projects/project.model.js';
 import Playlist from './playlist.model.js';
 import User from './user.model.js';
@@ -12,7 +12,7 @@ interface SupersededIndex {
   replacement: IndexKey;
 }
 
-function superseded<T>(model: Model<T>, old: IndexKey, replacement: IndexKey): SupersededIndex {
+function superseded(model: { init(): Promise<unknown>; collection: Collection }, old: IndexKey, replacement: IndexKey): SupersededIndex {
   return { init: () => model.init(), collection: model.collection, old, replacement };
 }
 
