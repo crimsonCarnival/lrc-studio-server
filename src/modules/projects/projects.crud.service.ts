@@ -160,7 +160,6 @@ export async function createProject(
       const [upload] = await Upload.create([{
         userId: userId || null,
         source: 'youtube',
-        uploadUrl: ytUrl,
         fileName: fileName || '',
         title: title || '',
         duration: duration ?? null,
