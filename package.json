@@ -36,7 +36,7 @@
     "fastify": "5.12.7",
     "fastify-plugin": "6.0.1",
     "geoip-lite": "^2.0.3",
-    "graphql": "16.14.0",
+    "graphql": "17.0.2",
     "i18next": "26.5.10",
     "jsonwebtoken": "9.0.3",
     "mercurius": "16.12.1",

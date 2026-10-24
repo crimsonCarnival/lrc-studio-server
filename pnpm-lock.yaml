@@ -63,8 +63,8 @@ importers:
         specifier: ^2.0.3
         version: 2.0.3
       graphql:
-        specifier: 16.14.0
-        version: 16.14.0
+        specifier: 17.0.2
+        version: 17.0.2
       i18next:
         specifier: 26.5.10
         version: 26.5.10(typescript@6.0.3)
@@ -73,7 +73,7 @@ importers:
         version: 9.0.3
       mercurius:
         specifier: 16.12.1
-        version: 16.12.1(graphql@16.14.0)
+        version: 16.12.1(graphql@17.0.2)
       mongoose:
         specifier: 9.11.4
         version: 9.11.4
@@ -1330,9 +1330,9 @@ packages:
     peerDependencies:
       graphql: '>=15'
 
-  graphql@16.14.0:
-    resolution: {integrity: sha512-BBvQ/406p+4CZbTpCbVPSxfzrZrbnuWSP1ELYgyS6B+hNeKzgrdB4JczCa5VZUBQrDa9hUngm0KnexY6pJRN5Q==}
-    engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
+  graphql@17.0.2:
+    resolution: {integrity: sha512-FRWbddMxfkjiB7z+aQDWIR+E34xo9I8c9mtK2RPv8PmMzKRvrdsreHL/Ui/TmwHJfhHChEtsFPyMHKI+xuarQQ==}
+    engines: {node: ^22.0.0 || ^24.0.0 || ^25.0.0 || >=26.0.0}
 
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
@@ -2580,9 +2580,9 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@graphql-typed-document-node/core@3.2.0(graphql@16.14.0)':
+  '@graphql-typed-document-node/core@3.2.0(graphql@17.0.2)':
     dependencies:
-      graphql: 16.14.0
+      graphql: 17.0.2
 
   '@hexagon/base64@1.1.28': {}
 
@@ -3582,17 +3582,17 @@ snapshots:
 
   globals@17.13.0: {}
 
-  graphql-jit@0.8.10(graphql@16.14.0):
+  graphql-jit@0.8.10(graphql@17.0.2):
     dependencies:
-      '@graphql-typed-document-node/core': 3.2.0(graphql@16.14.0)
+      '@graphql-typed-document-node/core': 3.2.0(graphql@17.0.2)
       fast-json-stringify: 7.2.0
       generate-function: 2.3.1
-      graphql: 16.14.0
+      graphql: 17.0.2
       lodash.memoize: 4.1.2
       lodash.merge: 4.6.2
       lodash.mergewith: 4.6.2
 
-  graphql@16.14.0: {}
+  graphql@17.0.2: {}
 
   has-flag@4.0.0: {}
 
@@ -3831,14 +3831,14 @@ snapshots:
 
   memory-pager@1.5.0: {}
 
-  mercurius@16.12.1(graphql@16.14.0):
+  mercurius@16.12.1(graphql@17.0.2):
     dependencies:
       '@fastify/error': 4.2.1
       '@fastify/static': 10.1.7
       '@fastify/websocket': 11.3.4
       fastify-plugin: 6.0.1
-      graphql: 16.14.0
-      graphql-jit: 0.8.10(graphql@16.14.0)
+      graphql: 17.0.2
+      graphql-jit: 0.8.10(graphql@17.0.2)
       mqemitter: 7.1.0
       quick-lru: 7.3.0
       readable-stream: 4.8.0
