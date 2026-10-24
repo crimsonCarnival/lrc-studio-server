@@ -5,7 +5,7 @@ import { ROLES, type Role } from "../shared/permissions.js";
 // Argon2id parameters — OWASP recommended minimums for interactive logins.
 // Argon2id is the hybrid variant: resistant to GPU/ASIC brute-force AND
 // side-channel attacks.
-const ARGON2_OPTIONS: argon2.Options = {
+const ARGON2_OPTIONS: argon2.HashOptions = {
   type: argon2.argon2id,
   memoryCost: 19 * 1024, // 19 MB — OWASP minimum; 64 MB caused OOM in constrained envs
   timeCost: 3, // 3 iterations
