@@ -41,7 +41,7 @@
     "jsonwebtoken": "9.0.3",
     "mercurius": "16.12.1",
     "mongoose": "8.24.0",
-    "nanoid": "5.1.11",
+    "nanoid": "6.0.2",
     "pino-pretty": "13.2.0",
     "sanitize-html": "2.18.1",
     "socket.io": "4.8.4",
