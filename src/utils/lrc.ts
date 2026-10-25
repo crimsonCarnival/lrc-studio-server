@@ -28,8 +28,17 @@ export interface LineEntry {
   id?: string;
   words?: WordEntry[];
   secondaryWords?: SecondaryWordEntry[];
+  /** Set on a counterpart: the timestamp of the main line it is sung over. */
+  adLibOf?: number | null;
 }
 
+/**
+ * LRC cannot say that a line overlaps the one before it instead of replacing it, so a
+ * counterpart is written with this comment line in front. `[#:…]` is the LRC comment tag:
+ * other players skip it, and our parser turns the next timed line back into a counterpart.
+ */
+export const COUNTERPART_MARKER = '[#:counterpart]';
+const COUNTERPART_MARKER_RE = /^\[#:\s*counterpart\s*\]$/i;
 
 function buildSecondaryText(line: LineEntry, wordPrecision?: string): string | null {
   if (line.secondaryWords?.length && line.secondaryWords.some(w => w.time != null)) {
@@ -223,7 +232,7 @@ export function compileLRC(
         const wordText = line.words?.length
           ? formatWordsToLrc(line.words, wp)
           : line.text;
-        let out = `[${formatTimestamp(ts, precision)}] ${wordText}`;
+        let out = `${line.adLibOf != null ? `${COUNTERPART_MARKER}\n` : ''}[${formatTimestamp(ts, precision)}] ${wordText}`;
         if (includeSecondary) {
           const sec = buildSecondaryText(line, wp);
           if (sec) out += `\n[${formatTimestamp(ts, precision)}] ${sec}`;
@@ -247,6 +256,8 @@ export function compileLRC(
 export function parseLrcSrtFile(content: string, filename: string, options: { preserveEmptyLines?: boolean } = {}): LineEntry[] {
   const isSrt = filename.toLowerCase().endsWith('.srt');
   const parsedLines: LineEntry[] = [];
+  // Lines that followed a COUNTERPART_MARKER; their parent is resolved during the merge.
+  const counterparts = new Set<LineEntry>();
 
   if (isSrt) {
     const blocks = content.replace(/\r\n/g, '\n').split('\n\n');
@@ -266,8 +277,13 @@ export function parseLrcSrtFile(content: string, filename: string, options: { pr
     });
   } else {
     const lrcLines = content.replace(/\r\n/g, '\n').split('\n');
+    let counterpartNext = false;
     lrcLines.forEach(line => {
       const trimmedLine = line.trim();
+      if (COUNTERPART_MARKER_RE.test(trimmedLine)) { counterpartNext = true; return; }
+      // The marker only applies to the line right after it.
+      const markedCounterpart = counterpartNext && trimmedLine !== '';
+      if (trimmedLine !== '') counterpartNext = false;
       const collectedTs: number[] = [];
       LEADING_TIMESTAMP_RE.lastIndex = 0;
       let step: RegExpExecArray | null;
@@ -289,6 +305,7 @@ export function parseLrcSrtFile(content: string, filename: string, options: { pr
         const [primary] = collectedTs;
         const entry: LineEntry = { text, timestamp: primary, id: crypto.randomUUID() };
         if (words.length > 0) entry.words = words;
+        if (markedCounterpart) counterparts.add(entry);
         parsedLines.push(entry);
       } else if (remaining !== '' && !/^\[[^\]]*:[^\]]*\]/.test(remaining)) {
         parsedLines.push({ text: remaining.trim(), timestamp: null, id: crypto.randomUUID() });
@@ -300,6 +317,7 @@ export function parseLrcSrtFile(content: string, filename: string, options: { pr
 
   const mergedLines: LineEntry[] = [];
   const timestampMap = new Map<number, number>();
+  let lastMainTs: number | null = null;
 
   for (const line of parsedLines) {
     if (line.timestamp == null) {
@@ -307,6 +325,13 @@ export function parseLrcSrtFile(content: string, filename: string, options: { pr
       continue;
     }
     const key = Math.round(line.timestamp * 100);
+    // A counterpart may start together with its parent, so it never merges into it. It
+    // takes over the timestamp slot so its own secondary/translation lines land on it.
+    if (counterparts.has(line) && lastMainTs != null) {
+      timestampMap.set(key, mergedLines.length);
+      mergedLines.push({ ...line, adLibOf: lastMainTs });
+      continue;
+    }
     if (timestampMap.has(key)) {
       const existingIndex = timestampMap.get(key)!;
       const existing = mergedLines[existingIndex];
@@ -365,6 +390,7 @@ export function parseLrcSrtFile(content: string, filename: string, options: { pr
       const idx = mergedLines.length;
       mergedLines.push({ ...line });
       timestampMap.set(key, idx);
+      lastMainTs = line.timestamp;
     }
   }
 
