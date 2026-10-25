@@ -1,5 +1,6 @@
 import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
 import { migrateLinesToSections } from '../lyrics/lyrics.model.js';
+import { notifyFollowedProject } from '../notifications/notifications.events.js';
 import { linkArtistIds, type StoredCredit } from '../artists/artist.service.js';
 import { projectPath } from '../../utils/project-slug.js';
 import { sanitizeUrl } from '../../utils/sanitize.js';
@@ -653,17 +654,27 @@ export async function patchProject(
     // targetPath spares the web client from rebuilding the owner-scoped URL.
     // Best-effort: an owner with no accountName leaves it unset rather than
     // throwing out of projectPath() and losing the activity row entirely.
-    User.findById(userId).select('accountName').lean<{ accountName?: string }>()
-      .then((owner) => writeActivity({
-        actorId:      userId,
-        type:         'project_published',
-        publicId,
-        projectTitle: updatedProject?.title || '',
-        coverImage:   updatedProject?.coverImage || '',
-        targetPath:   owner?.accountName && updatedProject
-          ? projectPath(updatedProject, owner.accountName)
-          : undefined,
-      }))
+    User.findById(userId).select('accountName avatarUrl').lean<{ accountName?: string; avatarUrl?: string | null }>()
+      .then((owner) => {
+        if (owner?.accountName) {
+          notifyFollowedProject({
+            author: { userId, accountName: owner.accountName, avatarUrl: owner.avatarUrl ?? null },
+            publicId,
+            projectTitle: updatedProject?.title || '',
+            kind: 'published',
+          }).catch(() => {});
+        }
+        return writeActivity({
+          actorId:      userId,
+          type:         'project_published',
+          publicId,
+          projectTitle: updatedProject?.title || '',
+          coverImage:   updatedProject?.coverImage || '',
+          targetPath:   owner?.accountName && updatedProject
+            ? projectPath(updatedProject, owner.accountName)
+            : undefined,
+        });
+      })
       .catch(() => {});
   }
 
@@ -676,6 +687,20 @@ export async function patchProject(
     projectContentChanged(project, updatedProject) || !isDeepStrictEqual(lyricsBefore, lyricsAfter)
   )) {
     recordHeatmapEvent(userId, 'project_edited', publicId).catch(() => {});
+    // Followers who asked to hear about edits. Publishing already told the others.
+    if (!isPublishing && updatedProject?.public) {
+      User.findById(userId).select('accountName avatarUrl').lean<{ accountName?: string; avatarUrl?: string | null }>()
+        .then((owner) => {
+          if (!owner?.accountName) return;
+          return notifyFollowedProject({
+            author: { userId, accountName: owner.accountName, avatarUrl: owner.avatarUrl ?? null },
+            publicId,
+            projectTitle: updatedProject.title || '',
+            kind: 'updated',
+          });
+        })
+        .catch(() => {});
+    }
   }
 
   return { project: pub as unknown as ProjectPublic };

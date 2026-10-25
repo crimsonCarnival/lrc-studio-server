@@ -12,6 +12,13 @@ const NOTIFICATION_TYPES = [
   'request_submitted', 'request_reviewed',
   'xp_changed', 'role_changed',
   'streak_warning',
+  'followed_project',
+  'wall_comment',
+  'level_up',
+  'playlist_saved',
+  'star_milestone',
+  'new_device',
+  'appeal_result',
 ] as const;
 
 export type NotificationType = typeof NOTIFICATION_TYPES[number];

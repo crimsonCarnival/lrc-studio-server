@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Project from '../../modules/projects/project.model.js';
+import { notifyStarMilestone } from '../../modules/notifications/notifications.events.js';
 import type { IProject } from '../../modules/projects/project.model.js';
 import Boost from '../../db/boost.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
@@ -269,9 +270,11 @@ export const projectResolvers = {
         );
         if (!existing) {
           isNewStar = true;
-          await Project.updateOne({ publicId: id }, { $inc: { starCount: 1 } }, { timestamps: false });
+          const starred = await Project.findOneAndUpdate({ publicId: id }, { $inc: { starCount: 1 } }, { returnDocument: 'after', timestamps: false })
+            .select('starCount').lean<{ starCount?: number }>();
           const ownerId = project.userId?.toString();
           if (ownerId) {
+            notifyStarMilestone({ ownerId, publicId: id, projectTitle: project.title || '', count: starred?.starCount ?? 0 }).catch(() => {});
             User.findById(context.userId).select('accountName avatarUrl').lean<IUser>().then(actor => {
               if (actor) {
                 upsertSocial({

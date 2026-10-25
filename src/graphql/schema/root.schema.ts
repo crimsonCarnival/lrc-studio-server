@@ -8,6 +8,7 @@ export const rootSchema = `
   type Query {
     health: HealthStatus!
     me: User
+    wall(accountName: String!, after: String, limit: Int): Wall!
     project(id: ID!): Project
     projects(limit: Int, offset: Int): [Project!]!
     upload(id: ID!): Upload
@@ -75,6 +76,11 @@ export const rootSchema = `
     sendVerificationEmail: Boolean!
     follow(accountName: String!): Boolean!
     unfollow(accountName: String!): Boolean!
+    addWallComment(accountName: String!, body: String!, parentId: ID): WallComment!
+    deleteWallComment(id: ID!): Boolean!
+    setWallSubscription(accountName: String!, subscribed: Boolean!): Boolean!
+    "What you hear about a followed user's projects: off, uploads or all."
+    setFollowNotify(accountName: String!, level: String!): Boolean!
     blockUser(accountName: String!): Boolean!
     unblockUser(accountName: String!): Boolean!
     createPlaylist(input: CreatePlaylistInput!): Playlist!
@@ -126,6 +132,13 @@ export const rootSchema = `
     badge_awarded: Boolean!
     xp_changed: Boolean!
     streak_warning: Boolean!
+    followed_project: Boolean!
+    wall_comment: Boolean!
+    level_up: Boolean!
+    playlist_saved: Boolean!
+    star_milestone: Boolean!
+    new_device: Boolean!
+    appeal_result: Boolean!
   }
 
   type UserPreferences {
@@ -138,6 +151,7 @@ export const rootSchema = `
     miniProfileBadgeIds: [String!]!
     showActivityHeatmap: Boolean!
     showXpProgress: Boolean!
+    wallEnabled: Boolean!
     notifications: NotificationPreferences!
   }
 
@@ -149,6 +163,13 @@ export const rootSchema = `
     badge_awarded: Boolean
     xp_changed: Boolean
     streak_warning: Boolean
+    followed_project: Boolean
+    wall_comment: Boolean
+    level_up: Boolean
+    playlist_saved: Boolean
+    star_milestone: Boolean
+    new_device: Boolean
+    appeal_result: Boolean
   }
 
   input UpdatePreferencesInput {
@@ -161,6 +182,7 @@ export const rootSchema = `
     miniProfileBadgeIds: [String!]
     showActivityHeatmap: Boolean
     showXpProgress: Boolean
+    wallEnabled: Boolean
     notifications: NotificationPreferencesInput
   }
 

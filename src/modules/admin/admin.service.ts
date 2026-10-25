@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
+import { notifyAppealResult } from '../notifications/notifications.events.js';
 import Session from '../../db/session.model.js';
 import BannedIp from './bannedIp.model.js';
 import BannedDevice from './bannedDevice.model.js';
@@ -429,6 +430,7 @@ export async function rejectAppeal(userId: string, adminId: string | null = null
   // concurrency fix; see toggleBan above for why (comment corrected there
   // after this was initially mischaracterized as closing a save() race).
   await User.updateOne({ _id: user._id }, { $set: { appeal: user.appeal } });
+  notifyAppealResult(userId, false).catch(() => {});
 
   if (adminId) {
     const admin = await User.findById(adminId);

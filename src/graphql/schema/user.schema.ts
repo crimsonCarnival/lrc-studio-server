@@ -122,6 +122,8 @@ export const userSchema = `
     followerCount: Int!
     followingCount: Int!
     isFollowedByMe: Boolean!
+    "off, uploads or all: what the viewer is told about this user's projects. off unless following."
+    followNotify: String!
     isFollowingMe: Boolean!
     isBlockedByMe: Boolean!
     showFollowers: Boolean!

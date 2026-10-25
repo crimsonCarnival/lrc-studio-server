@@ -322,6 +322,10 @@ export const userResolvers = {
           : Promise.resolve(false),
       ]);
 
+      const followNotify = viewerId && isFollowedByMe
+        ? ((await Follow.findOne({ followerId: new mongoose.Types.ObjectId(viewerId), followingId: user._id }).select('notify').lean<{ notify?: string }>())?.notify ?? 'off')
+        : 'off';
+
       const isBlockedByMe = viewerId && !isOwner
         ? await hasBlocked(viewerId, user._id.toString())
         : false;
@@ -377,6 +381,7 @@ export const userResolvers = {
         followerCount: user.social?.followerCount ?? 0,
         followingCount: user.social?.followingCount ?? 0,
         isFollowedByMe,
+        followNotify,
         isFollowingMe,
         isBlockedByMe,
         miniProfileBadgeIds: [],   // overridden by User.miniProfileBadgeIds field resolver
@@ -745,6 +750,20 @@ export const userResolvers = {
       socialGraph.addEdge(context.userId, targetId);
       // Badge: follower_count for the target
       triggerBadgeCheck(targetId, 'follow_received').catch(() => {});
+      return true;
+    },
+
+    setFollowNotify: async (_root: unknown, { accountName, level }: { accountName: string; level: string }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      if (level !== 'off' && level !== 'uploads' && level !== 'all') throw new Error('Invalid level');
+      const target = await User.findOne({ accountName: accountName.toLowerCase() }).select('_id').lean<IUser>();
+      if (!target) throw new Error('User not found');
+      // Only an existing follow can carry a level; nothing is created here.
+      const result = await Follow.updateOne(
+        { followerId: new mongoose.Types.ObjectId(context.userId), followingId: target._id },
+        { $set: { notify: level } },
+      );
+      if (result.matchedCount === 0) throw new Error('Not following this user');
       return true;
     },
 

@@ -24,9 +24,17 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
     ...prefs,
     showActivityHeatmap: prefs.showActivityHeatmap === true,
     showXpProgress: prefs.showXpProgress === true,
+    wallEnabled: prefs.wallEnabled !== false,
     notifications: {
       ...prefs.notifications,
       streak_warning: prefs.notifications?.streak_warning !== false,
+      followed_project: prefs.notifications?.followed_project !== false,
+      wall_comment: prefs.notifications?.wall_comment !== false,
+      level_up: prefs.notifications?.level_up !== false,
+      playlist_saved: prefs.notifications?.playlist_saved !== false,
+      star_milestone: prefs.notifications?.star_milestone !== false,
+      new_device: prefs.notifications?.new_device !== false,
+      appeal_result: prefs.notifications?.appeal_result !== false,
     },
   };
 }

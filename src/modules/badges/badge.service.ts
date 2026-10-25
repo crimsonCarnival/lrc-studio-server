@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
+import { notifyLevelUp } from '../notifications/notifications.events.js';
 import type { IUser, IUserBadge } from '../../db/user.model.js';
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
@@ -872,7 +873,7 @@ type LeanUserXP = Pick<IUser, 'badges' | 'stats' | 'social'>;
 export async function recomputeXP(userId: string): Promise<number> {
   const user = await User.findById(userId)
     .select('badges stats social progression')
-    .lean<LeanUserXP & { progression?: { xp?: number; bonusXp?: number } }>();
+    .lean<LeanUserXP & { progression?: { xp?: number; bonusXp?: number; level?: number } }>();
   if (!user) return 0;
 
   const earnedBadgeIds: string[] = (user.badges ?? []).map((b: IUserBadge) => b.id);
@@ -900,6 +901,7 @@ export async function recomputeXP(userId: string): Promise<number> {
   const delta = newXp - oldXp;
 
   await User.updateOne({ _id: userId }, { 'progression.xp': newXp, 'progression.level': newLevel, 'progression.lastXpEventAt': new Date() });
+  if (newLevel > (user.progression?.level ?? 0)) notifyLevelUp(userId, newLevel).catch(() => {});
 
   // Log event if XP changed (indicates badge grant/revoke or stats update triggered this)
   if (delta !== 0) {

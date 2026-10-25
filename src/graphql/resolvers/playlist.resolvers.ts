@@ -1,5 +1,6 @@
 import { findUserByAccountName } from '../../modules/users/account-name.service.js';
 import mongoose from 'mongoose';
+import { notifyPlaylistSaved } from '../../modules/notifications/notifications.events.js';
 import Playlist from '../../db/playlist.model.js';
 import type { IPlaylist } from '../../db/playlist.model.js';
 import SavedPlaylist from '../../db/saved-playlist.model.js';
@@ -290,6 +291,16 @@ export const playlistResolvers = {
           savedAt: new Date(),
         });
         await Playlist.updateOne({ _id: playlistId }, { $inc: { savedCount: 1 } }, { timestamps: false });
+        const saver = context.userId;
+        User.findById(saver).select('accountName avatarUrl').lean<LeanUser>().then((actor) => {
+          if (!actor) return;
+          return notifyPlaylistSaved({
+            ownerId: String(playlist.userId),
+            actor: { userId: saver, accountName: actor.accountName ?? '', avatarUrl: actor.avatarUrl ?? null },
+            playlistId,
+            name: playlist.name ?? '',
+          });
+        }).catch(() => {});
       } catch (err: unknown) {
         if ((err as { code?: number }).code !== 11000) throw err;
         // duplicate key = already saved, silent

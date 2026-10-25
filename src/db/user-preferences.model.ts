@@ -8,6 +8,13 @@ export interface INotificationPrefs {
   badge_awarded: boolean;
   xp_changed: boolean;
   streak_warning: boolean;
+  followed_project: boolean;
+  wall_comment: boolean;
+  level_up: boolean;
+  playlist_saved: boolean;
+  star_milestone: boolean;
+  new_device: boolean;
+  appeal_result: boolean;
 }
 
 export interface IUserPreferences {
@@ -25,6 +32,8 @@ export interface IUserPreferences {
   // Also opt-in: the XP progress bar on the public profile. Level and XP totals stay public
   // where they already are (leaderboard), this only hides the progress bar.
   showXpProgress: boolean;
+  // Whether other people can leave comments on this user's profile wall.
+  wallEnabled: boolean;
   notifications: INotificationPrefs;
 }
 
@@ -36,6 +45,13 @@ const notifPrefsSchema = new mongoose.Schema<INotificationPrefs>({
   badge_awarded: { type: Boolean, default: true },
   xp_changed:    { type: Boolean, default: true },
   streak_warning: { type: Boolean, default: true },
+  followed_project: { type: Boolean, default: true },
+  wall_comment: { type: Boolean, default: true },
+  level_up: { type: Boolean, default: true },
+  playlist_saved: { type: Boolean, default: true },
+  star_milestone: { type: Boolean, default: true },
+  new_device: { type: Boolean, default: true },
+  appeal_result: { type: Boolean, default: true },
 }, { _id: false });
 
 const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
@@ -49,6 +65,7 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   miniProfileBadgeIds:      { type: [String], default: [] },
   showActivityHeatmap:      { type: Boolean, default: false },
   showXpProgress:           { type: Boolean, default: false },
+  wallEnabled:              { type: Boolean, default: true },
   notifications:           { type: notifPrefsSchema, default: () => ({}) },
 }, { timestamps: true, collection: 'user_preferences' });
 

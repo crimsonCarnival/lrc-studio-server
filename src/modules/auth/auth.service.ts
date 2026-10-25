@@ -1,5 +1,6 @@
 import type { FastifyLoggerInstance } from 'fastify';
 import crypto from 'crypto';
+import { notifyNewDevice } from '../notifications/notifications.events.js';
 import { UAParser } from 'ua-parser-js';
 import User from '../../db/user.model.js';
 import type { IUser } from '../../db/user.model.js';
@@ -179,11 +180,18 @@ async function checkDevice(deviceId: string | null | undefined, user: IUser | nu
   }
 
   if (user) {
-    await UserDevice.findOneAndUpdate(
+    const previous = await UserDevice.findOneAndUpdate(
       { deviceId },
       { $set: { userId: user._id, lastSeen: new Date() } },
-      { upsert: true }
+      { upsert: true, returnDocument: 'before' }
     );
+    // A device this account has not signed in from before. A brand-new account's own first
+    // sign-in is not news to its owner.
+    const isNewDevice = !previous || String((previous as { userId?: unknown }).userId) !== String(user._id);
+    const accountAgeMs = Date.now() - new Date((user as { createdAt?: Date }).createdAt ?? 0).getTime();
+    if (isNewDevice && accountAgeMs > 10 * 60_000) {
+      notifyNewDevice(String(user._id), { label: '', ip: null }).catch(() => {});
+    }
   }
 
   return {};

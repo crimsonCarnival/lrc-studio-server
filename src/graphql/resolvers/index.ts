@@ -12,6 +12,7 @@ import { statsResolvers }    from './stats.resolvers.js';
 import { requestResolvers }  from './request.resolvers.js';
 import { artistResolvers }   from './artist.resolvers.js';
 import { badgeResolvers }    from './badge.resolvers.js';
+import { wallResolvers }     from './wall.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -28,6 +29,7 @@ export const resolvers = {
     ...requestResolvers.Query,
     ...artistResolvers.Query,
     ...badgeResolvers.Query,
+    ...wallResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -40,6 +42,7 @@ export const resolvers = {
     ...statsResolvers.Mutation,
     ...requestResolvers.Mutation,
     ...badgeResolvers.Mutation,
+    ...wallResolvers.Mutation,
   },
   User:     userResolvers.User,
   PublicUser: publicUserResolvers,
