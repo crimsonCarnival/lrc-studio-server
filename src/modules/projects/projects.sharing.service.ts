@@ -191,6 +191,7 @@ export async function cloneProject(
             actorId: newUserId,
             actorAccountName: actor.accountName ?? '',
             actorAvatarUrl: actor.avatarUrl || null,
+            forkPublicId: newProject.publicId,
           }).catch(() => {});
         }
       }).catch(() => {});

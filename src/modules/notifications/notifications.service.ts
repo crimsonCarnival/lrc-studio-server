@@ -26,10 +26,12 @@ export interface UpsertSocialParams {
   actorId: string;
   actorAccountName: string;
   actorAvatarUrl: string | null;
+  /** For forks: the new project, so the notification can open it rather than the source. */
+  forkPublicId?: string;
 }
 
 export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
-  const { ownerId, type, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl } = params;
+  const { ownerId, type, publicId, projectTitle, actorId, actorAccountName, actorAvatarUrl, forkPublicId } = params;
   if (ownerId === actorId) return;
   if (await blockedBetween(ownerId, actorId)) return;
 
@@ -49,7 +51,8 @@ export async function upsertSocial(params: UpsertSocialParams): Promise<void> {
     { userId: new mongoose.Types.ObjectId(ownerId), type, publicId },
     {
       $setOnInsert: { sticky: false, body: null },
-      $set: { read: false, projectTitle },
+      // Several forks of one project share this notification; it points at the latest.
+      $set: { read: false, projectTitle, ...(forkPublicId ? { meta: { forkPublicId, forkOwner: actorAccountName } } : {}) },
       $addToSet: { actors: actor },
       $inc: { actorCount: 1 },
     },
