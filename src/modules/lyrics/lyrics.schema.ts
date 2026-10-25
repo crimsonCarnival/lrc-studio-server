@@ -56,6 +56,7 @@ export const inferEndTimesSchema = {
       lines: linesArray,
       duration: { type: ['number', 'null'] },
       srtConfig: { type: 'object' },
+      publicId: { type: 'string', maxLength: 40 },
     },
     required: ['lines'],
   },

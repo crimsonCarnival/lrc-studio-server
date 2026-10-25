@@ -99,6 +99,18 @@ export async function extract(request: FastifyRequest, reply: FastifyReply): Pro
     return reply.code(400).send({ error: 'Missing track parameter' });
   }
 
+  const startedAt = Date.now();
+  // What every task record carries, whether the lookup worked or not.
+  const base = () => ({
+    jobType: 'extract_lyrics' as const,
+    userId: request.userId || null,
+    query: { track, artist, album },
+    publicId: typeof params.publicId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(params.publicId) ? params.publicId : null,
+    durationMs: Date.now() - startedAt,
+    ip: request.ip,
+    deviceId: typeof request.headers['x-device-id'] === 'string' ? request.headers['x-device-id'] : null,
+  });
+
   try {
     let result: LyricsResult | null = null;
 
@@ -116,15 +128,21 @@ export async function extract(request: FastifyRequest, reply: FastifyReply): Pro
     result ??= await tryProvider(request, 'lyricsovh', () => getLyricsFromLyricsOvh(track, artist));
 
     if (result) {
-      await JobLog.create({ jobType: 'extract_lyrics', status: 'succeeded', userId: request.userId || null }).catch(() => {});
+      await JobLog.create({
+        ...base(),
+        status: 'succeeded',
+        provider: result.provider,
+        synced: result.synced,
+        lineCount: result.lyrics.split('\n').filter((l: string) => l.trim()).length,
+      }).catch(() => {});
       return reply.send(result);
     }
 
-    await JobLog.create({ jobType: 'extract_lyrics', status: 'failed', error: 'lyrics_unavailable', userId: request.userId || null }).catch(() => {});
+    await JobLog.create({ ...base(), status: 'failed', error: 'lyrics_unavailable' }).catch(() => {});
     return reply.code(422).send({ error: 'lyrics_unavailable' });
   } catch (err) {
     request.log.error({ err }, 'Lyrics extract failed');
-    await JobLog.create({ jobType: 'extract_lyrics', status: 'failed', error: 'upstream_error', userId: request.userId || null }).catch(() => {});
+    await JobLog.create({ ...base(), status: 'failed', error: 'upstream_error' }).catch(() => {});
     return reply.code(502).send({ error: 'upstream_error' });
   }
 }

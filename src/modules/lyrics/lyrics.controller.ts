@@ -96,13 +96,26 @@ export async function compileSrt(req: FastifyRequest, reply: FastifyReply) {
 export async function inferEnd(req: FastifyRequest, reply: FastifyReply) {
   const body = req.body as Body;
   const { lines, duration = null, srtConfig = {} } = body;
+  const startedAt = Date.now();
+  const publicId = typeof (body as { publicId?: unknown }).publicId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test((body as { publicId: string }).publicId)
+    ? (body as { publicId: string }).publicId
+    : null;
+  const base = () => ({
+    jobType: 'infer_end_times' as const,
+    userId: req.userId || null,
+    publicId,
+    lineCount: Array.isArray(lines) ? lines.length : null,
+    durationMs: Date.now() - startedAt,
+    ip: req.ip,
+    deviceId: typeof req.headers['x-device-id'] === 'string' ? req.headers['x-device-id'] : null,
+  });
   try {
     const result = inferEndTimes(lines, duration, srtConfig);
-    await JobLog.create({ jobType: 'infer_end_times', status: 'succeeded', userId: req.userId || null }).catch(() => {});
+    await JobLog.create({ ...base(), status: 'succeeded' }).catch(() => {});
     return reply.send({ lines: result });
   } catch (error) {
     req.log.error({ err: error }, 'inferEndTimes failed');
-    await JobLog.create({ jobType: 'infer_end_times', status: 'failed', error: (error as Error).message || 'unknown_error', userId: req.userId || null }).catch(() => {});
+    await JobLog.create({ ...base(), status: 'failed', error: (error as Error).message || 'unknown_error' }).catch(() => {});
     return reply.code(500).send({ error: 'infer_failed' });
   }
 }
