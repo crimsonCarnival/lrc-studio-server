@@ -154,6 +154,11 @@ export async function getAuditLogs(req: FastifyRequest, reply: FastifyReply): Pr
   return reply.send(result);
 }
 
+export async function getJobLogs(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await adminService.listJobLogs(req.query as Record<string, unknown>);
+  return reply.send(result);
+}
+
 export async function getBannedDevices(_req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await adminService.listBannedDevices();
   return reply.send(result);
@@ -192,8 +197,8 @@ export async function getPermissionsCatalog(_req: FastifyRequest, reply: Fastify
 
 export async function updateRolePreset(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { role } = req.params as { role: string };
-  const { permissions } = req.body as { permissions: string[] };
-  const result = await adminService.updateRolePreset(role, permissions, req.userId!, req.ip);
+  const { permissions, applyToExisting } = req.body as { permissions: string[]; applyToExisting?: boolean };
+  const result = await adminService.updateRolePreset(role, permissions, req.userId!, req.ip, applyToExisting === true);
   if ((result as Record<string, unknown>).error) return reply.code((result as Record<string, number>).status || 500).send({ error: (result as Record<string, unknown>).error });
   return reply.send(result);
 }

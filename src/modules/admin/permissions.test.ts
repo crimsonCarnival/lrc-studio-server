@@ -87,6 +87,30 @@ describe('updateRolePreset — superadmin-only mutation', () => {
     expect(await updateRolePreset('superadmin', ['users.view'], superadmin.id)).toMatchObject({ status: 400 });
   });
 
+  it('carries only the change onto existing members when asked, keeping their own overrides', async () => {
+    const superadmin = await mkUser('superadmin');
+    await updateRolePreset('mod', ['users.view', 'users.ban'], superadmin.id);
+    // One mod on the default, one with an individual extra, and an admin who must not be touched.
+    const plain = await mkUser('mod', ['users.view', 'users.ban']);
+    const extra = await mkUser('mod', ['users.view', 'users.ban', 'stats.view']);
+    const admin = await mkUser('admin', ['users.view', 'users.ban']);
+
+    const result = await updateRolePreset('mod', ['users.view', 'audit.view'], superadmin.id, undefined, true);
+    expect(result).toMatchObject({ success: true, updated: 2 });
+
+    const perms = async (id: string) => ((await User.findById(id).lean())?.permissions ?? []).slice().sort();
+    expect(await perms(plain.id)).toEqual(['audit.view', 'users.view']);
+    expect(await perms(extra.id)).toEqual(['audit.view', 'stats.view', 'users.view']);
+    expect(await perms(admin.id)).toEqual(['users.ban', 'users.view']);
+  });
+
+  it('leaves existing members alone by default', async () => {
+    const superadmin = await mkUser('superadmin');
+    const mod = await mkUser('mod', ['users.view', 'users.ban']);
+    await updateRolePreset('mod', ['users.view'], superadmin.id);
+    expect((await User.findById(mod.id).lean())?.permissions).toEqual(['users.view', 'users.ban']);
+  });
+
   it('accepts a valid edit from a real superadmin and writes an audit log with before/after', async () => {
     const superadmin = await mkUser('superadmin');
     const result = await updateRolePreset('admin', ['users.view', 'users.ban'], superadmin.id, '1.2.3.4');

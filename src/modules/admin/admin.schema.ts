@@ -90,6 +90,19 @@ export const listLogsSchema = {
   },
 };
 
+export const listJobLogsSchema = {
+  querystring: {
+    type: 'object',
+    properties: {
+      page: { type: 'integer', minimum: 1, default: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
+      status: { type: 'string', enum: ['succeeded', 'failed'] },
+      jobType: { type: 'string', enum: ['extract_lyrics', 'infer_end_times'] },
+    },
+    additionalProperties: false,
+  },
+};
+
 export const idParam = {
   type: 'object',
   properties: { id: { type: 'string', minLength: 1, maxLength: 24 } },
@@ -101,6 +114,7 @@ export const updateRolePresetSchema = {
     type: 'object',
     properties: {
       permissions: { type: 'array', items: { type: 'string', maxLength: 64 }, maxItems: 64 },
+      applyToExisting: { type: 'boolean' },
     },
     required: ['permissions'],
     additionalProperties: false,

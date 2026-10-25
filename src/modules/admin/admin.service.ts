@@ -203,6 +203,66 @@ export async function getStats(): Promise<Record<string, unknown>> {
   };
 }
 
+/**
+ * Lyrics tasks (searches and end-time inference), newest first, with who ran them and the
+ * project they were for. Users and projects are looked up in two batched queries rather
+ * than populated per row.
+ */
+export async function listJobLogs(query: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+  const filter: Record<string, unknown> = {};
+  if (query.status === 'succeeded' || query.status === 'failed') filter.status = query.status;
+  if (query.jobType === 'extract_lyrics' || query.jobType === 'infer_end_times') filter.jobType = query.jobType;
+
+  const [rows, total] = await Promise.all([
+    JobLog.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    JobLog.countDocuments(filter),
+  ]);
+
+  const publicIds = [...new Set(rows.map((r) => r.publicId).filter((id): id is string => !!id))];
+  const projects = publicIds.length
+    ? await Project.find({ publicId: { $in: publicIds } }).select('publicId title userId').lean<{ publicId: string; title?: string; userId?: mongoose.Types.ObjectId }[]>()
+    : [];
+  const userIds = [
+    ...new Set([
+      ...rows.map((r) => r.userId?.toString()),
+      ...projects.map((p) => p.userId?.toString()),
+    ].filter((id): id is string => !!id)),
+  ];
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select('accountName displayName avatarUrl').lean<{ _id: mongoose.Types.ObjectId; accountName?: string; displayName?: string; avatarUrl?: string }[]>()
+    : [];
+  const userById = new Map(users.map((u) => [u._id.toString(), u]));
+  const projectById = new Map(projects.map((p) => [p.publicId, p]));
+
+  const logs = rows.map((r) => {
+    const user = r.userId ? userById.get(r.userId.toString()) : undefined;
+    const project = r.publicId ? projectById.get(r.publicId) : undefined;
+    const owner = project?.userId ? userById.get(project.userId.toString()) : undefined;
+    return {
+      id: r._id.toString(),
+      jobType: r.jobType,
+      status: r.status,
+      error: r.error ?? null,
+      createdAt: r.createdAt,
+      durationMs: r.durationMs ?? null,
+      lineCount: r.lineCount ?? null,
+      provider: r.provider ?? null,
+      synced: r.synced ?? null,
+      query: r.query ?? null,
+      ip: r.ip ?? null,
+      deviceId: r.deviceId ?? null,
+      user: user ? { id: user._id.toString(), accountName: user.accountName ?? '', displayName: user.displayName ?? null, avatarUrl: user.avatarUrl ?? null } : null,
+      project: r.publicId
+        ? { publicId: r.publicId, title: project?.title ?? null, ownerAccountName: owner?.accountName ?? null }
+        : null,
+    };
+  });
+
+  return { logs, total, page, limit };
+}
+
 export async function toggleBan(userId: string, banStatus: boolean, reason: string | null = null, bannedUntil: string | null = null, banIp = false, banDevice = false, adminId: string | null = null, actorIp?: string): Promise<Record<string, unknown>> {
   const user = await User.findById(userId);
   if (!user) return { error: 'User not found', status: 404 };
@@ -721,7 +781,9 @@ export async function getPermissionsCatalog(): Promise<{ permissions: readonly P
 
 /**
  * Overwrites the default permission set assigned to `role` on future
- * role-assignment/sync. Superadmin-only (enforced by the requireSuperadmin
+ * role-assignment/sync. With `applyToExisting`, the change is also carried onto the
+ * members the role already has: only what the default gained or lost, so a member's own
+ * individual overrides survive unless they contradict the change. Superadmin-only (enforced by the requireSuperadmin
  * route hook; re-checked here since a bug here is a privilege-escalation
  * hole). Every permission id is validated against the PERMISSIONS whitelist.
  */
@@ -729,7 +791,8 @@ export async function updateRolePreset(
   role: string,
   permissions: string[],
   adminId: string,
-  actorIp?: string
+  actorIp?: string,
+  applyToExisting = false
 ): Promise<Record<string, unknown>> {
   if (!EDITABLE_ROLES.includes(role as Role)) {
     return { error: 'This role\'s permission set cannot be edited', status: 400 };
@@ -756,16 +819,35 @@ export async function updateRolePreset(
     { upsert: true }
   );
 
+  // The delta between the old and new default. Two updates, because one update cannot
+  // both add to and pull from the same array.
+  let updated = 0;
+  if (applyToExisting) {
+    const added = deduped.filter((p) => !before[role as Role].includes(p));
+    const removed = before[role as Role].filter((p) => !deduped.includes(p));
+    const members = { role: role as Role, isDeleted: { $ne: true } };
+    if (added.length > 0) {
+      await User.updateMany(
+        { ...members, permissions: { $not: { $all: added } } },
+        { $addToSet: { permissions: { $each: added } } }
+      );
+    }
+    if (removed.length > 0) {
+      await User.updateMany(members, { $pull: { permissions: { $in: removed } } });
+    }
+    updated = await User.countDocuments(members);
+  }
+
   await logAdminAction({
     adminId,
     adminName: actor.accountName || 'System',
     ip: actorIp,
     action: 'update_role_preset',
     targetName: role,
-    details: `Before: [${before[role as Role].join(', ')}] -> After: [${deduped.join(', ')}]`,
+    details: `Before: [${before[role as Role].join(', ')}] -> After: [${deduped.join(', ')}]${applyToExisting ? ` (applied to ${updated} existing ${role} account${updated === 1 ? '' : 's'})` : ''}`,
   });
 
-  return { success: true, presets: await getEffectiveRolePresets() };
+  return { success: true, presets: await getEffectiveRolePresets(), ...(applyToExisting ? { updated } : {}) };
 }
 
 /**

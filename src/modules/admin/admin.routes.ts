@@ -11,6 +11,7 @@ import {
   listLogsSchema,
   idParam,
   updateRolePresetSchema,
+  listJobLogsSchema,
   updateUserPermissionsSchema,
 } from './admin.schema.js';
 
@@ -30,6 +31,7 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
   // Read-only — gated by the matching view permission.
   fastify.get('/users', { preHandler: perm('users.view'), schema: { querystring: listUsersSchema.querystring } }, adminController.getUsers);
   fastify.get('/stats', { preHandler: perm('stats.view') }, adminController.getStats);
+  fastify.get('/job-logs', { preHandler: perm('stats.view'), schema: { querystring: listJobLogsSchema.querystring } }, adminController.getJobLogs);
   fastify.get('/audit-logs', { preHandler: perm('audit.view'), schema: { querystring: listLogsSchema.querystring } }, adminController.getAuditLogs);
   fastify.get('/banned-ips', { preHandler: perm('network.block') }, adminController.getBannedIps);
   fastify.get('/banned-devices', { preHandler: perm('network.block') }, adminController.getBannedDevices);
