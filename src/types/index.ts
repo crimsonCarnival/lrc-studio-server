@@ -22,7 +22,8 @@ export interface LineEntry {
   translations?: Array<{ text: string; language?: string | null }>;
   words?: WordEntry[];
   secondaryWords?: WordEntry[];
-  /** When set, marks this line as an ad-lib that overlaps the line whose timestamp equals adLibOf. */
+  /** When set, marks this line as a counterpart sung over the line whose timestamp equals adLibOf.
+   *  The field keeps its old "ad-lib" name because it is stored in every lyrics document. */
   adLibOf?: number | null;
 }
 
