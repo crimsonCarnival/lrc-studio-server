@@ -5,7 +5,7 @@ import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import BadgeDefinition from './badge-definition.model.js';
-import type { IBadgeDefinition } from './badge-definition.model.js';
+import type { BadgeRarity, IBadgeDefinition } from './badge-definition.model.js';
 import Notification from '../notifications/notification.model.js';
 import XPEvent, { type IXPEvent } from '../progression/xp-event.model.js';
 import { getIO } from '../../socket/socket.manager.js';
@@ -38,6 +38,30 @@ export const BUILTIN_BADGES: Array<Omit<IBadgeDefinition, 'rarity' | 'createdBy'
   { id: 'admin',       label: { en: 'A&R', es: 'Staff' },            description: { en: 'Platform administrator', es: 'Miembro del equipo de LRC Studio' },                   icon: '🛡️', color: 'rose',   conditionType: 'role_admin',           conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 500 },
 ];
 
+// How rare each built-in badge is, set by hand from how hard it is to earn. It is a property of
+// the badge, never derived from how many users hold it, so it does not drift as the user base grows.
+const BUILTIN_RARITY: Record<string, BadgeRarity> = {
+  og: 'legendary',
+  admin: 'legendary',
+  wordsmith50k: 'legendary',
+  pioneer: 'epic',
+  syncer100h: 'epic',
+  century: 'epic',
+  karaoke1k: 'rare',
+  beloved: 'rare',
+  influential: 'rare',
+  veteran: 'rare',
+  streak30: 'rare',
+  syncer10h: 'uncommon',
+  wordsmith1k: 'uncommon',
+  karaoke100: 'uncommon',
+  published10: 'uncommon',
+  following50: 'uncommon',
+  uploader: 'uncommon',
+  streak7: 'common',
+  verified: 'common',
+};
+
 // Seeds built-in badges to DB — called on server startup (plugins/cron.ts) and
 // before the registration badge check. Idempotent per badge, keyed by `id`:
 // missing built-ins are inserted, existing ones are left untouched ($setOnInsert
@@ -47,12 +71,20 @@ export const BUILTIN_BADGES: Array<Omit<IBadgeDefinition, 'rarity' | 'createdBy'
 // Note: recomputeXP reads built-in xpReward from BUILTIN_BADGES, not the DB.
 export async function seedBuiltinBadges(): Promise<number> {
   const result = await BadgeDefinition.bulkWrite(
-    BUILTIN_BADGES.map(({ id, ...fields }) => ({
-      updateOne: { filter: { id }, update: { $setOnInsert: fields }, upsert: true },
-    })),
+    BUILTIN_BADGES.flatMap(({ id, ...fields }) => {
+      const rarity = BUILTIN_RARITY[id] ?? 'common';
+      return [
+        { updateOne: { filter: { id }, update: { $setOnInsert: { ...fields, rarity } }, upsert: true } },
+        // Rows seeded before rarity was preset sit at the schema default. Move those onto the
+        // preset; a built-in an admin already set to anything else is left alone.
+        ...(rarity === 'common'
+          ? []
+          : [{ updateOne: { filter: { id, rarity: 'common' as const }, update: { $set: { rarity } } } }]),
+      ];
+    }),
     { ordered: false }
   );
-  if (result.upsertedCount > 0) invalidatePublicBadgeDefsCache();
+  if (result.upsertedCount > 0 || result.modifiedCount > 0) invalidatePublicBadgeDefsCache();
   return result.upsertedCount;
 }
 
@@ -885,24 +917,19 @@ export async function recomputeXP(userId: string): Promise<number> {
   return newXp;
 }
 
-// ─── Badge rarity (global %) ──────────────────────────────────────────────────
+// ─── Badge rarity ─────────────────────────────────────────────────────────────
 
+// Rarity is the definition's own preset; the holder count is shown beside it as a popularity
+// figure and never feeds back into it.
 export async function getBadgeRarity(badgeId: string): Promise<{
-  rarity: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
-  pct: number;
+  rarity: BadgeRarity;
   holderCount: number;
-  totalUsers: number;
 }> {
-  const [def, holderCount, totalUsers] = await Promise.all([
+  const [def, holderCount] = await Promise.all([
     BadgeDefinition.findOne({ id: badgeId }).select('rarity').lean<IBadgeDefinition>(),
     User.countDocuments({ 'badges.id': badgeId, isDeleted: { $ne: true } }),
-    User.countDocuments({ isDeleted: { $ne: true } }),
   ]);
-
-  const pct = totalUsers > 0 ? (holderCount / totalUsers) * 100 : 0;
-  const rarity = def?.rarity ?? 'common';
-
-  return { rarity, pct, holderCount, totalUsers };
+  return { rarity: def?.rarity ?? 'common', holderCount };
 }
 
 // ─── Showcase management ──────────────────────────────────────────────────────

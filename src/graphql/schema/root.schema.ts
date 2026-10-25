@@ -233,7 +233,7 @@ export const rootSchema = `
     icon: String!
     color: String!
     rarity: String!
-    rarityPct: Float!
+    rarityPct: Float! @deprecated(reason: "Rarity is preset per badge; always 0. Remove once no client selects it.")
     holderCount: Int!
     grantedAt: String!
   }

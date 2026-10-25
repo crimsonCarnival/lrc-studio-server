@@ -342,7 +342,7 @@ export const userResolvers = {
                 .map(async (id) => {
                   const def = defMap.get(id);
                   if (!def) return null;
-                  const { rarity, pct, holderCount } = await getBadgeRarity(id);
+                  const { rarity, holderCount } = await getBadgeRarity(id);
                   const badge = ownedMap.get(id);
                   return {
                     id,
@@ -350,7 +350,7 @@ export const userResolvers = {
                     icon: def.icon,
                     color: def.color,
                     rarity,
-                    rarityPct: pct,
+                    rarityPct: 0,
                     holderCount,
                     grantedAt: badge?.grantedAt ? new Date(badge.grantedAt).toISOString() : new Date().toISOString(),
                   };
