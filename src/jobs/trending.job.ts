@@ -1,5 +1,5 @@
 import { PriorityQueue } from '@crimson-carnival/ds-js';
-import ProjectStar from '../modules/projects/projectStar.model.js';
+import ProjectStar from '../modules/projects/project-star.model.js';
 import Project from '../modules/projects/project.model.js';
 import SavedPlaylist from '../db/saved-playlist.model.js';
 import Playlist from '../db/playlist.model.js';

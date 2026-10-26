@@ -3,8 +3,8 @@ import type { ClientSession } from 'mongoose';
 import { UAParser } from 'ua-parser-js';
 import User, { type IUser } from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
-import PasswordReset from '../../db/passwordReset.model.js';
-import UserDevice from './userDevice.model.js';
+import PasswordReset from '../../db/password-reset.model.js';
+import UserDevice from './user-device.model.js';
 import { withTransaction } from '../../db/transaction.js';
 import { grantSuperadminIfEnvMatch } from './superadmin-env.service.js';
 

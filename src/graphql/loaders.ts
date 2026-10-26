@@ -3,7 +3,7 @@ import type { MercuriusContext } from 'mercurius';
 import User from '../db/user.model.js';
 import Upload from '../modules/uploads/upload.model.js';
 import Lyrics from '../modules/lyrics/lyrics.model.js';
-import ProjectStar from '../modules/projects/projectStar.model.js';
+import ProjectStar from '../modules/projects/project-star.model.js';
 import Boost from '../db/boost.model.js';
 import Follow from '../db/follow.model.js';
 import mongoose from 'mongoose';

@@ -23,7 +23,7 @@ vi.mock('../notifications/notifications.service.js', () => ({
 vi.mock('../email/email.service.js', () => ({ sendBanEmail: async () => undefined }));
 
 import User from '../../db/user.model.js';
-import AdminLog from './adminLog.model.js';
+import AdminLog from './admin-log.model.js';
 import { toggleBan, changeUserRole } from './admin.service.js';
 
 let mongo: MongoMemoryServer;

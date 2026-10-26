@@ -7,7 +7,7 @@ vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Erro
 import User from '../../db/user.model.js';
 import StaffRequest from './request.model.js';
 import BadgeDefinition from '../badges/badge-definition.model.js';
-import AdminLog from '../admin/adminLog.model.js';
+import AdminLog from '../admin/admin-log.model.js';
 import Notification from '../notifications/notification.model.js';
 import { createRequest, reviewRequest, submittableTypes } from './request.service.js';
 

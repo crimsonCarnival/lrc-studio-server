@@ -22,10 +22,10 @@ vi.mock('../notifications/notifications.service.js', () => ({
 vi.mock('../email/email.service.js', () => ({ sendBanEmail: async () => undefined }));
 
 import User from '../../db/user.model.js';
-import AdminLog from './adminLog.model.js';
-import BannedIp from './bannedIp.model.js';
-import BannedDevice from './bannedDevice.model.js';
-import UserDevice from '../auth/userDevice.model.js';
+import AdminLog from './admin-log.model.js';
+import BannedIp from './banned-ip.model.js';
+import BannedDevice from './banned-device.model.js';
+import UserDevice from '../auth/user-device.model.js';
 import { toggleBan, toggleShadowBan, rejectAppeal } from './admin.service.js';
 
 let mongo: MongoMemoryServer;

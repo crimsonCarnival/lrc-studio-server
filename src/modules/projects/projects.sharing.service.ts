@@ -1,7 +1,7 @@
 import type mongoose from 'mongoose';
 import type { ServiceResult, ProjectPublic } from '../../types/index.js';
 import Project from './project.model.js';
-import ProjectFork from './projectFork.model.js';
+import ProjectFork from './project-fork.model.js';
 import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import { withTransaction, TransactionError } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';

@@ -6,7 +6,7 @@ import cron from './plugins/cron.js';
 import cors from './plugins/cors.js';
 import socket from './plugins/socket.js';
 import helmet from './plugins/helmet.js';
-import rateLimit from './plugins/rateLimit.js';
+import rateLimit from './plugins/rate-limit.js';
 import csrf from './plugins/csrf.js';
 import auth, { verifyAdminSudo } from './plugins/auth.js';
 import mercurius from 'mercurius';
@@ -16,7 +16,7 @@ import { schema } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
 import fastifyCookie from '@fastify/cookie';
-import { handleFastifyError } from './shared/errorHandler.js';
+import { handleFastifyError } from './shared/error-handler.js';
 import { getEnv } from './config/env.js';
 
 import authRoutes from './modules/auth/auth.routes.js';

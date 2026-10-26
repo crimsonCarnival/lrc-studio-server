@@ -2,12 +2,12 @@ import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
 import { notifyAppealResult } from '../notifications/notifications.events.js';
 import Session from '../../db/session.model.js';
-import BannedIp from './bannedIp.model.js';
-import BannedDevice from './bannedDevice.model.js';
-import UserDevice from '../auth/userDevice.model.js';
+import BannedIp from './banned-ip.model.js';
+import BannedDevice from './banned-device.model.js';
+import UserDevice from '../auth/user-device.model.js';
 import Project from '../projects/project.model.js';
 import Upload from '../uploads/upload.model.js';
-import AdminLog from './adminLog.model.js';
+import AdminLog from './admin-log.model.js';
 import type { AdminLogEntry } from '../../types/index.js';
 import { createOnce, notifyRoleChanged, notifyXpChanged, notifyUnban } from '../notifications/notifications.service.js';
 import { sendBanEmail } from '../email/email.service.js';
@@ -17,7 +17,7 @@ import type { IUser } from '../../db/user.model.js';
 import { PERMISSIONS, ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole, type Permission, type Role } from '../../shared/permissions.js';
 import JobLog from '../../db/job-log.model.js';
 import { getOnlineUserIds } from '../../socket/presence.js';
-import RolePermissionsConfig from './rolePermissionsConfig.model.js';
+import RolePermissionsConfig from './role-permissions-config.model.js';
 import { syncOwnerVisibility } from '../users/owner-visibility.service.js';
 
 // Staff-protection: resolve the acting admin's rank. A null actor (system call)

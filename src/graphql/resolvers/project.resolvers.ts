@@ -5,8 +5,8 @@ import type { IProject } from '../../modules/projects/project.model.js';
 import Boost from '../../db/boost.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
-import ProjectStar from '../../modules/projects/projectStar.model.js';
-import ProjectFork from '../../modules/projects/projectFork.model.js';
+import ProjectStar from '../../modules/projects/project-star.model.js';
+import ProjectFork from '../../modules/projects/project-fork.model.js';
 import {
   createProject as createProjectService,
   listProjects,

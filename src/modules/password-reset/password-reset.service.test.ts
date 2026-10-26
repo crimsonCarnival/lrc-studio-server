@@ -18,7 +18,7 @@ vi.mock('../notifications/notifications.service.js', () => ({
 
 import User from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
-import PasswordReset from '../../db/passwordReset.model.js';
+import PasswordReset from '../../db/password-reset.model.js';
 import { resetPassword, changePassword, PasswordResetError } from './password-reset.service.js';
 
 let repl: MongoMemoryReplSet;

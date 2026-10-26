@@ -55,10 +55,10 @@ vi.mock('../../modules/users/music-library.service.js', () => ({
 
 import User from '../../db/user.model.js';
 import Project from '../../modules/projects/project.model.js';
-import ProjectStar from '../../modules/projects/projectStar.model.js';
+import ProjectStar from '../../modules/projects/project-star.model.js';
 import Block from '../../db/block.model.js';
 import Follow from '../../db/follow.model.js';
-import AdminLog from '../../modules/admin/adminLog.model.js';
+import AdminLog from '../../modules/admin/admin-log.model.js';
 import { blockUser } from '../../modules/blocks/block.service.js';
 import { userResolvers } from './user.resolvers.js';
 import { projectResolvers } from './project.resolvers.js';

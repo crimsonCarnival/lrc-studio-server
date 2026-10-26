@@ -1,4 +1,4 @@
-import UserActionLog from './userActionLog.model.js';
+import UserActionLog from './user-action-log.model.js';
 
 interface LogOptions {
   userId?: string | null;

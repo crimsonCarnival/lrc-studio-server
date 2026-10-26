@@ -52,7 +52,7 @@ vi.mock('../../modules/users/music-library.service.js', () => ({
 
 import User from '../../db/user.model.js';
 import Project from '../../modules/projects/project.model.js';
-import ProjectStar from '../../modules/projects/projectStar.model.js';
+import ProjectStar from '../../modules/projects/project-star.model.js';
 import { projectResolvers } from './project.resolvers.js';
 import { uploadResolvers } from './upload.resolvers.js';
 import type { Context } from './context.js';

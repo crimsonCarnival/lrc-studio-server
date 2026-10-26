@@ -163,13 +163,13 @@ async function lookupUser(userId: string | undefined): Promise<CachedAuthUser | 
 
 async function checkDeviceBan(deviceId: string): Promise<{ deviceId: string } | null> {
   if (!deviceId) return null;
-  const BannedDevice = (await import('../modules/admin/bannedDevice.model.js')).default;
+  const BannedDevice = (await import('../modules/admin/banned-device.model.js')).default;
   return BannedDevice.findOne({ deviceId }) as unknown as Promise<{ deviceId: string } | null>;
 }
 
 async function checkIpBan(ip: string): Promise<{ ip: string } | null> {
   if (!ip) return null;
-  const BannedIp = (await import('../modules/admin/bannedIp.model.js')).default;
+  const BannedIp = (await import('../modules/admin/banned-ip.model.js')).default;
   return BannedIp.findOne({ ip }) as unknown as Promise<{ ip: string } | null>;
 }
 

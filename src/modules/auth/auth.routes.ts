@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as authController from './auth.controller.js';
-import { handleFastifyError } from '../../shared/errorHandler.js';
+import { handleFastifyError } from '../../shared/error-handler.js';
 import {
   registerSchema,
   loginSchema,

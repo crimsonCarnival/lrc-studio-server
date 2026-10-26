@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import User from '../../db/user.model.js';
-import PasswordReset from '../../db/passwordReset.model.js';
+import PasswordReset from '../../db/password-reset.model.js';
 import { sendPasswordResetEmail, sendPasswordChangedEmail } from '../email/email.service.js';
 import Settings from '../settings/settings.model.js';
 import { resolveSticky, createOnce } from '../notifications/notifications.service.js';

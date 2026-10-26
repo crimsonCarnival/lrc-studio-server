@@ -31,7 +31,7 @@ vi.mock('../email/email.service.js', () => ({ sendBanEmail: async () => undefine
 import User from '../../db/user.model.js';
 import Project from '../projects/project.model.js';
 import Playlist from '../../db/playlist.model.js';
-import AdminLog from '../admin/adminLog.model.js';
+import AdminLog from '../admin/admin-log.model.js';
 import {
   computeOwnerVisibility,
   isOwnerActive,

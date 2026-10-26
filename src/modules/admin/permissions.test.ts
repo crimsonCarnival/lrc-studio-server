@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import User from '../../db/user.model.js';
-import AdminLog from './adminLog.model.js';
-import RolePermissionsConfig from './rolePermissionsConfig.model.js';
+import AdminLog from './admin-log.model.js';
+import RolePermissionsConfig from './role-permissions-config.model.js';
 import { ROLE_PRESETS } from '../../shared/permissions.js';
 import {
   getEffectiveRolePresets,

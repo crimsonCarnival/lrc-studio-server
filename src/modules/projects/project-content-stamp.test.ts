@@ -11,7 +11,7 @@ vi.mock('../badges/badge.service.js', () => ({
   updateStreak: async () => undefined,
 }));
 vi.mock('../../jobs/leaderboard-ranking.job.js', () => ({ recomputeLeaderboardRanking: async () => undefined }));
-vi.mock('../user_logs/logs.service.js', () => ({ logUserAction: () => undefined }));
+vi.mock('../user-logs/logs.service.js', () => ({ logUserAction: () => undefined }));
 
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';

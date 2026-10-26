@@ -14,8 +14,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import authPlugin from './auth.js';
 import User from '../db/user.model.js';
-import BannedIp from '../modules/admin/bannedIp.model.js';
-import BannedDevice from '../modules/admin/bannedDevice.model.js';
+import BannedIp from '../modules/admin/banned-ip.model.js';
+import BannedDevice from '../modules/admin/banned-device.model.js';
 import Session from '../db/session.model.js';
 
 let mongo: MongoMemoryServer;

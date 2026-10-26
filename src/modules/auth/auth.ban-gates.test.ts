@@ -17,7 +17,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 vi.mock('../../socket/socket.manager.js', () => ({
   getIO: () => { throw new Error('no socket in tests'); },
 }));
-vi.mock('../user_logs/logs.service.js', () => ({ logUserAction: () => undefined }));
+vi.mock('../user-logs/logs.service.js', () => ({ logUserAction: () => undefined }));
 vi.mock('../email-verification/email-verification.service.js', () => ({
   sendVerification: async () => undefined,
   resendVerification: async () => undefined,
@@ -29,9 +29,9 @@ vi.mock('../notifications/notifications.service.js', () => ({
 
 import User from '../../db/user.model.js';
 import Session from '../../db/session.model.js';
-import UserDevice from './userDevice.model.js';
-import BannedIp from '../admin/bannedIp.model.js';
-import BannedDevice from '../admin/bannedDevice.model.js';
+import UserDevice from './user-device.model.js';
+import BannedIp from '../admin/banned-ip.model.js';
+import BannedDevice from '../admin/banned-device.model.js';
 import { jwtTools } from '../../plugins/auth.js';
 import { register, login, refresh, checkIdentifier } from './auth.service.js';
 
