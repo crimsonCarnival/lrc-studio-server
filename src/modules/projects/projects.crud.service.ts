@@ -102,6 +102,9 @@ interface UpdateProjectData {
 
 export type SaveKind = 'manual' | 'auto';
 
+// Every client flow that ends in a create (see executeRecaptchaSafe call sites).
+const PROJECT_CREATE_RECAPTCHA_ACTIONS = ['create_project', 'autosave_create', 'restore_project', 'share_project'] as const;
+
 export async function createProject(
   rawData: unknown,
   userId: string | null | undefined,
@@ -138,7 +141,7 @@ export async function createProject(
     } as ServiceResult;
   }
 
-  if (!(await verifyRecaptcha(recaptchaToken, ip))) {
+  if (!(await verifyRecaptcha(recaptchaToken, ip, PROJECT_CREATE_RECAPTCHA_ACTIONS))) {
     return { error: 'recaptcha_failed', status: 403, code: 'recaptcha_failed' } as ServiceResult;
   }
 

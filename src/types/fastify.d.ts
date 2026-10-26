@@ -8,6 +8,8 @@ declare module 'fastify' {
       signAccess(payload: Record<string, unknown>): string;
       signRefresh(payload: Record<string, unknown>): string;
       verifyToken(token: string): JwtPayload;
+      verifyAccessToken(token: string): JwtPayload;
+      verifyRefreshToken(token: string): JwtPayload;
     };
     optionalAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;

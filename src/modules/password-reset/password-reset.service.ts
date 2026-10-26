@@ -98,11 +98,15 @@ export async function resetPassword(token: string, newPassword: string): Promise
   // Hash new password
   const passwordHash = await User.hashPassword(newPassword);
 
-  // Update atomically
-  await resetPasswordAtomically(email, passwordHash);
+  // validateResetToken above is only a read; the token is consumed here, and a
+  // concurrent use of the same link loses the race and gets invalid_token.
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  if (!(await resetPasswordAtomically(email, tokenHash, passwordHash))) {
+    throw new PasswordResetError('invalid_token', 404, 'Invalid or expired reset link');
+  }
 }
 
-export async function changePassword(userId: string, currentPassword: string | null, newPassword: string, isSetPassword = false): Promise<void> {
+export async function changePassword(userId: string, currentPassword: string | null, newPassword: string, isSetPassword = false, keepFamilyId?: string): Promise<void> {
   // Fetch user
   const user = await User.findById(userId);
   if (!user) {
@@ -139,7 +143,7 @@ export async function changePassword(userId: string, currentPassword: string | n
   const passwordHash = await User.hashPassword(newPassword);
 
   // Update atomically
-  await changePasswordAtomically(userId, passwordHash);
+  await changePasswordAtomically(userId, passwordHash, keepFamilyId);
   resolveSticky(userId, 'set_password').catch(() => {});
   // Only notify on an actual change, not initial password setup
   if (!isSetPassword) {

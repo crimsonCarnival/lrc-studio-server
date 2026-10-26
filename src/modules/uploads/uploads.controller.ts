@@ -2,8 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as uploadService from './uploads.service.js';
 
 export async function audioSignature(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  // req.userId is null for guests (optionalAuth); service handles the null case.
-  const result = await uploadService.generateAudioSignature(req.body as Record<string, unknown>, req.userId ?? null, req.ip);
+  const result = await uploadService.generateAudioSignature(req.body as Record<string, unknown>, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) {
     return reply.code((result as Record<string, number>).status).send({ error: (result as Record<string, unknown>).error });
   }

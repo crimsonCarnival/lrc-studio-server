@@ -157,37 +157,55 @@ export async function loginAtomically(
   }, { operation: 'loginAtomically', userId: user._id.toString() });
 }
 
+/**
+ * Returns false when the token was already used or expired. The token is
+ * consumed by its own hash in the same write that checks it: the old
+ * `updateOne({ email })` marked whichever reset doc for that email came
+ * first, so with two outstanding links the presented one stayed reusable.
+ */
 export async function resetPasswordAtomically(
   email: string,
+  tokenHash: string,
   passwordHash: string
-): Promise<void> {
+): Promise<boolean> {
   return withTransaction(async (session: ClientSession) => {
-    // Update user password
-    await User.updateOne(
-      { email },
-      { passwordHash, passwordChangedAt: new Date() },
-      { session }
-    );
-
-    // Mark reset token as used
-    await PasswordReset.updateOne(
-      { email },
+    const now = new Date();
+    const consumed = await PasswordReset.findOneAndUpdate(
+      { tokenHash, isUsed: false, expiresAt: { $gt: now } },
       { isUsed: true },
       { session }
     );
+    if (!consumed) return false;
+
+    // Every other outstanding link for this address dies with it.
+    await PasswordReset.updateMany({ email, isUsed: false }, { isUsed: true }, { session });
+
+    const user = await User.findOneAndUpdate(
+      { email },
+      { passwordHash, passwordChangedAt: now },
+      { session }
+    );
+    // A reset is the recovery path for a compromised account, so it must
+    // evict whoever else is signed in.
+    if (user) await Session.updateMany({ userId: user._id }, { $set: { isValid: false } }, { session });
+    return true;
   }, { operation: 'resetPasswordAtomically', email });
 }
 
+/** Revokes every session except `keepFamilyId` (the caller's own, when known). */
 export async function changePasswordAtomically(
   userId: string,
-  passwordHash: string
+  passwordHash: string,
+  keepFamilyId?: string
 ): Promise<void> {
   return withTransaction(async (session: ClientSession) => {
-    // Update user password
     await User.updateOne(
       { _id: userId },
       { passwordHash, passwordChangedAt: new Date() },
       { session }
     );
+    const filter: Record<string, unknown> = { userId };
+    if (keepFamilyId) filter.familyId = { $ne: keepFamilyId };
+    await Session.updateMany(filter, { $set: { isValid: false } }, { session });
   }, { operation: 'changePasswordAtomically', userId });
 }

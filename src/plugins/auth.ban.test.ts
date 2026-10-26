@@ -16,6 +16,7 @@ import authPlugin from './auth.js';
 import User from '../db/user.model.js';
 import BannedIp from '../modules/admin/bannedIp.model.js';
 import BannedDevice from '../modules/admin/bannedDevice.model.js';
+import Session from '../db/session.model.js';
 
 let mongo: MongoMemoryServer;
 let app: FastifyInstance;
@@ -50,7 +51,8 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await Promise.all([User.deleteMany({}), BannedIp.deleteMany({}), BannedDevice.deleteMany({})]);
+  liveTokens.clear();
+  await Promise.all([User.deleteMany({}), BannedIp.deleteMany({}), BannedDevice.deleteMany({}), Session.deleteMany({})]);
 });
 
 let n = 0;
@@ -77,19 +79,28 @@ async function mkUser(opts: {
   return res.insertedId.toString();
 }
 
-function token(userId: string): string {
-  return (app as unknown as { jwt: { signAccess(p: Record<string, unknown>): string } })
-    .jwt.signAccess({ sub: userId });
+// Access tokens are only honoured while their session is valid, so each test
+// token is backed by a live session document.
+const liveTokens = new Map<string, string>();
+async function token(userId: string): Promise<string> {
+  const cached = liveTokens.get(userId);
+  if (cached) return cached;
+  const familyId = `fam-${userId}`;
+  await Session.create({ userId, familyId, refreshTokenHash: 'x', expiresAt: new Date(Date.now() + 3600_000) });
+  const signed = (app as unknown as { jwt: { signAccess(p: Record<string, unknown>): string } })
+    .jwt.signAccess({ sub: userId, familyId });
+  liveTokens.set(userId, signed);
+  return signed;
 }
 
-function call(path: string, opts: { userId?: string; deviceId?: string; ip?: string } = {}) {
+async function call(path: string, opts: { userId?: string; deviceId?: string; ip?: string } = {}) {
   const headers: Record<string, string> = {};
   if (opts.deviceId) headers['x-device-id'] = opts.deviceId;
   return app.inject({
     method: 'GET',
     url: path,
     headers,
-    cookies: opts.userId ? { accessToken: token(opts.userId) } : {},
+    cookies: opts.userId ? { accessToken: await token(opts.userId) } : {},
     remoteAddress: opts.ip ?? CLEAN_IP,
   });
 }
@@ -223,27 +234,54 @@ describe('optionalAuth — the GraphQL context path', () => {
   });
 
   /**
-   * FINDING A — IP and device bans do not reach GraphQL.
-   *
-   * `optionalAuth` checks `deletedAt` and `ban.active` but never calls
-   * checkDeviceBan/checkIpBan, and it is what builds the GraphQL context. Since
-   * projects, stars, forks, boosts, reactions, playlists and follows are all
-   * GraphQL, a user on a banned device or IP keeps full use of the product for
-   * as long as their session lasts.
-   *
-   * Remove the `.fails` markers once optionalAuth checks the network bans.
+   * Network bans reach GraphQL: optionalAuth builds the GraphQL context, so a
+   * banned device or IP must not get a userId there either.
    */
-  it.fails('should withhold userId from a banned device (FINDING A)', async () => {
+  it('withholds userId from a banned device', async () => {
     const id = await mkUser();
     await BannedDevice.create({ deviceId: 'dev-bad', reason: 'evasion' });
     const res = await call('/ctx', { userId: id, deviceId: 'dev-bad' });
     expect(res.json().userId).toBeNull();
   });
 
-  it.fails('should withhold userId from a banned IP (FINDING A)', async () => {
+  it('withholds userId from a banned IP', async () => {
     const id = await mkUser();
     await BannedIp.create({ ip: BAD_IP, reason: 'evasion' });
     const res = await call('/ctx', { userId: id, ip: BAD_IP });
     expect(res.json().userId).toBeNull();
+  });
+});
+
+describe('access tokens are bound to their type and session', () => {
+  const jwtTools = () => (app as unknown as { jwt: { signRefresh(p: Record<string, unknown>): string } }).jwt;
+
+  it('rejects a refresh token presented as the access cookie', async () => {
+    const id = await mkUser();
+    await token(id); // creates the live session
+    const refresh = jwtTools().signRefresh({ sub: id, familyId: `fam-${id}` });
+    const res = await app.inject({ method: 'GET', url: '/auth-required', cookies: { accessToken: refresh }, remoteAddress: CLEAN_IP });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rejects an access token once its session is revoked', async () => {
+    const id = await mkUser();
+    expect((await call('/auth-required', { userId: id })).statusCode).toBe(200);
+    await Session.updateMany({ userId: id }, { $set: { isValid: false } });
+    expect((await call('/auth-required', { userId: id })).statusCode).toBe(401);
+  });
+
+  it('treats a revoked session as anonymous on the GraphQL context path', async () => {
+    const id = await mkUser();
+    await token(id);
+    await Session.updateMany({ userId: id }, { $set: { isValid: false } });
+    expect((await call('/ctx', { userId: id })).json().userId).toBeNull();
+  });
+});
+
+describe('network bans do not lock out the superadmin', () => {
+  it('admits a superadmin from a banned IP, as login already does', async () => {
+    const id = await mkUser({ role: 'superadmin', permissions: ['users.view'] });
+    await BannedIp.create({ ip: BAD_IP, reason: 'set by a lower-ranked admin' });
+    expect((await call('/auth-required', { userId: id, ip: BAD_IP })).statusCode).toBe(200);
   });
 });

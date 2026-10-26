@@ -3,9 +3,10 @@ import * as uploadController from './uploads.controller.js';
 import { signatureSchema, updateMediaSchema } from './uploads.schema.js';
 
 export default async function uploadRoutes(fastify: FastifyInstance): Promise<void> {
-  // Guests (no token) can request a Cloudinary signature and save YouTube/Cloudinary media.
-  // optionalAuth populates req.userId when a valid token is present, leaves it null otherwise.
-  fastify.post('/signature', { schema: signatureSchema, preHandler: [fastify.optionalAuth] }, uploadController.audioSignature);
+  // Authenticated only: the client never uploads audio for guests (useLocalAudio
+  // gates on a session), and a signature is reusable until its timestamp
+  // expires, so handing them to anonymous callers was free storage for anyone.
+  fastify.post('/signature', { schema: signatureSchema, preHandler: [fastify.requireAuth] }, uploadController.audioSignature);
   fastify.post('/avatar-signature', {
     preHandler: [fastify.requireAuth],
     config: {

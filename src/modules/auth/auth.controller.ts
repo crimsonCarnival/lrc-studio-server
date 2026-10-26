@@ -7,20 +7,7 @@ import { requestPasswordReset, validateResetToken, resetPassword, changePassword
 import { verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
 import { verifyRecaptcha } from './auth.service.js';
 import { getEnv } from '../../config/env.js';
-
-/** Parse JWT duration strings ("30m", "1d", "2h") to seconds. */
-function parseExpiry(str: string | undefined, fallbackSeconds: number): number {
-  if (!str) return fallbackSeconds;
-  const match = str.match(/^(\d+)([smhd])$/);
-  if (!match) return fallbackSeconds;
-  const n = parseInt(match[1], 10);
-  const unit = match[2];
-  if (unit === 's') return n;
-  if (unit === 'm') return n * 60;
-  if (unit === 'h') return n * 3600;
-  if (unit === 'd') return n * 86400;
-  return fallbackSeconds;
-}
+import { parseExpiry } from '../../plugins/auth.js';
 
 const env = getEnv();
 const ACCESS_COOKIE_MAX_AGE = parseExpiry(env.JWT_ACCESS_EXPIRY, 30 * 60);
@@ -80,7 +67,22 @@ function clearAuthCookies(reply: FastifyReply) {
   }
 }
 
+// Per-browser passkey login challenge, signed with COOKIE_SECRET.
+const PASSKEY_CHALLENGE_COOKIE = 'pkLoginChallenge';
+const PASSKEY_CHALLENGE_MAX_AGE = 5 * 60;
+
 const VALID_DEVICE_PREFIXES = ['dv_fp_', 'dv_fallback_'];
+
+/** The session family of the caller's own access token, if it carries one. */
+function currentFamilyId(req: FastifyRequest): string | undefined {
+  const token = req.cookies.accessToken;
+  if (!token) return undefined;
+  try {
+    return req.server.jwt.verifyAccessToken(token).familyId as string | undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function extractDeviceId(req: FastifyRequest, reply: FastifyReply): string | null {
   const deviceId = req.headers['x-device-id'];
@@ -199,7 +201,7 @@ export async function logout(req: FastifyRequest, reply: FastifyReply): Promise<
   let familyId: string | undefined;
   if (refreshToken) {
     try {
-      const decoded = req.server.jwt.verifyToken(refreshToken) as Record<string, unknown>;
+      const decoded = req.server.jwt.verifyRefreshToken(refreshToken) as Record<string, unknown>;
       familyId = decoded.familyId as string | undefined;
     } catch {}
   }
@@ -244,7 +246,7 @@ export async function forgotPassword(req: FastifyRequest, reply: FastifyReply): 
     return reply.code(400).send({ error: 'Email is required' });
   }
 
-  if (!(await verifyRecaptcha(recaptchaToken, req.ip))) {
+  if (!(await verifyRecaptcha(recaptchaToken, req.ip, ['forgot_password']))) {
     return reply.code(403).send({ error: 'recaptcha_failed', code: 'recaptcha_failed' });
   }
 
@@ -320,7 +322,7 @@ export async function changePassword(req: FastifyRequest, reply: FastifyReply): 
   }
 
   try {
-    await changePasswordService(req.userId, currentPassword, newPassword);
+    await changePasswordService(req.userId, currentPassword, newPassword, false, currentFamilyId(req));
     return reply.code(200).send({ success: true, message: 'Password changed successfully.' });
   } catch (err) {
     if (err instanceof PasswordResetError) {
@@ -346,7 +348,7 @@ export async function setPassword(req: FastifyRequest, reply: FastifyReply): Pro
   }
 
   try {
-    await changePasswordService(req.userId, null, newPassword, true);
+    await changePasswordService(req.userId, null, newPassword, true, currentFamilyId(req));
     return reply.code(200).send({ success: true, message: 'Password set successfully.' });
   } catch (err) {
     if (err instanceof PasswordResetError) {
@@ -373,18 +375,10 @@ export async function verifyEmailHandler(req: FastifyRequest, reply: FastifyRepl
 // ─── Session Management Handlers ───────────────────────────────────────────────
 
 export async function getSessions(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const token = req.cookies.accessToken;
-  let currentFamilyId: string | undefined;
-  if (token) {
-    try {
-      const decoded = req.server.jwt.verifyToken(token) as Record<string, unknown>;
-      currentFamilyId = decoded.familyId as string | undefined;
-    } catch {}
-  }
-
+  const familyId = currentFamilyId(req);
   const currentUA = (req.headers['user-agent'] as string) || '';
   const currentPlatformVersion = (req.headers['sec-ch-ua-platform-version'] as string) || undefined;
-  const result = await authService.getSessions(req.userId!, currentFamilyId, currentUA, currentPlatformVersion);
+  const result = await authService.getSessions(req.userId!, familyId, currentUA, currentPlatformVersion);
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error });
   }
@@ -407,18 +401,7 @@ export async function logoutAll(req: FastifyRequest, reply: FastifyReply): Promi
   const body = req.body as { keepCurrent?: boolean } | undefined;
   const keepCurrent = body?.keepCurrent === true;
 
-  let currentFamilyId: string | undefined;
-  if (keepCurrent) {
-    const token = req.cookies.accessToken;
-    if (token) {
-      try {
-        const decoded = req.server.jwt.verifyToken(token) as Record<string, unknown>;
-        currentFamilyId = decoded.familyId as string | undefined;
-      } catch {}
-    }
-  }
-
-  await authService.revokeAllSessions(req.userId!, keepCurrent ? currentFamilyId : undefined);
+  await authService.revokeAllSessions(req.userId!, keepCurrent ? currentFamilyId(req) : undefined);
 
   if (!keepCurrent) {
     clearAuthCookies(reply);
@@ -461,6 +444,10 @@ export async function generateAuthenticationOptionsHandler(req: FastifyRequest, 
   if (result.error) {
     return reply.code(result.status || 500).send({ error: result.error });
   }
+  const challenge = (result.options as { challenge?: string } | undefined)?.challenge;
+  if (challenge) {
+    reply.setCookie(PASSKEY_CHALLENGE_COOKIE, challenge, { ...cookieOptions, signed: true, maxAge: PASSKEY_CHALLENGE_MAX_AGE });
+  }
   return reply.send(result);
 }
 
@@ -471,9 +458,15 @@ export async function verifyAuthenticationResponseHandler(req: FastifyRequest, r
   const { identifier, response } = req.body as { identifier: string; response: import('@simplewebauthn/server').AuthenticationResponseJSON };
   const userAgent = (req.headers['user-agent'] as string) || '';
 
+  const rawChallenge = req.cookies[PASSKEY_CHALLENGE_COOKIE];
+  const unsigned = rawChallenge ? req.unsignCookie(rawChallenge) : null;
+  // Single use: cleared whether or not verification succeeds.
+  reply.clearCookie(PASSKEY_CHALLENGE_COOKIE, cookieOptions);
+
   const result = await authService.verifyPasskeyLogin(
     identifier,
     response,
+    unsigned?.valid ? unsigned.value ?? undefined : undefined,
     req.server.jwt,
     req.ip,
     deviceId,

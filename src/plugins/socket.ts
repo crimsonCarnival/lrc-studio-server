@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/mongo-adapter';
-import jwt from 'jsonwebtoken';
 import { parseCookie } from 'cookie';
+import { verifyLiveAccessToken } from './auth.js';
 import { setIO } from '../socket/socket.manager.js';
 import { initSocialGraph } from '../lib/social-graph.js';
 import { initRequestQueue } from '../modules/requests/request.queue.js';
@@ -27,7 +27,6 @@ import {
 } from '../socket/project-viewers.js';
 import { parseAllowedOrigins } from '../config/allowed-origins.js';
 
-const JWT_SECRET = process.env.JWT_SECRET!;
 
 
 /** Collection the Mongo adapter writes broadcast + heartbeat documents to. */
@@ -103,6 +102,8 @@ async function getMutualFollowIds(userId: string): Promise<string[]> {
   return mutuals.map(f => f.followerId.toString());
 }
 
+const ACTIVITY_TEXT_MAX = 200;
+
 async function socketPlugin(fastify: FastifyInstance): Promise<void> {
   const origins = parseAllowedOrigins(process.env.CORS_ORIGIN);
 
@@ -130,16 +131,22 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
   // Auth middleware: verify JWT from the accessToken cookie sent in the handshake.
   // Allows anonymous connections (socket.data.userId stays undefined); handlers
   // that require identity silently no-op when userId is absent.
-  io.use((socket, next) => {
+  // Same verification as the HTTP decorators: access tokens only (a refresh
+  // token used to pass here too), bound to a live session, and never for a
+  // deleted or banned account.
+  io.use(async (socket, next) => {
     try {
       const cookieHeader = socket.handshake.headers.cookie ?? '';
       const token = parseCookie(cookieHeader).accessToken;
       if (token) {
-        const decoded = jwt.verify(token, JWT_SECRET) as { sub?: string };
-        if (decoded.sub) socket.data.userId = decoded.sub;
+        const decoded = await verifyLiveAccessToken(token);
+        const user = decoded.sub
+          ? await User.findById(decoded.sub).select('isDeleted ban').lean<IUser>()
+          : null;
+        if (user && !user.isDeleted && !user.ban?.active) socket.data.userId = decoded.sub;
       }
     } catch {
-      // Expired / malformed token — treat as anonymous
+      // Expired / malformed / revoked token — treat as anonymous
     }
     next();
   });
@@ -297,10 +304,11 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         const p = payload as Partial<UserActivity>;
         if (typeof p?.projectTitle !== 'string') return;
 
+        // Relayed verbatim to friends and the admin room, so bound it.
         const activity: UserActivity = {
-          projectTitle: p.projectTitle,
-          songName: p.songName ?? '',
-          publicId: p.publicId ?? '',
+          projectTitle: p.projectTitle.slice(0, ACTIVITY_TEXT_MAX),
+          songName: typeof p.songName === 'string' ? p.songName.slice(0, ACTIVITY_TEXT_MAX) : '',
+          publicId: isValidPublicId(p.publicId) ? p.publicId : '',
         };
         setActivity(userId, activity);
 

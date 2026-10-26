@@ -110,6 +110,7 @@ type JwtTools = {
   signAccess: (p: Record<string, unknown>) => string;
   signRefresh: (p: Record<string, unknown>) => string;
   verifyToken: (t: string) => Record<string, unknown>;
+  verifyRefreshToken: (t: string) => Record<string, unknown>;
 };
 
 const err = (code: string, status: number): ServiceResult => ({ error: code, code, status });
@@ -123,7 +124,13 @@ const BAN_ERRORS: Record<string, ServiceResult> = {
   ACCOUNT_DELETED:       err('account_deleted', 403),
 };
 
-export async function verifyRecaptcha(token: string | undefined, ip: string): Promise<boolean> {
+/**
+ * `actions` are the client-side action names this endpoint accepts. Without the
+ * check, a token minted for any action on any page that loads this key was
+ * accepted everywhere. Hostname is enforced by the key's domain list in the
+ * reCAPTCHA console, so it is not re-checked here.
+ */
+export async function verifyRecaptcha(token: string | undefined, ip: string, actions: readonly string[]): Promise<boolean> {
   const secret = process.env.RECAPTCHA_SECRET_KEY;
   if (!secret) {
     // Fail OPEN only outside production (local dev without a captcha key). In
@@ -153,7 +160,11 @@ export async function verifyRecaptcha(token: string | undefined, ip: string): Pr
       signal: AbortSignal.timeout(5000),
     });
     const data = await res.json() as { success: boolean; score?: number; action?: string; hostname?: string; 'error-codes'?: string[] };
-    const ok = data.success && (data.score === undefined || data.score >= (Number.isFinite(minScore) ? minScore : 0.5));
+    // A v3 verification always carries a score and an action; a missing one is
+    // not a pass.
+    const ok = data.success
+      && typeof data.score === 'number' && data.score >= (Number.isFinite(minScore) ? minScore : 0.5)
+      && typeof data.action === 'string' && actions.includes(data.action);
     if (!ok) {
       // Without this every failure mode (bad secret, host mismatch, expired or
       // reused token, low score) surfaces as the same opaque recaptcha_failed.
@@ -203,7 +214,7 @@ export async function register(
   ip: string,
   deviceId: string
 ): Promise<ServiceResult<AuthResponse>> {
-  if (!(await verifyRecaptcha(data.recaptchaToken, ip))) {
+  if (!(await verifyRecaptcha(data.recaptchaToken, ip, ['register']))) {
     return err('recaptcha_failed', 403);
   }
 
@@ -292,7 +303,7 @@ export async function login(
   ip: string,
   deviceId: string
 ): Promise<ServiceResult<AuthResponse>> {
-  if (!(await verifyRecaptcha(data.recaptchaToken, ip))) {
+  if (!(await verifyRecaptcha(data.recaptchaToken, ip, ['login']))) {
     return err('recaptcha_failed', 403);
   }
 
@@ -451,7 +462,7 @@ export async function refresh(
 ): Promise<ServiceResult<{ accessToken: string; refreshToken: string }>> {
   let decoded: Record<string, unknown>;
   try {
-    decoded = jwt.verifyToken(refreshToken);
+    decoded = jwt.verifyRefreshToken(refreshToken);
   } catch {
     return err('token_expired', 401);
   }
@@ -707,7 +718,10 @@ export async function updateProfile(
 
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
   if (avatarPublicId !== undefined) {
-    if (avatarPublicId && !avatarPublicId.startsWith('lyrics-syncer/avatars/')) {
+    // The caller's own folder, not just the avatars root: the stored id is
+    // destroyed on the next avatar change, so a foreign id deleted someone
+    // else's image. Matches the folder generateAvatarSignature signs for.
+    if (avatarPublicId && !avatarPublicId.startsWith(`lyrics-syncer/avatars/${userId}/`)) {
       return { error: 'Invalid Cloudinary public ID for avatar', status: 400 };
     }
     user.avatarPublicId = avatarPublicId;
@@ -956,15 +970,16 @@ export async function getPasskeyLoginOptions(identifier: string): Promise<Servic
     userVerification: 'preferred',
   });
 
-  user.currentChallenge = options.challenge;
-  await user.save();
-
+  // The caller keeps the challenge (a signed cookie, see the controller). It
+  // used to live on the user document, which let anyone who knew an account
+  // name overwrite it and break that user's in-flight passkey sign-in.
   return { options: options as unknown as Record<string, unknown> };
 }
 
 export async function verifyPasskeyLogin(
   identifier: string,
   response: AuthenticationResponseJSON,
+  expectedChallenge: string | undefined,
   jwt: JwtTools,
   ip: string,
   deviceId: string,
@@ -974,7 +989,7 @@ export async function verifyPasskeyLogin(
   const user = await User.findOne({
     $or: [{ accountName: normalised }, { email: normalised }],
   });
-  if (!user || !user.currentChallenge) return err('invalid_credentials', 401);
+  if (!user || !expectedChallenge) return err('invalid_credentials', 401);
 
   if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
   await user.checkBanStatus();
@@ -991,10 +1006,6 @@ export async function verifyPasskeyLogin(
 
   const passkey = await Passkey.findOne({ credentialID: response.id, userId: user._id });
   if (!passkey) return err('credential_not_found', 401);
-
-  const expectedChallenge = user.currentChallenge;
-  user.currentChallenge = null;
-  await user.save();
 
   const { rpID, origins } = getWebAuthnConfig();
 

@@ -61,6 +61,27 @@ export function verifyAdminSudo(token: string | undefined, userId: string | unde
   }
 }
 
+/** Parse JWT duration strings ("30m", "1d", "2h") to seconds. */
+export function parseExpiry(str: string | undefined, fallbackSeconds: number): number {
+  if (!str) return fallbackSeconds;
+  const match = str.match(/^(\d+)([smhd])$/);
+  if (!match) return fallbackSeconds;
+  const n = parseInt(match[1], 10);
+  const unit = match[2];
+  if (unit === 's') return n;
+  if (unit === 'm') return n * 60;
+  if (unit === 'h') return n * 3600;
+  if (unit === 'd') return n * 86400;
+  return fallbackSeconds;
+}
+
+const ACCESS_LIFETIME_SECONDS = parseExpiry(ACCESS_EXPIRY, 15 * 60);
+
+// Access and refresh tokens share a secret, issuer and audience, so without a
+// type claim a refresh token was accepted anywhere an access token was —
+// outliving logout, session revocation and breach detection for its full TTL.
+type TokenKind = 'access' | 'refresh';
+
 function signAccess(payload: Record<string, unknown>): string {
   const opts: SignOptions = {
     expiresIn: ACCESS_EXPIRY as SignOptions['expiresIn'],
@@ -68,7 +89,7 @@ function signAccess(payload: Record<string, unknown>): string {
     audience: JWT_AUDIENCE,
     algorithm: 'HS256',
   };
-  return jwt.sign(payload, JWT_SECRET, opts);
+  return jwt.sign({ ...payload, typ: 'access' }, JWT_SECRET, opts);
 }
 
 function signRefresh(payload: Record<string, unknown>): string {
@@ -78,7 +99,7 @@ function signRefresh(payload: Record<string, unknown>): string {
     audience: JWT_AUDIENCE,
     algorithm: 'HS256',
   };
-  return jwt.sign(payload, JWT_SECRET, opts);
+  return jwt.sign({ ...payload, typ: 'refresh' }, JWT_SECRET, opts);
 }
 
 function verifyToken(token: string): JwtPayload {
@@ -90,8 +111,46 @@ function verifyToken(token: string): JwtPayload {
   }) as JwtPayload;
 }
 
+/**
+ * Tokens minted before the `typ` claim carry none; classify those by lifetime.
+ * This fallback only matters until the last pre-`typ` refresh token expires
+ * (one JWT_REFRESH_EXPIRY after deploy) and can be removed after that.
+ */
+function tokenKind(decoded: JwtPayload): TokenKind {
+  if (decoded.typ === 'access' || decoded.typ === 'refresh') return decoded.typ;
+  const lifetime = (decoded.exp ?? 0) - (decoded.iat ?? 0);
+  return lifetime > ACCESS_LIFETIME_SECONDS ? 'refresh' : 'access';
+}
+
+function verifyTokenOfKind(token: string, kind: TokenKind): JwtPayload {
+  const decoded = verifyToken(token);
+  if (tokenKind(decoded) !== kind) throw new jwt.JsonWebTokenError(`expected ${kind} token`);
+  return decoded;
+}
+
+const verifyAccessToken = (token: string) => verifyTokenOfKind(token, 'access');
+const verifyRefreshToken = (token: string) => verifyTokenOfKind(token, 'refresh');
+
 /** Module-level jwt tools — use these when this.jwt is unavailable (e.g. in standalone exported handlers). */
-export const jwtTools = { signAccess, signRefresh, verifyToken };
+export const jwtTools = { signAccess, signRefresh, verifyToken, verifyAccessToken, verifyRefreshToken };
+
+/**
+ * An access token is only as good as the session it was issued for. Without
+ * this, logout / logout-all / password change / breach detection revoked the
+ * refresh path but left every issued access token valid until expiry.
+ */
+async function isSessionLive(decoded: JwtPayload): Promise<boolean> {
+  if (!decoded.sub || typeof decoded.familyId !== 'string') return false;
+  const Session = (await import('../db/session.model.js')).default;
+  return !!(await Session.exists({ familyId: decoded.familyId, userId: decoded.sub, isValid: true }));
+}
+
+/** Verified access token whose session is still valid; throws like jwt.verify otherwise. */
+export async function verifyLiveAccessToken(token: string): Promise<JwtPayload> {
+  const decoded = verifyAccessToken(token);
+  if (!(await isSessionLive(decoded))) throw new jwt.JsonWebTokenError('session revoked');
+  return decoded;
+}
 
 // Only the fields needed for auth checks — avoids loading passwordHash, etc.
 const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role permissions accountName lastIp';
@@ -143,8 +202,24 @@ async function getOrCheckIpBan(request: FastifyRequest, ip: string | undefined):
   return result;
 }
 
+/**
+ * The 403 message when this request's device or IP is banned, else null.
+ * Superadmins are exempt, as they already are at login: otherwise anyone
+ * holding network.block could lock the superadmin out by banning their IP.
+ */
+async function networkBanMessage(request: FastifyRequest, user: CachedAuthUser): Promise<string | null> {
+  if (user.role === 'superadmin') return null;
+  const [deviceBanned, ipBanned] = await Promise.all([
+    getOrCheckDeviceBan(request, request.headers['x-device-id'] as string | undefined),
+    getOrCheckIpBan(request, request.ip),
+  ]);
+  if (deviceBanned) return 'Access restricted from this device due to previous violations.';
+  if (ipBanned) return 'Access restricted from this network.';
+  return null;
+}
+
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
-  fastify.decorate('jwt', { signAccess, signRefresh, verifyToken });
+  fastify.decorate('jwt', jwtTools);
 
   // The Fastify decorator initialiser; userId starts as undefined and is set during auth
   fastify.decorateRequest('userId', undefined);
@@ -153,7 +228,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     const token = request.cookies.accessToken;
     if (!token) return;
     try {
-      const decoded = verifyToken(token) as JwtPayload;
+      const decoded = await verifyLiveAccessToken(token);
       const user = await getOrFetchUser(request, decoded.sub);
       if (!user || user.deletedAt) return;
       await user.checkBanStatus();
@@ -161,6 +236,9 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
         (request as FastifyRequest & { bannedUserId?: string }).bannedUserId = decoded.sub;
         return;
       }
+      // optionalAuth builds the GraphQL context, so skipping this left a banned
+      // device or network with full read/write access to the data graph.
+      if (await networkBanMessage(request, user)) return;
       request.userId = decoded.sub;
     } catch (err: unknown) {
       // Expired token: treat as anonymous but flag it so resolvers can surface
@@ -180,7 +258,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(token) as JwtPayload;
+      decoded = await verifyLiveAccessToken(token);
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });
     return null;
@@ -197,20 +275,9 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     return null;
     }
 
-    const deviceId = request.headers['x-device-id'] as string | undefined;
-    const ip = request.ip;
-
-    const [deviceBanned, ipBanned] = await Promise.all([
-      getOrCheckDeviceBan(request, deviceId),
-      getOrCheckIpBan(request, ip),
-    ]);
-
-    if (deviceBanned) {
-      reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
-      return null;
-    }
-    if (ipBanned) {
-      reply.code(403).send({ error: 'Access restricted from this network.' });
+    const networkBan = await networkBanMessage(request, user);
+    if (networkBan) {
+      reply.code(403).send({ error: networkBan });
       return null;
     }
 
@@ -226,7 +293,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(token) as JwtPayload;
+      decoded = await verifyLiveAccessToken(token);
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });
       return;
@@ -244,22 +311,13 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
       return;
     }
 
-    const deviceId = request.headers['x-device-id'] as string | undefined;
+    const networkBan = await networkBanMessage(request, user);
+    if (networkBan) {
+      reply.code(403).send({ error: networkBan });
+      return;
+    }
+
     const ip = request.ip;
-
-    const [deviceBanned, ipBanned] = await Promise.all([
-      getOrCheckDeviceBan(request, deviceId),
-      getOrCheckIpBan(request, ip),
-    ]);
-
-    if (deviceBanned) {
-      reply.code(403).send({ error: 'Access restricted from this device due to previous violations.' });
-      return;
-    }
-    if (ipBanned) {
-      reply.code(403).send({ error: 'Access restricted from this network.' });
-      return;
-    }
 
     request.userId = decoded.sub;
 
@@ -332,7 +390,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(token) as JwtPayload;
+      decoded = await verifyLiveAccessToken(token);
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });
       return;
@@ -355,7 +413,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
     }
     let decoded: JwtPayload;
     try {
-      decoded = verifyToken(token) as JwtPayload;
+      decoded = await verifyLiveAccessToken(token);
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });
       return;

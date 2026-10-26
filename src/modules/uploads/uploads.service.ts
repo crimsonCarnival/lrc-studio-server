@@ -18,13 +18,13 @@ export function isStorageConfigured(): boolean {
   );
 }
 
-export async function generateAudioSignature(data: Record<string, unknown>, userId: string | null | undefined, ip: string): Promise<Record<string, unknown>> {
+export async function generateAudioSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
   if (!isStorageConfigured()) {
     return { error: 'Upload service not configured', status: 503 };
   }
 
   const { fileName, fileSize, recaptchaToken } = data as { fileName: string; fileSize: number; recaptchaToken?: string };
-  if (!(await verifyRecaptcha(recaptchaToken, ip))) {
+  if (!(await verifyRecaptcha(recaptchaToken, ip, ['upload_audio']))) {
     return { error: 'recaptcha_failed', status: 403 };
   }
 
@@ -44,8 +44,7 @@ export async function generateAudioSignature(data: Record<string, unknown>, user
 
   const apiSecret = process.env.CLOUDINARY_API_SECRET as string;
   const timestamp = Math.round(Date.now() / 1000);
-  // Guests upload to a shared 'guests' folder; authenticated users get their own subfolder.
-  const userFolder = userId ? `${UPLOAD_FOLDER}/${userId}` : `${UPLOAD_FOLDER}/guests`;
+  const userFolder = `${UPLOAD_FOLDER}/${userId}`;
   // allowed_formats is signed so Cloudinary enforces file type server-side.
   // Client must echo this value back in the upload form — otherwise Cloudinary rejects the upload.
   const allowedFormats = ALLOWED_AUDIO_EXTENSIONS.join(',');
@@ -69,7 +68,7 @@ export async function generateAvatarSignature(data: Record<string, unknown>, use
   }
 
   const { fileSize, recaptchaToken } = data as { fileSize?: number; recaptchaToken?: string };
-  if (!(await verifyRecaptcha(recaptchaToken, ip))) {
+  if (!(await verifyRecaptcha(recaptchaToken, ip, ['upload_avatar']))) {
     return { error: 'recaptcha_failed', status: 403 };
   }
 
@@ -108,7 +107,7 @@ export async function generateCoverSignature(data: Record<string, unknown>, user
   }
 
   const { fileSize, fileName, recaptchaToken } = data as { fileSize?: number; fileName?: string; recaptchaToken?: string };
-  if (!(await verifyRecaptcha(recaptchaToken, ip))) {
+  if (!(await verifyRecaptcha(recaptchaToken, ip, ['upload_cover']))) {
     return { error: 'recaptcha_failed', status: 403 };
   }
 
@@ -157,7 +156,7 @@ export async function generateProfileCoverSignature(data: Record<string, unknown
   }
 
   const { fileSize, recaptchaToken } = data as { fileSize?: number; recaptchaToken?: string };
-  if (!(await verifyRecaptcha(recaptchaToken, ip))) {
+  if (!(await verifyRecaptcha(recaptchaToken, ip, ['upload_profile_cover']))) {
     return { error: 'recaptcha_failed', status: 403 };
   }
 
