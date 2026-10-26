@@ -10,6 +10,23 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const ALLOWED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma', 'webm', 'mp4'];
 const UPLOAD_FOLDER = 'lyrics-syncer/audio';
 
+// Inputs Cloudinary re-encodes to AAC before storing (incoming transformation,
+// so only the converted asset is kept). Lossless files are the storage win;
+// mp4/webm may carry a video track the audio player never shows; wma does not
+// play in Chrome or Firefox at all. Already-compressed browser formats are kept
+// byte-for-byte: re-encoding them saves little, costs a lossy generation, and
+// adds encoder priming that can shift playback against timestamps synced on
+// the local copy.
+const TRANSCODED_AUDIO_EXTENSIONS = ['wav', 'flac', 'wma', 'mp4', 'webm'];
+const AUDIO_STORAGE_FORMAT = 'm4a';
+const AUDIO_TRANSCODE_TRANSFORMATION = 'ac_aac,br_128k';
+
+export function audioTranscodeParams(ext: string): { format: string; transformation: string } | null {
+  return TRANSCODED_AUDIO_EXTENSIONS.includes(ext)
+    ? { format: AUDIO_STORAGE_FORMAT, transformation: AUDIO_TRANSCODE_TRANSFORMATION }
+    : null;
+}
+
 export function isStorageConfigured(): boolean {
   return !!(
     process.env.CLOUDINARY_CLOUD_NAME &&
@@ -48,7 +65,9 @@ export async function generateAudioSignature(data: Record<string, unknown>, user
   // allowed_formats is signed so Cloudinary enforces file type server-side.
   // Client must echo this value back in the upload form — otherwise Cloudinary rejects the upload.
   const allowedFormats = ALLOWED_AUDIO_EXTENSIONS.join(',');
-  const params = { timestamp, folder: userFolder, allowed_formats: allowedFormats };
+  // Signed for the same reason: the client cannot drop the transcode to store a raw WAV.
+  const transcode = audioTranscodeParams(ext);
+  const params = { timestamp, folder: userFolder, allowed_formats: allowedFormats, ...transcode };
   const signature = cloudinary.utils.api_sign_request(params, apiSecret);
 
   return {
@@ -59,6 +78,7 @@ export async function generateAudioSignature(data: Record<string, unknown>, user
     folder: userFolder,
     resourceType: 'video',
     allowedFormats,
+    ...transcode,
   };
 }
 
