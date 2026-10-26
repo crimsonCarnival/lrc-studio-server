@@ -27,8 +27,8 @@ vi.mock('../notifications/notifications.service.js', () => ({
   resolveSticky: async () => undefined,
 }));
 
-import User from '../../db/user.model.js';
-import Session from '../../db/session.model.js';
+import User from '../users/user.model.js';
+import Session from './session.model.js';
 import UserDevice from './user-device.model.js';
 import BannedIp from '../admin/banned-ip.model.js';
 import BannedDevice from '../admin/banned-device.model.js';

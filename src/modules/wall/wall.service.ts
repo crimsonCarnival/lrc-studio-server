@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
-import User from '../../db/user.model.js';
-import type { IUser } from '../../db/user.model.js';
+import User from '../users/user.model.js';
+import type { IUser } from '../users/user.model.js';
 import { WallComment, WallSubscription, WALL_MAX_DEPTH, WALL_MAX_LENGTH } from './wall.models.js';
 import type { IWallComment } from './wall.models.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';

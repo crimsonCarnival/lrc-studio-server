@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import Artist from '../../db/artist.model.js';
+import Artist from './artist.model.js';
 import Project from '../projects/project.model.js';
 import { ARTIST_LIMITS, parseArtists, type ArtistCredit } from '../../utils/artists.js';
 

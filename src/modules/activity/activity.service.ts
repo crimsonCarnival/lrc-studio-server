@@ -1,9 +1,9 @@
 import mongoose from 'mongoose';
-import Activity, { type ActivityType } from '../../db/activity.model.js';
-import Follow from '../../db/follow.model.js';
-import HeatmapDay, { type IHeatmapDay } from '../../db/heatmap-day.model.js';
-import HeatmapProjectEdit from '../../db/heatmap-project-edit.model.js';
-import User from '../../db/user.model.js';
+import Activity, { type ActivityType } from './activity.model.js';
+import Follow from '../users/follow.model.js';
+import HeatmapDay, { type IHeatmapDay } from './heatmap-day.model.js';
+import HeatmapProjectEdit from './heatmap-project-edit.model.js';
+import User from '../users/user.model.js';
 import Project from '../projects/project.model.js';
 import { getCachedBlockedSet } from '../blocks/block-list.cache.js';
 import { enqueueFanOut } from './fan-out.queue.js';

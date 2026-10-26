@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import User from '../db/user.model.js';
-import Playlist from '../db/playlist.model.js';
-import Activity from '../db/activity.model.js';
+import User from '../modules/users/user.model.js';
+import Playlist from '../modules/playlists/playlist.model.js';
+import Activity from '../modules/activity/activity.model.js';
 import Notification from '../modules/notifications/notification.model.js';
 import Project from '../modules/projects/project.model.js';
 import Upload from '../modules/uploads/upload.model.js';

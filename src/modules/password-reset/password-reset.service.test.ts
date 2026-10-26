@@ -16,9 +16,9 @@ vi.mock('../notifications/notifications.service.js', () => ({
   resolveSticky: async () => undefined,
 }));
 
-import User from '../../db/user.model.js';
-import Session from '../../db/session.model.js';
-import PasswordReset from '../../db/password-reset.model.js';
+import User from '../users/user.model.js';
+import Session from '../auth/session.model.js';
+import PasswordReset from './password-reset.model.js';
 import { resetPassword, changePassword, PasswordResetError } from './password-reset.service.js';
 
 let repl: MongoMemoryReplSet;

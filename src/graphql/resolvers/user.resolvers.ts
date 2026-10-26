@@ -1,10 +1,10 @@
 import mercurius from 'mercurius';
 import mongoose from 'mongoose';
-import User from '../../db/user.model.js';
-import type { IUser, IUserBadge, IUserStats } from '../../db/user.model.js';
+import User from '../../modules/users/user.model.js';
+import type { IUser, IUserBadge, IUserStats } from '../../modules/users/user.model.js';
 import XPEvent from '../../modules/progression/xp-event.model.js';
 import Project from '../../modules/projects/project.model.js';
-import Playlist from '../../db/playlist.model.js';
+import Playlist from '../../modules/playlists/playlist.model.js';
 import type { IProject } from '../../modules/projects/project.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import Settings from '../../modules/settings/settings.model.js';
@@ -12,13 +12,13 @@ import { Context } from './context.js';
 import { requirePermission } from './auth-guards.js';
 import { hasPermission, rankOf, ROLE_RANK } from '../../shared/permissions.js';
 import { toggleShadowBan } from '../../modules/admin/admin.service.js';
-import AccountNameHistory from '../../db/account-name-history.model.js';
+import AccountNameHistory from '../../modules/users/account-name-history.model.js';
 import { findUserByAccountName, isAccountNameInHistoryOfOther, recordAccountNameChange } from '../../modules/users/account-name.service.js';
 import { isReservedAccountName } from '../../modules/auth/auth.validation.js';
-import EmailHistory from '../../db/email-history.model.js';
+import EmailHistory from '../../modules/users/email-history.model.js';
 import { sendVerification, resendVerification } from '../../modules/email-verification/email-verification.service.js';
-import Follow from '../../db/follow.model.js';
-import Session from '../../db/session.model.js';
+import Follow from '../../modules/users/follow.model.js';
+import Session from '../../modules/auth/session.model.js';
 import {
   blockUser as svcBlockUser,
   unblockUser as svcUnblockUser,
@@ -38,7 +38,7 @@ import type { IBadgeDefinition } from '../../modules/badges/badge-definition.mod
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import { socialGraph } from '../../lib/social-graph.js';
 import { getPreferences, updatePreferences } from '../../modules/user-preferences/user-preferences.service.js';
-import type { IUserPreferences } from '../../db/user-preferences.model.js';
+import type { IUserPreferences } from '../../modules/user-preferences/user-preferences.model.js';
 
 /** Input shape for updateProfile mutation */
 export interface UpdateProfileInput {
@@ -115,7 +115,7 @@ interface LeaderboardFacet {
 /**
  * Sortable column -> the User field path(s) it sorts by, in key order.
  * Every entry is backed by a dedicated compound index on User (see
- * db/user.model.ts); keep the two in step when adding a column.
+ * modules/users/user.model.ts); keep the two in step when adding a column.
  *
  * TIME_SYNCED sorts by (minutesSynced, secondsSynced) rather than a derived
  * total-seconds field because recomputeSyncStats stores secondsSynced as the
@@ -1003,7 +1003,7 @@ export const userResolvers = {
         if (!context.userId) return null;
         
         const mongoose = (await import('mongoose')).default;
-        const Follow = (await import('../../db/follow.model.js')).default;
+        const Follow = (await import('../../modules/users/follow.model.js')).default;
         
         const userOid = new mongoose.Types.ObjectId(id);
         const following = await Follow.find({ followerId: userOid }).select('followingId').lean();
@@ -1052,7 +1052,7 @@ export const userResolvers = {
         if (!context.userId) return null;
         
         const mongoose = (await import('mongoose')).default;
-        const Follow = (await import('../../db/follow.model.js')).default;
+        const Follow = (await import('../../modules/users/follow.model.js')).default;
         
         const userOid = new mongoose.Types.ObjectId(id);
         const following = await Follow.find({ followerId: userOid }).select('followingId').lean();

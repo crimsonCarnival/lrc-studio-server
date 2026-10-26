@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
 import { createOnce } from '../notifications/notifications.service.js';
 import { triggerBadgeCheck } from '../badges/badge.service.js';

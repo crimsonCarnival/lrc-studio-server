@@ -1,13 +1,13 @@
 import { findUserByAccountName } from '../../modules/users/account-name.service.js';
 import mongoose from 'mongoose';
 import { notifyPlaylistSaved } from '../../modules/notifications/notifications.events.js';
-import Playlist from '../../db/playlist.model.js';
-import type { IPlaylist } from '../../db/playlist.model.js';
-import SavedPlaylist from '../../db/saved-playlist.model.js';
+import Playlist from '../../modules/playlists/playlist.model.js';
+import type { IPlaylist } from '../../modules/playlists/playlist.model.js';
+import SavedPlaylist from '../../modules/playlists/saved-playlist.model.js';
 import Project from '../../modules/projects/project.model.js';
 import type { IProject } from '../../modules/projects/project.model.js';
-import User from '../../db/user.model.js';
-import type { IUser } from '../../db/user.model.js';
+import User from '../../modules/users/user.model.js';
+import type { IUser } from '../../modules/users/user.model.js';
 import { Context } from './context.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { visibilityForNewContent } from '../../modules/users/owner-visibility.service.js';

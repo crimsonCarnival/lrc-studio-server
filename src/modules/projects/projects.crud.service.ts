@@ -9,7 +9,7 @@ import Project from './project.model.js';
 import ProjectFork from './project-fork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user-logs/logs.service.js';

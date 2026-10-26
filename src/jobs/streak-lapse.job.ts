@@ -21,7 +21,7 @@
  * Idempotency: the filter only matches documents that still need changing, so a
  * second run in the same hour updates nothing.
  */
-import User from '../db/user.model.js';
+import User from '../modules/users/user.model.js';
 
 /**
  * Reset every lapsed streak. Returns how many users were changed.

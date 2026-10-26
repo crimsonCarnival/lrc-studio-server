@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import StaffRequest, { type IStaffRequest, type RequestType, REQUEST_TYPES } from './request.model.js';
-import User from '../../db/user.model.js';
-import type { IUser } from '../../db/user.model.js';
+import User from '../users/user.model.js';
+import type { IUser } from '../users/user.model.js';
 import { hasPermission, type Permission } from '../../shared/permissions.js';
 import * as adminService from '../admin/admin.service.js';
 import { createBadgeDef, updateBadgeDef, deleteBadgeDef } from '../badges/badge.service.js';

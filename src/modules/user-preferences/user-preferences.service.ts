@@ -1,5 +1,5 @@
 import { LRUCache } from '@crimson-carnival/ds-js';
-import UserPreferences, { type IUserPreferences } from '../../db/user-preferences.model.js';
+import UserPreferences, { type IUserPreferences } from './user-preferences.model.js';
 
 interface CacheEntry {
   prefs: IUserPreferences;

@@ -141,7 +141,7 @@ export const jwtTools = { signAccess, signRefresh, verifyToken, verifyAccessToke
  */
 async function isSessionLive(decoded: JwtPayload): Promise<boolean> {
   if (!decoded.sub || typeof decoded.familyId !== 'string') return false;
-  const Session = (await import('../db/session.model.js')).default;
+  const Session = (await import('../modules/auth/session.model.js')).default;
   return !!(await Session.exists({ familyId: decoded.familyId, userId: decoded.sub, isValid: true }));
 }
 
@@ -157,7 +157,7 @@ const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role permissions accoun
 
 async function lookupUser(userId: string | undefined): Promise<CachedAuthUser | null> {
   if (!userId) return null;
-  const User = (await import('../db/user.model.js')).default;
+  const User = (await import('../modules/users/user.model.js')).default;
   return User.findById(userId).select(AUTH_USER_SELECT) as unknown as CachedAuthUser | null;
 }
 
@@ -323,7 +323,7 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
 
     // Fire-and-forget IP update — no await, never blocks the request
     if (ip && user.lastIp !== ip) {
-      import('../db/user.model.js').then(({ default: User }) => {
+      import('../modules/users/user.model.js').then(({ default: User }) => {
         User.updateOne({ _id: decoded.sub }, { $set: { lastIp: ip } }).catch(() => {});
       });
     }

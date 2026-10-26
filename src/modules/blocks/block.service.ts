@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
-import Block from '../../db/block.model.js';
-import Follow from '../../db/follow.model.js';
-import User, { type IUser } from '../../db/user.model.js';
+import Block from './block.model.js';
+import Follow from '../users/follow.model.js';
+import User, { type IUser } from '../users/user.model.js';
 import { getCachedBlockedSet, invalidateBlockCache } from './block-list.cache.js';
 import { socialGraph } from '../../lib/social-graph.js';
 

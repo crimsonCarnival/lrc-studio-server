@@ -1,5 +1,5 @@
 import { Graph } from '@crimson-carnival/ds-js'
-import Follow from '../db/follow.model.js'
+import Follow from '../modules/users/follow.model.js'
 
 export const socialGraph = new Graph<string>(true) // directed
 

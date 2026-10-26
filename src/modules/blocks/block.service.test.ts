@@ -10,9 +10,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Block from '../../db/block.model.js';
-import Follow from '../../db/follow.model.js';
-import User from '../../db/user.model.js';
+import Block from './block.model.js';
+import Follow from '../users/follow.model.js';
+import User from '../users/user.model.js';
 import {
   blockUser,
   unblockUser,

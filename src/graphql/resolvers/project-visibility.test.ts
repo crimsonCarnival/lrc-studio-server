@@ -50,7 +50,7 @@ vi.mock('../../modules/users/music-library.service.js', () => ({
   upsertMusicLibraryEntry: async () => undefined,
 }));
 
-import User from '../../db/user.model.js';
+import User from '../../modules/users/user.model.js';
 import Project from '../../modules/projects/project.model.js';
 import ProjectStar from '../../modules/projects/project-star.model.js';
 import { projectResolvers } from './project.resolvers.js';

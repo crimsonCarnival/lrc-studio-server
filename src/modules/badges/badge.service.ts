@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { notifyLevelUp } from '../notifications/notifications.events.js';
-import type { IUser, IUserBadge } from '../../db/user.model.js';
+import type { IUser, IUserBadge } from '../users/user.model.js';
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';

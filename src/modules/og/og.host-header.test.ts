@@ -27,7 +27,7 @@ process.env.JWT_SECRET ||= 'test-jwt-secret-value-not-used-here';
 process.env.COOKIE_SECRET ||= 'test-cookie-secret-value-not-used-here';
 process.env.CLOUDINARY_CLOUD_NAME ||= 'testcloud';
 
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import Project from '../projects/project.model.js';
 import ogRoutes from './og.routes.js';
 

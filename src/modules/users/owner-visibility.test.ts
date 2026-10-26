@@ -28,9 +28,9 @@ vi.mock('../notifications/notifications.service.js', () => ({
 }));
 vi.mock('../email/email.service.js', () => ({ sendBanEmail: async () => undefined }));
 
-import User from '../../db/user.model.js';
+import User from './user.model.js';
 import Project from '../projects/project.model.js';
-import Playlist from '../../db/playlist.model.js';
+import Playlist from '../playlists/playlist.model.js';
 import AdminLog from '../admin/admin-log.model.js';
 import {
   computeOwnerVisibility,

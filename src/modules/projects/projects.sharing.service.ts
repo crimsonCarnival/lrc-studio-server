@@ -5,7 +5,7 @@ import ProjectFork from './project-fork.model.js';
 import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js';
 import { withTransaction, TransactionError } from '../../db/transaction.js';
 import { upsertSocial } from '../notifications/notifications.service.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { linkArtistIds, type StoredCredit } from '../artists/artist.service.js';
 import { projectPath } from '../../utils/project-slug.js';
 import Upload from '../uploads/upload.model.js';

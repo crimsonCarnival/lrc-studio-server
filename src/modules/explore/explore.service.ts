@@ -1,7 +1,7 @@
 import Project from '../projects/project.model.js';
-import Playlist from '../../db/playlist.model.js';
-import Follow from '../../db/follow.model.js';
-import User from '../../db/user.model.js';
+import Playlist from '../playlists/playlist.model.js';
+import Follow from '../users/follow.model.js';
+import User from '../users/user.model.js';
 import { getBlockedSet } from '../blocks/block.service.js';
 import { socialGraph } from '../../lib/social-graph.js';
 import mongoose from 'mongoose';

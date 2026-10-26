@@ -7,7 +7,7 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import Notification from './notification.model.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { clearHeap } from '../../lib/notification-heap.js';
 import { listNotifications } from './notifications.service.js';
 import { activityResolvers } from '../../graphql/resolvers/activity.resolvers.js';

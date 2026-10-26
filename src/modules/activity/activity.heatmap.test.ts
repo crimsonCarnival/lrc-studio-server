@@ -13,11 +13,11 @@ vi.mock('../badges/badge.service.js', () => ({
 vi.mock('../../jobs/leaderboard-ranking.job.js', () => ({ recomputeLeaderboardRanking: async () => undefined }));
 vi.mock('../user-logs/logs.service.js', () => ({ logUserAction: () => undefined }));
 
-import Activity from '../../db/activity.model.js';
-import HeatmapDay from '../../db/heatmap-day.model.js';
-import HeatmapProjectEdit from '../../db/heatmap-project-edit.model.js';
+import Activity from './activity.model.js';
+import HeatmapDay from './heatmap-day.model.js';
+import HeatmapProjectEdit from './heatmap-project-edit.model.js';
 import Project from '../projects/project.model.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import { recordHeatmapEvent, getUserActivityHeatmap } from './activity.service.js';
 import { createProject, patchProject } from '../projects/projects.crud.service.js';

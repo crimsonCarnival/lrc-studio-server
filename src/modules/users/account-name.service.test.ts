@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import User from '../../db/user.model.js';
-import AccountNameHistory from '../../db/account-name-history.model.js';
+import User from './user.model.js';
+import AccountNameHistory from './account-name-history.model.js';
 import { findUserByAccountName, isAccountNameInHistoryOfOther, recordAccountNameChange, generateUniqueAccountName, accountNameBase } from './account-name.service.js';
 import { isValidAccountName, isReservedAccountName } from '../auth/auth.validation.js';
 

@@ -14,8 +14,8 @@ vi.mock('../../jobs/leaderboard-ranking.job.js', () => ({ recomputeLeaderboardRa
 vi.mock('../user-logs/logs.service.js', () => ({ logUserAction: () => undefined }));
 vi.mock('../notifications/notifications.service.js', () => ({ upsertSocial: async () => undefined }));
 
-import Artist from '../../db/artist.model.js';
-import User from '../../db/user.model.js';
+import Artist from './artist.model.js';
+import User from '../users/user.model.js';
 import Project from '../projects/project.model.js';
 import ProjectFork from '../projects/project-fork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';

@@ -13,10 +13,10 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import authPlugin from './auth.js';
-import User from '../db/user.model.js';
+import User from '../modules/users/user.model.js';
 import BannedIp from '../modules/admin/banned-ip.model.js';
 import BannedDevice from '../modules/admin/banned-device.model.js';
-import Session from '../db/session.model.js';
+import Session from '../modules/auth/session.model.js';
 
 let mongo: MongoMemoryServer;
 let app: FastifyInstance;

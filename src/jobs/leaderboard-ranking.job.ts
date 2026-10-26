@@ -28,7 +28,7 @@
  */
 
 import mongoose from 'mongoose';
-import User from '../db/user.model.js';
+import User from '../modules/users/user.model.js';
 import Project from '../modules/projects/project.model.js';
 import { getStreakView } from '../modules/badges/badge.service.js';
 

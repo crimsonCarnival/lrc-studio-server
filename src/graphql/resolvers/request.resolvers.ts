@@ -1,7 +1,7 @@
 import mercurius from 'mercurius';
 import { Context } from './context.js';
-import User from '../../db/user.model.js';
-import type { IUser } from '../../db/user.model.js';
+import User from '../../modules/users/user.model.js';
+import type { IUser } from '../../modules/users/user.model.js';
 import type { IStaffRequest } from '../../modules/requests/request.model.js';
 import {
   createRequest,

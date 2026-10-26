@@ -1,5 +1,5 @@
 import { LRUCache } from '@crimson-carnival/ds-js';
-import Block from '../../db/block.model.js';
+import Block from './block.model.js';
 
 interface CacheEntry {
   set: Set<string>;

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import User from '../../db/user.model.js';
+import User from './user.model.js';
 import { generateUniqueAccountName } from './account-name.service.js';
 
 export interface BackfillOptions {

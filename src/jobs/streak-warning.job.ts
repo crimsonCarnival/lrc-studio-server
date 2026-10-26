@@ -19,8 +19,8 @@
  */
 
 import mongoose from 'mongoose';
-import User from '../db/user.model.js';
-import UserPreferences from '../db/user-preferences.model.js';
+import User from '../modules/users/user.model.js';
+import UserPreferences from '../modules/user-preferences/user-preferences.model.js';
 import Project from '../modules/projects/project.model.js';
 import { notifyStreakWarning } from '../modules/notifications/notifications.service.js';
 

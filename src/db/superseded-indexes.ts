@@ -1,7 +1,7 @@
 import type { Collection } from 'mongoose';
 import Project from '../modules/projects/project.model.js';
-import Playlist from './playlist.model.js';
-import User from './user.model.js';
+import Playlist from '../modules/playlists/playlist.model.js';
+import User from '../modules/users/user.model.js';
 
 type IndexKey = Record<string, 1 | -1>;
 

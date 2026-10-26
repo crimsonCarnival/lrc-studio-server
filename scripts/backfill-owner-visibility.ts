@@ -16,9 +16,9 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import User from '../src/db/user.model.js';
+import User from '../src/modules/users/user.model.js';
 import Project from '../src/modules/projects/project.model.js';
-import Playlist from '../src/db/playlist.model.js';
+import Playlist from '../src/modules/playlists/playlist.model.js';
 import {
   computeOwnerVisibility,
   VISIBLE_OWNER_SELECT,

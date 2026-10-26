@@ -3,7 +3,7 @@ import type { AuthenticationResponseJSON } from '@simplewebauthn/server';
 import * as adminService from './admin.service.js';
 import * as authService from '../auth/auth.service.js';
 import { getIO } from '../../socket/socket.manager.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { getEnv } from '../../config/env.js';
 
 /** Issue the short-lived admin sudo grant cookie. (F24) */

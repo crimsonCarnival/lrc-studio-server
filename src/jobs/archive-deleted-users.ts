@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import User from '../db/user.model.js';
+import User from '../modules/users/user.model.js';
 
 // UserArchive uses an empty schema with strict: false so it can store any shape
 // of user document without requiring a mirrored schema definition. This is

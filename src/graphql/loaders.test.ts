@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Boost from '../db/boost.model.js';
-import Follow from '../db/follow.model.js';
-import User from '../db/user.model.js';
+import Boost from '../modules/projects/boost.model.js';
+import Follow from '../modules/users/follow.model.js';
+import User from '../modules/users/user.model.js';
 import { hasTimedWord, loaders } from './loaders.js';
 
 type Obj = Record<string, unknown>;

@@ -1,6 +1,6 @@
 import mongoose, { type Document, type Model } from "mongoose";
 import argon2 from "argon2";
-import { ROLES, type Role } from "../shared/permissions.js";
+import { ROLES, type Role } from "../../shared/permissions.js";
 
 // Argon2id parameters — OWASP recommended minimums for interactive logins.
 // Argon2id is the hybrid variant: resistant to GPU/ASIC brute-force AND
@@ -569,7 +569,7 @@ userSchema.methods.checkBanStatus = async function (
     // Failure must not break the request that happened to trigger the expiry —
     // the next sync (or the backfill script) repairs it.
     try {
-      const { syncOwnerVisibility } = await import('../modules/users/owner-visibility.service.js');
+      const { syncOwnerVisibility } = await import('./owner-visibility.service.js');
       await syncOwnerVisibility(this._id);
     } catch { /* non-fatal: flags converge on the next visibility transition */ }
 

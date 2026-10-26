@@ -14,7 +14,7 @@ export interface ILevelRequirements {
   totalProjects?: number;
 }
 
-import type { LocalizedString } from '../modules/badges/badge-definition.model.js';
+import type { LocalizedString } from '../badges/badge-definition.model.js';
 
 export interface IAddictionLevel extends Document {
   /** Unique slug-style ID, e.g. "tone_deaf" */

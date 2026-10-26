@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import User, { type IUser } from '../../db/user.model.js';
+import User, { type IUser } from '../users/user.model.js';
 import { ROLE_PRESETS } from '../../shared/permissions.js';
 import { logAdminAction } from '../admin/admin.service.js';
 import { getEnv } from '../../config/env.js';

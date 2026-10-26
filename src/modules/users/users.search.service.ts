@@ -1,4 +1,4 @@
-import User from '../../db/user.model.js';
+import User from './user.model.js';
 
 type SearchUserDoc = {
   _id: { toString(): string };

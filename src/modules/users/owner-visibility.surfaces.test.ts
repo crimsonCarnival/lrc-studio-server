@@ -25,11 +25,11 @@ vi.mock('../activity/activity.service.js', async (orig) => ({
   recordHeatmapEvent: async () => undefined,
 }));
 
-import User from '../../db/user.model.js';
+import User from './user.model.js';
 import Project from '../projects/project.model.js';
-import Playlist from '../../db/playlist.model.js';
-import Follow from '../../db/follow.model.js';
-import Activity from '../../db/activity.model.js';
+import Playlist from '../playlists/playlist.model.js';
+import Follow from './follow.model.js';
+import Activity from '../activity/activity.model.js';
 import { getProject } from '../projects/projects.crud.service.js';
 import { getTrendingProjects, getPopularPlaylists, getExploreStats, invalidateExploreStatsCache } from '../explore/explore.service.js';
 import { getFeed } from '../activity/activity.service.js';

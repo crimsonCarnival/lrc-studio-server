@@ -1,7 +1,7 @@
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
-import Playlist from '../../db/playlist.model.js';
-import User from '../../db/user.model.js';
+import Playlist from '../playlists/playlist.model.js';
+import User from '../users/user.model.js';
 import { getEnv } from '../../config/env.js';
 import { projectPath } from '../../utils/project-slug.js';
 import { isReservedAccountName } from '../auth/auth.validation.js';

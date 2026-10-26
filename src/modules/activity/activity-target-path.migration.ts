@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
-import Activity from '../../db/activity.model.js';
+import Activity from './activity.model.js';
 import Project from '../projects/project.model.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { projectPath } from '../../utils/project-slug.js';
 
 export interface BackfillOptions {

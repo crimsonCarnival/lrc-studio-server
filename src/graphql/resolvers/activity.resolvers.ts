@@ -1,4 +1,4 @@
-import User from '../../db/user.model.js';
+import User from '../../modules/users/user.model.js';
 import { getFeed, getUserActivity, getUserActivityHeatmap } from '../../modules/activity/activity.service.js';
 import { Context } from './context.js';
 

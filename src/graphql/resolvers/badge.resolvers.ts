@@ -1,5 +1,5 @@
-import User from '../../db/user.model.js';
-import type { IUser, IUserBadge } from '../../db/user.model.js';
+import User from '../../modules/users/user.model.js';
+import type { IUser, IUserBadge } from '../../modules/users/user.model.js';
 import { Context } from './context.js';
 import { requirePermission, requireStaff } from './auth-guards.js';
 import { logAdminAction } from '../../modules/admin/admin.service.js';

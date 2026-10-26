@@ -4,8 +4,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 
 vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Error('no socket'); } }));
 
-import User from '../../db/user.model.js';
-import Playlist from '../../db/playlist.model.js';
+import User from '../users/user.model.js';
+import Playlist from '../playlists/playlist.model.js';
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import {

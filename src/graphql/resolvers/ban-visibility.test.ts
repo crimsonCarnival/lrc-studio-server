@@ -53,11 +53,11 @@ vi.mock('../../modules/users/music-library.service.js', () => ({
   upsertMusicLibraryEntry: async () => undefined,
 }));
 
-import User from '../../db/user.model.js';
+import User from '../../modules/users/user.model.js';
 import Project from '../../modules/projects/project.model.js';
 import ProjectStar from '../../modules/projects/project-star.model.js';
-import Block from '../../db/block.model.js';
-import Follow from '../../db/follow.model.js';
+import Block from '../../modules/blocks/block.model.js';
+import Follow from '../../modules/users/follow.model.js';
 import AdminLog from '../../modules/admin/admin-log.model.js';
 import { blockUser } from '../../modules/blocks/block.service.js';
 import { userResolvers } from './user.resolvers.js';

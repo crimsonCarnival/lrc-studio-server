@@ -13,7 +13,7 @@
 
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import User from '../src/db/user.model.js';
+import User from '../src/modules/users/user.model.js';
 import { recomputeSyncStats } from '../src/modules/badges/badge.service.js';
 
 const MONGO_URI = process.env.MONGODB_URI ?? process.env.MONGO_URI ?? '';

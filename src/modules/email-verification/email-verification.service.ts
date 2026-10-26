@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import User from '../../db/user.model.js';
-import EmailVerification from '../../db/email-verification.model.js';
-import EmailHistory from '../../db/email-history.model.js';
+import User from '../users/user.model.js';
+import EmailVerification from './email-verification.model.js';
+import EmailHistory from '../users/email-history.model.js';
 import { sendVerificationEmail } from '../email/email.service.js';
 import Settings from '../settings/settings.model.js';
 import { getEnv } from '../../config/env.js';

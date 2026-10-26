@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import Project from '../modules/projects/project.model.js';
-import Playlist from './playlist.model.js';
-import User from './user.model.js';
+import Playlist from '../modules/playlists/playlist.model.js';
+import User from '../modules/users/user.model.js';
 import { dropSupersededIndexes } from './superseded-indexes.js';
 
 let mem: MongoMemoryServer;

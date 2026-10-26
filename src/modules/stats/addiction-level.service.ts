@@ -1,7 +1,7 @@
 import AddictionLevel, {
   type IAddictionLevel,
   type ILevelRequirements,
-} from '../../db/addiction-level.model.js';
+} from './addiction-level.model.js';
 import SeedMarker from '../../db/seed-marker.model.js';
 
 // ─── Default seed data ────────────────────────────────────────────────────────

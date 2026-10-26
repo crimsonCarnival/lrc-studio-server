@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import AdminLog from './admin-log.model.js';
 import RolePermissionsConfig from './role-permissions-config.model.js';
 import { ROLE_PRESETS } from '../../shared/permissions.js';

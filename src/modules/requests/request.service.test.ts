@@ -4,7 +4,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 
 vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Error('no socket'); } }));
 
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import StaffRequest from './request.model.js';
 import BadgeDefinition from '../badges/badge-definition.model.js';
 import AdminLog from '../admin/admin-log.model.js';

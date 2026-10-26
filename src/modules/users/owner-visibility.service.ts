@@ -84,9 +84,9 @@ export async function syncOwnerVisibility(
   userId: string | mongoose.Types.ObjectId,
 ): Promise<OwnerVisibility | null> {
   const [{ default: User }, { default: Project }, { default: Playlist }] = await Promise.all([
-    import('../../db/user.model.js'),
+    import('./user.model.js'),
     import('../projects/project.model.js'),
-    import('../../db/playlist.model.js'),
+    import('../playlists/playlist.model.js'),
   ]);
 
   const user = await User.findById(userId)
@@ -117,7 +117,7 @@ export async function visibilityForNewContent(
   // and let the content's own `public` flag decide.
   if (!userId) return { ownerActive: true, ownerListed: true };
 
-  const { default: User } = await import('../../db/user.model.js');
+  const { default: User } = await import('./user.model.js');
   const user = await User.findById(userId)
     .select(VISIBLE_OWNER_SELECT)
     .lean<VisibilitySource | null>();

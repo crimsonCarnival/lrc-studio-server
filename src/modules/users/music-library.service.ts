@@ -1,4 +1,4 @@
-import User from '../../db/user.model.js';
+import User from './user.model.js';
 
 interface MusicLibraryEntry {
   artist: string;

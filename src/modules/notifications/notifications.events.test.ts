@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import Notification from './notification.model.js';
-import Follow from '../../db/follow.model.js';
-import UserPreferences from '../../db/user-preferences.model.js';
+import Follow from '../users/follow.model.js';
+import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { invalidatePreferences } from '../user-preferences/user-preferences.service.js';
 import {
   notifyFollowedProject,

@@ -1,9 +1,9 @@
 import mongoose from 'mongoose';
-import Reaction from '../../db/reaction.model.js';
+import Reaction from './reaction.model.js';
 import { isValidReaction } from './reaction.emoji.js';
 import { getIO } from '../../socket/socket.manager.js';
 import Project from '../projects/project.model.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { upsertReaction } from '../notifications/notifications.service.js';
 
 export interface ReactionSummary {

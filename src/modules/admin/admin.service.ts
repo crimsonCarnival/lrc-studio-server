@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { notifyAppealResult } from '../notifications/notifications.events.js';
-import Session from '../../db/session.model.js';
+import Session from '../auth/session.model.js';
 import BannedIp from './banned-ip.model.js';
 import BannedDevice from './banned-device.model.js';
 import UserDevice from '../auth/user-device.model.js';
@@ -13,7 +13,7 @@ import { createOnce, notifyRoleChanged, notifyXpChanged, notifyUnban } from '../
 import { sendBanEmail } from '../email/email.service.js';
 import Settings from '../settings/settings.model.js';
 import { getIO } from '../../socket/socket.manager.js';
-import type { IUser } from '../../db/user.model.js';
+import type { IUser } from '../users/user.model.js';
 import { PERMISSIONS, ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole, type Permission, type Role } from '../../shared/permissions.js';
 import JobLog from '../../db/job-log.model.js';
 import { getOnlineUserIds } from '../../socket/presence.js';

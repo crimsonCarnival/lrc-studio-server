@@ -4,8 +4,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 
 vi.mock('../socket/socket.manager.js', () => ({ getIO: () => { throw new Error('no socket'); } }));
 
-import User from '../db/user.model.js';
-import UserPreferences from '../db/user-preferences.model.js';
+import User from '../modules/users/user.model.js';
+import UserPreferences from '../modules/user-preferences/user-preferences.model.js';
 import Notification from '../modules/notifications/notification.model.js';
 import Project from '../modules/projects/project.model.js';
 import { sendStreakWarnings } from './streak-warning.job.js';

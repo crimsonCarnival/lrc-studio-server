@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import User from '../db/user.model.js';
+import User from '../modules/users/user.model.js';
 import { resetLapsedStreaks } from './streak-lapse.job.js';
 import { getStreakView } from '../modules/badges/badge.service.js';
 

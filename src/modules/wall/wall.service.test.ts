@@ -2,11 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import User from '../../db/user.model.js';
-import Block from '../../db/block.model.js';
+import User from '../users/user.model.js';
+import Block from '../blocks/block.model.js';
 import { invalidateBlockCache } from '../blocks/block-list.cache.js';
 import Notification from '../notifications/notification.model.js';
-import UserPreferences from '../../db/user-preferences.model.js';
+import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { updatePreferences } from '../user-preferences/user-preferences.service.js';
 import { WallComment, WallSubscription } from './wall.models.js';
 import { addComment, deleteComment, getWall, setSubscription, WallError } from './wall.service.js';

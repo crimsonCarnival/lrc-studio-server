@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import JobLog from '../../db/job-log.model.js';
 import Project from '../projects/project.model.js';
 import { listJobLogs } from './admin.service.js';

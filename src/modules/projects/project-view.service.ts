@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import Project from './project.model.js';
-import ProjectView from '../../db/project-view.model.js';
+import ProjectView from './project-view.model.js';
 
 /** Upper bound on a client-supplied device id before it becomes an index key. */
 const MAX_DEVICE_ID_LENGTH = 128;

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { isValidReaction, REACTION_MAX_LENGTH } from '../modules/reactions/reaction.emoji.js';
+import { isValidReaction, REACTION_MAX_LENGTH } from './reaction.emoji.js';
 
 export interface IReaction {
   userId: mongoose.Types.ObjectId;

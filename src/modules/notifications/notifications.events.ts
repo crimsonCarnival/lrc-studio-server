@@ -1,11 +1,11 @@
 import mongoose from 'mongoose';
 import Notification, { type INotification, type NotificationType } from './notification.model.js';
-import Follow from '../../db/follow.model.js';
+import Follow from '../users/follow.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { enqueueNotif, enqueueNotifIfLoaded } from '../../lib/notification-heap.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { getCachedBlockedSet } from '../blocks/block-list.cache.js';
-import type { INotificationPrefs } from '../../db/user-preferences.model.js';
+import type { INotificationPrefs } from '../user-preferences/user-preferences.model.js';
 
 /**
  * Notifications for events that have no module of their own: a followed user's project, a

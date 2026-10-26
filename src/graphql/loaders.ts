@@ -1,11 +1,11 @@
 import { MercuriusLoaders } from 'mercurius';
 import type { MercuriusContext } from 'mercurius';
-import User from '../db/user.model.js';
+import User from '../modules/users/user.model.js';
 import Upload from '../modules/uploads/upload.model.js';
 import Lyrics from '../modules/lyrics/lyrics.model.js';
 import ProjectStar from '../modules/projects/project-star.model.js';
-import Boost from '../db/boost.model.js';
-import Follow from '../db/follow.model.js';
+import Boost from '../modules/projects/boost.model.js';
+import Follow from '../modules/users/follow.model.js';
 import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
 

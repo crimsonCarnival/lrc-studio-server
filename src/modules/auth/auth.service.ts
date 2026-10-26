@@ -2,9 +2,9 @@ import type { FastifyLoggerInstance } from 'fastify';
 import crypto from 'crypto';
 import { notifyNewDevice } from '../notifications/notifications.events.js';
 import { UAParser } from 'ua-parser-js';
-import User from '../../db/user.model.js';
-import type { IUser } from '../../db/user.model.js';
-import Session from '../../db/session.model.js';
+import User from '../users/user.model.js';
+import type { IUser } from '../users/user.model.js';
+import Session from './session.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { logUserAction } from '../user-logs/logs.service.js';
 import { registerAtomically, loginAtomically } from './auth.tx.service.js';
@@ -16,7 +16,7 @@ import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.
 import { isAccountNameInHistoryOfOther, recordAccountNameChange } from '../users/account-name.service.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
 import { createOnce, resolveSticky } from '../notifications/notifications.service.js';
-import Passkey from '../../db/passkey.model.js';
+import Passkey from './passkey.model.js';
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,

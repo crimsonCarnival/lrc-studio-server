@@ -7,7 +7,7 @@ vi.mock('../../config/env.js', () => ({
   getEnv: () => ({ SUPERADMIN_EMAIL: mockSuperadminEmail }),
 }));
 
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import AdminLog from '../admin/admin-log.model.js';
 import { ROLE_PRESETS } from '../../shared/permissions.js';
 import { grantSuperadminIfEnvMatch, syncSuperadminEmailGrant, isSuperadminEmail } from './superadmin-env.service.js';

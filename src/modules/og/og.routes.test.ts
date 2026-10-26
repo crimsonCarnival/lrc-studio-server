@@ -14,7 +14,7 @@ process.env.COOKIE_SECRET ||= 'test-cookie-secret-value-not-used-here';
 process.env.CLOUDINARY_CLOUD_NAME ||= 'testcloud';
 process.env.OG_API_ORIGIN ||= 'https://api.lrcstudio.app';
 
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import ogRoutes from './og.routes.js';

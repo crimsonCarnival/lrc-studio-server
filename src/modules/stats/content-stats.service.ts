@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { getAddictionLevel } from './addiction-level.service.js';
 import { getStreakView } from '../badges/badge.service.js';
 

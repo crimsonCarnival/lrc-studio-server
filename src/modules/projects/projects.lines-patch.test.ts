@@ -15,7 +15,7 @@ vi.mock('../user-logs/logs.service.js', () => ({ logUserAction: () => undefined 
 
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
-import User from '../../db/user.model.js';
+import User from '../users/user.model.js';
 import { createProject, patchProject } from './projects.crud.service.js';
 
 // Covers the `lines` array shape added to the positional lyrics patch:
