@@ -151,6 +151,8 @@ export const userSchema = `
     # Unlike User.role it never says "user" and is safe on public surfaces.
     staffRole: String
     isFollowedByMe: Boolean!
+    # False when this user switched tagging off (preferences.allowTags).
+    allowsTags: Boolean!
     # Profile summary for result rows. Null on surfaces that do not load it
     # (only searchUsers does today), so clients must treat absence as "unknown".
     level: Int

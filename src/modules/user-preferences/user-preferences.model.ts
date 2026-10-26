@@ -37,6 +37,8 @@ export interface IUserPreferences {
   showXpProgress: boolean;
   // Whether other people can leave comments on this user's profile wall.
   wallEnabled: boolean;
+  // Whether other people can tag this user in comments. Never limits whom they tag.
+  allowTags: boolean;
   notifications: INotificationPrefs;
 }
 
@@ -71,6 +73,7 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   showActivityHeatmap:      { type: Boolean, default: false },
   showXpProgress:           { type: Boolean, default: false },
   wallEnabled:              { type: Boolean, default: true },
+  allowTags:                { type: Boolean, default: true },
   notifications:           { type: notifPrefsSchema, default: () => ({}) },
 }, { timestamps: true, collection: 'user_preferences' });
 

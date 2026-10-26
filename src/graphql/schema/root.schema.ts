@@ -155,6 +155,7 @@ export const rootSchema = `
     showActivityHeatmap: Boolean!
     showXpProgress: Boolean!
     wallEnabled: Boolean!
+    allowTags: Boolean!
     notifications: NotificationPreferences!
   }
 
@@ -189,6 +190,7 @@ export const rootSchema = `
     showActivityHeatmap: Boolean
     showXpProgress: Boolean
     wallEnabled: Boolean
+    allowTags: Boolean
     notifications: NotificationPreferencesInput
   }
 

@@ -11,6 +11,7 @@ import mongoose from 'mongoose';
 import User from '../users/user.model.js';
 import Project from '../projects/project.model.js';
 import Upload from '../uploads/upload.model.js';
+import UserPreferences from '../user-preferences/user-preferences.model.js';
 
 export const MAX_TAGS_PER_COMMENT = 10;
 
@@ -42,12 +43,22 @@ export function parseTags(body: string): CommentTags {
   return { userIds: [...userIds], projectIds: [...projectIds] };
 }
 
+export type TagCheck = 'ok' | 'invalid' | 'not_allowed';
+
 /**
- * The tags `authorId` may write: every user must exist (and not be deleted), every project
- * must exist and be visible to the author (public, or their own). Returns false otherwise,
- * so a forged or stale token rejects the comment instead of being stored.
+ * Whether `authorId` may write these tags. 'invalid': a user that doesn't exist (or was
+ * deleted), a project that doesn't exist or isn't visible to the author (public, or their
+ * own), or too many tags; a forged or stale token rejects the comment instead of being
+ * stored. 'not_allowed': someone other than the author switched tagging off.
  */
-export async function tagsAreValid(authorId: string, tags: CommentTags): Promise<boolean> {
+export async function checkTags(authorId: string, tags: CommentTags): Promise<TagCheck> {
+  if (!(await tagsExist(authorId, tags))) return 'invalid';
+  const others = tags.userIds.filter((id) => id !== authorId);
+  if (others.length && await UserPreferences.exists({ userId: { $in: others }, allowTags: false })) return 'not_allowed';
+  return 'ok';
+}
+
+async function tagsExist(authorId: string, tags: CommentTags): Promise<boolean> {
   if (tags.userIds.length + tags.projectIds.length > MAX_TAGS_PER_COMMENT) return false;
   if (tags.userIds.some((id) => !mongoose.isValidObjectId(id))) return false;
   const [users, projects] = await Promise.all([

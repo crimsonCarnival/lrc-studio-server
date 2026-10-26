@@ -39,6 +39,7 @@ import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import { socialGraph } from '../../lib/social-graph.js';
 import { getPreferences, updatePreferences } from '../../modules/user-preferences/user-preferences.service.js';
 import { isCountryCode } from '../../utils/countries.js';
+import UserPreferences from '../../modules/user-preferences/user-preferences.model.js';
 import type { IUserPreferences } from '../../modules/user-preferences/user-preferences.model.js';
 
 /** Input shape for updateProfile mutation */
@@ -582,6 +583,12 @@ export const userResolvers = {
           myFollows.forEach(f => myFollowedSet.add(f.followingId.toString()));
         }
 
+        // Who on this page switched tagging off, in one query (the wall's @ list reads it).
+        const untaggable = new Set(
+          (await UserPreferences.find({ userId: { $in: followingIds }, allowTags: false }).select('userId').lean())
+            .map(p => p.userId.toString()),
+        );
+
         return {
           users: users.filter(u => !blockedSet.has(u._id.toString())).map(u => ({
             id: u._id.toString(),
@@ -589,6 +596,7 @@ export const userResolvers = {
             displayName: u.displayName ?? null,
             avatarUrl: u.avatarUrl ?? null,
             isFollowedByMe: myFollowedSet.has(u._id.toString()),
+            allowsTags: !untaggable.has(u._id.toString()),
           })),
           total: user.social?.followingCount ?? 0,
         };
@@ -1139,15 +1147,21 @@ function asViewer<R>(resolver: UserFieldResolver<R>): UserFieldResolver<R> {
     resolver(user, args, user.asVisitor ? { ...context, userId: null } : context);
 }
 
-// FollowUser rows carry no IP, so country loads it here and then defers to the
-// one User.country resolver: the visibility rules must not exist in two places.
+// FollowUser rows are plain objects, so country loads the user and defers to the one
+// User.country resolver: the visibility rules must not exist in two places.
 // Costs a few queries per row, which is why only the search results page asks for it.
 export const followUserResolvers = {
   country: async (parent: { id?: string }, args: unknown, context: Context) => {
     if (!parent.id || !mongoose.isValidObjectId(parent.id)) return null;
-    const user = await User.findById(parent.id).select('lastIp').lean<IUser>();
+    const user = await User.findById(parent.id).select('_id').lean<IUser>();
     if (!user) return null;
     return userResolvers.User.country(user, args, context);
+  },
+  // followList fills this in for a whole page with one query; other lists fall back per row.
+  allowsTags: async (parent: { id?: string; allowsTags?: boolean }) => {
+    if (typeof parent.allowsTags === 'boolean') return parent.allowsTags;
+    if (!parent.id || !mongoose.isValidObjectId(parent.id)) return false;
+    return (await getPreferences(parent.id)).allowTags !== false;
   },
 };
 

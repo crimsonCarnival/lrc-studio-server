@@ -179,6 +179,13 @@ describe('tags', () => {
     expect(await Notification.countDocuments({ userId: owner, type: 'wall_comment' })).toBe(1);
   });
 
+  it('refuses to tag someone who switched tags off, but still lets them tag others and themselves', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    await updatePreferences(owner, { allowTags: false });
+    expect(await codeOf(() => addComment(a, 'sam', `@[u:${owner}] hi`))).toBe('tag_not_allowed');
+    expect(await codeOf(() => addComment(owner, 'sam', `@[u:${a}] and @[u:${owner}]`))).toBe('none');
+  });
+
   it('does not notify you for tagging yourself', async () => {
     const a = await mkUser('ann');
     await mkUser('sam');

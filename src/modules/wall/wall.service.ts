@@ -8,7 +8,7 @@ import { getBlockedSet, isBlockedEitherWay } from '../blocks/block.service.js';
 import { hasPermission } from '../../shared/permissions.js';
 import { stripHtml } from '../../utils/sanitize.js';
 import { notifyWallComment, notifyMention } from '../notifications/notifications.events.js';
-import { parseTags, tagsAreValid, resolveTags, tagsOf } from './wall-mentions.js';
+import { parseTags, checkTags, resolveTags, tagsOf } from './wall-mentions.js';
 import type { WallMention, WallProjectRef } from './wall-mentions.js';
 
 const PAGE_SIZE = 20;
@@ -21,7 +21,7 @@ const MAX_SUBSCRIBER_FANOUT = 500;
 
 /** The error codes the resolvers pass on; the client maps each to a message. */
 export class WallError extends Error {
-  constructor(public code: 'not_found' | 'wall_disabled' | 'forbidden' | 'invalid_body' | 'rate_limited' | 'max_depth') {
+  constructor(public code: 'not_found' | 'wall_disabled' | 'forbidden' | 'invalid_body' | 'rate_limited' | 'max_depth' | 'tag_not_allowed') {
     super(code);
   }
 }
@@ -175,9 +175,12 @@ export async function addComment(
 
   const body = stripHtml(rawBody ?? '').trim();
   if (body.length < 1 || body.length > WALL_MAX_LENGTH) throw new WallError('invalid_body');
-  // A forged, stale or out-of-reach tag (someone else's private project) rejects the comment.
+  // A forged, stale or out-of-reach tag (someone else's private project) rejects the comment,
+  // and so does tagging someone who switched tags off.
   const tags = parseTags(body);
-  if (!(await tagsAreValid(authorId, tags))) throw new WallError('invalid_body');
+  const tagCheck = await checkTags(authorId, tags);
+  if (tagCheck === 'invalid') throw new WallError('invalid_body');
+  if (tagCheck === 'not_allowed') throw new WallError('tag_not_allowed');
 
   const recent = await WallComment.countDocuments({ authorId: oid(authorId), createdAt: { $gte: new Date(Date.now() - RATE_LIMIT_WINDOW_MS) } });
   if (recent >= RATE_LIMIT_COUNT) throw new WallError('rate_limited');
