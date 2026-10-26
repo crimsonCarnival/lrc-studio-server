@@ -1,7 +1,8 @@
 import Upload from '../../modules/uploads/upload.model.js';
 import Project from '../../modules/projects/project.model.js';
-import { fetchYouTubeTitle } from '../../utils/youtube.js';
+import { createMedia } from '../../modules/uploads/uploads.service.js';
 import { Context } from './context.js';
+import { canViewPrivateContent } from './auth-guards.js';
 import { triggerBadgeCheck } from '../../modules/badges/badge.service.js';
 
 export interface SaveMediaInput {
@@ -18,6 +19,9 @@ export interface UploadDoc {
   createdAt?: Date | string;
   updatedAt?: Date | string;
 }
+
+const GENERIC_TITLES = ['Sin título', 'Untitled', '無題', 'test'];
+const MAX_UPLOADS_PAGE = 100;
 
 export const uploadResolvers = {
   Query: {
@@ -39,35 +43,24 @@ export const uploadResolvers = {
       if (!context.userId) return [];
       return Upload.find({ userId: context.userId })
         .sort({ updatedAt: -1 })
-        .skip(offset)
-        .limit(limit);
+        .skip(Math.max(0, offset))
+        .limit(Math.min(Math.max(1, limit), MAX_UPLOADS_PAGE));
     },
   },
 
   Mutation: {
-    // Uses upsert to deduplicate by source+URL, matching the REST service behavior
+    // Delegates to the upload service so this path gets its field mapping and
+    // URL validation (YouTube pattern, our Cloudinary account, audio extension,
+    // publicId folder). The old inline version spread the raw input into the
+    // upsert and accepted anonymous callers.
     saveMedia: async (_root: unknown, { input }: { input: SaveMediaInput }, context: Context) => {
-      const { source, uploadUrl } = input;
+      if (!context.userId) throw new Error('Unauthorized');
+      if (input.source !== 'youtube' && input.source !== 'cloudinary') throw new Error('Invalid media source');
 
-      // Auto-resolve or refresh the title from the YouTube API
-      let resolvedTitle = input.title || '';
-      const isGeneric = !resolvedTitle || ['Sin título', 'Untitled', '無題', 'test'].includes(resolvedTitle);
-
-      if (source === 'youtube' && uploadUrl && isGeneric) {
-        const fetched = await fetchYouTubeTitle(uploadUrl);
-        if (fetched) resolvedTitle = fetched;
-      }
-
-      const query: Record<string, unknown> = { userId: context.userId || null, source };
-      if (source === 'youtube' && uploadUrl) query.uploadUrl = uploadUrl;
-      else if (source === 'cloudinary' && uploadUrl) query.uploadUrl = uploadUrl;
-
-      const upload = await Upload.findOneAndUpdate(
-        query,
-        { ...input, title: resolvedTitle, userId: context.userId || null },
-        { upsert: true, returnDocument: 'after' }
-      );
-      if (context.userId) triggerBadgeCheck(context.userId, 'upload_create').catch(() => {});
+      // Placeholder titles are treated as missing so the service fetches the real one.
+      const isGeneric = !input.title || GENERIC_TITLES.includes(input.title);
+      const upload = await createMedia(context.userId, { ...input, title: isGeneric ? '' : input.title });
+      triggerBadgeCheck(context.userId, 'upload_create').catch(() => {});
       return upload;
     },
 
@@ -82,10 +75,17 @@ export const uploadResolvers = {
     id: (upload: UploadDoc) => upload._id?.toString() || upload.id || null,
     createdAt: (upload: UploadDoc) => upload.createdAt ? new Date(upload.createdAt).toISOString() : null,
     updatedAt: (upload: UploadDoc) => upload.updatedAt ? new Date(upload.updatedAt).toISOString() : null,
-    projects: async (upload: UploadDoc) => {
+    // Forks copy the source's uploadId, so this list spans users. It is reachable
+    // from any public project's `upload` edge, so private projects are filtered
+    // to the viewer's own (or all, for users.view staff).
+    projects: async (upload: UploadDoc, _args: unknown, context: Context) => {
       const uploadId = upload._id ?? upload.id;
       if (!uploadId) return [];
-      return Project.find({ uploadId: String(uploadId) }).sort({ updatedAt: -1 });
+      const filter: Record<string, unknown> = { uploadId: String(uploadId) };
+      if (!(await canViewPrivateContent(context))) {
+        filter.$or = context.userId ? [{ public: true }, { userId: context.userId }] : [{ public: true }];
+      }
+      return Project.find(filter).sort({ updatedAt: -1 });
     }
   },
 };

@@ -248,17 +248,10 @@ describe('adminShadowBan — authorization', () => {
   });
 
   /**
-   * FINDING B — the GraphQL shadow-ban path skips the sudo requirement.
-   *
-   * REST declares `[perm('users.shadowban'), sudo]` (admin.routes.ts:41-42);
-   * the resolvers call only requirePermission and never read context.hasSudo,
-   * which the context already supplies and request.service.ts:244 already
-   * demonstrates checking. A hijacked staff session can shadow-ban without
-   * re-authenticating — exactly the drift the duplicated authz path invites.
-   *
-   * Remove the `.fails` markers once both resolvers check context.hasSudo.
+   * Shadow-ban via GraphQL requires the same sudo grant as the REST route
+   * (admin.routes.ts), read from context.hasSudo.
    */
-  it.fails('should reject adminShadowBan without a sudo grant (FINDING B)', async () => {
+  it('rejects adminShadowBan without a sudo grant', async () => {
     const admin = await mkUser({ role: 'superadmin', permissions: ['users.shadowban'] });
     const target = await mkUser();
     await expect(
@@ -266,7 +259,7 @@ describe('adminShadowBan — authorization', () => {
     ).rejects.toThrow();
   });
 
-  it.fails('should reject adminUnshadowBan without a sudo grant (FINDING B)', async () => {
+  it('rejects adminUnshadowBan without a sudo grant', async () => {
     const admin = await mkUser({ role: 'superadmin', permissions: ['users.shadowban'] });
     const target = await mkUser({ shadowFeed: true, shadowSearch: true });
     await expect(

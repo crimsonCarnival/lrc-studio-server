@@ -31,6 +31,11 @@ import { upsertMusicLibraryEntry } from '../../modules/users/music-library.servi
 import { joinNames, primaryNames, type ArtistCredit } from '../../utils/artists.js';
 import { projectSlug, projectPath } from '../../utils/project-slug.js';
 import { registerProjectView } from '../../modules/projects/project-view.service.js';
+import { canViewProject } from './auth-guards.js';
+
+// Star/unstar return only what the client reads. Returning the full document
+// let any signed-in user read a private project (lyrics included) by starring it.
+const STAR_RESULT_FIELDS = '_id publicId starCount public userId';
 
 type LibraryMeta = {
   artists?: ArtistCredit[];
@@ -63,6 +68,15 @@ async function activityTargetPath(project: Pick<IProject, 'publicId' | 'slug' | 
     { publicId: project.publicId, slug: project.slug, title: project.title, metadata: project.metadata },
     owner.accountName,
   );
+}
+
+async function evictNonOwnersFromProjectRoom(publicId: string, ownerId: string): Promise<void> {
+  try {
+    const room = `project:${publicId}`;
+    for (const socket of await getIO().in(room).fetchSockets()) {
+      if (socket.data.userId !== ownerId) socket.leave(room);
+    }
+  } catch { /* socket not ready */ }
 }
 
 export const projectResolvers = {
@@ -181,6 +195,9 @@ export const projectResolvers = {
         throw statusErr;
       }
       const patched = result as { project: unknown };
+      // Before the broadcast: viewers admitted while it was public must not
+      // receive this update (or any later one) once it is private.
+      if (input.public === false && context.userId) await evictNonOwnersFromProjectRoom(id, context.userId);
       emitProjectUpdated(id, input, context.socketId);
       try {
         if (context.socketId) {
@@ -258,8 +275,10 @@ export const projectResolvers = {
         err.status = 401;
         throw err;
       }
-      const project = await Project.findOne({ publicId: id }).select('publicId userId title coverImage slug metadata').lean<IProject>();
-      if (!project || await isHiddenByBlock(context.userId, ownerIdOf(project))) throw new Error('Project not found');
+      const project = await Project.findOne({ publicId: id }).select('publicId userId public title coverImage slug metadata').lean<IProject>();
+      if (!project || !(await canViewProject(project, context)) || await isHiddenByBlock(context.userId, ownerIdOf(project))) {
+        throw new Error('Project not found');
+      }
 
       let isNewStar = false;
       try {
@@ -309,7 +328,7 @@ export const projectResolvers = {
           targetPath,
         })).catch(() => {});
       }
-      const starred = await Project.findOne({ publicId: id });
+      const starred = await Project.findOne({ publicId: id }).select(STAR_RESULT_FIELDS);
       if (isNewStar && starred) {
         try {
           getIO().to(`project:${id}`).emit('star:update', { publicId: id, starCount: starred.starCount ?? 0 });
@@ -333,7 +352,7 @@ export const projectResolvers = {
           { timestamps: false }
         );
       }
-      const unstarred = await Project.findOne({ publicId: id });
+      const unstarred = await Project.findOne({ publicId: id }).select(STAR_RESULT_FIELDS);
       if (deletedCount > 0 && unstarred) {
         try {
           getIO().to(`project:${id}`).emit('star:update', { publicId: id, starCount: unstarred.starCount ?? 0 });
@@ -396,7 +415,8 @@ export const projectResolvers = {
     ) => registerProjectView({ publicId, userId: ctx.userId, deviceId: ctx.deviceId }),
 
     incrementProjectShare: async (_: unknown, { id }: { id: string }) => {
-      await Project.updateOne({ publicId: id }, { $inc: { shareCount: 1 } }, { timestamps: false });
+      // Public only, like the playlist counters; volume is bounded by the per-IP /graphql limit.
+      await Project.updateOne({ publicId: id, public: true }, { $inc: { shareCount: 1 } }, { timestamps: false });
       return true;
     },
   },
@@ -425,7 +445,8 @@ export const projectResolvers = {
       return !!(await ProjectFork.exists({ sourcepublicId: project.publicId, userId: ctx.userId }));
     },
     // lyrics is fetched by publicId (more reliable than lyricsId in plain objects)
-    lyrics: async (project: IProject) => {
+    lyrics: async (project: IProject, _args: unknown, ctx: Context) => {
+      if (!(await canViewProject(project, ctx))) return null;
       if ((project as IProject & { lyrics?: unknown }).lyrics) return (project as IProject & { lyrics?: unknown }).lyrics;
       if (project.publicId) return Lyrics.findOne({ publicId: project.publicId });
       if (project.lyricsId) return Lyrics.findById(project.lyricsId);

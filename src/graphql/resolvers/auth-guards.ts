@@ -29,6 +29,29 @@ export async function requirePermission(context: Context, required: Permission):
   return { userId: context.userId, role: user.role, permissions: user.permissions ?? [] };
 }
 
+/** Staff holding users.view may see private content, mirroring User.projects. */
+export async function canViewPrivateContent(context: Context): Promise<boolean> {
+  if (!context.userId) return false;
+  const user = await User.findById(context.userId).select('permissions').lean<IUser>();
+  return hasPermission(user?.permissions, 'users.view');
+}
+
+/**
+ * Project objects are reachable through edges (Upload.projects, mutation
+ * payloads, ...) that never passed the top-level `project` query's check, so
+ * anything that exposes project content re-checks visibility here.
+ */
+export async function canViewProject(
+  project: { public?: boolean | null; userId?: unknown },
+  context: Context,
+): Promise<boolean> {
+  if (project.public === true) return true;
+  const raw = project.userId as { _id?: unknown } | string | null | undefined;
+  const ownerId = raw && typeof raw === 'object' && '_id' in raw ? String(raw._id) : raw ? String(raw) : null;
+  if (context.userId && ownerId === context.userId) return true;
+  return canViewPrivateContent(context);
+}
+
 /**
  * Throws 401 if unauthenticated, 403 if the user holds no permission at all.
  * Used for staff-wide reads that back the proposal (staff request) flow, where

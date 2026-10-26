@@ -324,13 +324,15 @@ export const playlistResolvers = {
       return true;
     },
 
+    // Anonymous counters: public lists only, so they cannot be used to probe
+    // or inflate private ones. Volume is bounded by the per-IP /graphql limit.
     incrementPlaylistView: async (_: unknown, { id }: { id: string }) => {
-      await Playlist.updateOne({ _id: id }, { $inc: { viewCount: 1 } }, { timestamps: false });
+      await Playlist.updateOne({ _id: id, isPublic: true }, { $inc: { viewCount: 1 } }, { timestamps: false });
       return true;
     },
 
     incrementPlaylistShare: async (_: unknown, { id }: { id: string }) => {
-      await Playlist.updateOne({ _id: id }, { $inc: { shareCount: 1 } }, { timestamps: false });
+      await Playlist.updateOne({ _id: id, isPublic: true }, { $inc: { shareCount: 1 } }, { timestamps: false });
       return true;
     },
   },

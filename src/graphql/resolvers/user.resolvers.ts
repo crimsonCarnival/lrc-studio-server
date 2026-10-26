@@ -1,3 +1,4 @@
+import mercurius from 'mercurius';
 import mongoose from 'mongoose';
 import User from '../../db/user.model.js';
 import type { IUser, IUserBadge, IUserStats } from '../../db/user.model.js';
@@ -56,6 +57,11 @@ export interface UpdateProfileInput {
  * Upload.user edges that resolve for unauthenticated viewers, so the parent
  * object being present does NOT imply the viewer is authorized to read it.
  */
+/** Same step-up the REST /admin/users/:id/(un)shadowban routes require. */
+function requireSudo(context: Context): void {
+  if (context.hasSudo !== true) throw new mercurius.ErrorWithProps('sudo_required', { code: 'SUDO_REQUIRED' });
+}
+
 async function isSelfOrAdmin(user: IUser, context: Context): Promise<boolean> {
   if (!context.userId) return false;
   const selfId = (user._id ?? user.id)?.toString();
@@ -816,12 +822,14 @@ export const userResolvers = {
 
     adminShadowBan: async (_root: unknown, { userId, feed, search, reason }: { userId: string; feed: boolean; search: boolean; reason?: string | null }, context: Context) => {
       const { userId: adminId } = await requirePermission(context, 'users.shadowban');
+      requireSudo(context);
       const result = await toggleShadowBan(userId, feed, search, reason ?? null, adminId, context.ip);
       return result.success === true;
     },
 
     adminUnshadowBan: async (_root: unknown, { userId }: { userId: string }, context: Context) => {
       const { userId: adminId } = await requirePermission(context, 'users.shadowban');
+      requireSudo(context);
       const result = await toggleShadowBan(userId, false, false, null, adminId, context.ip);
       return result.success === true;
     },
