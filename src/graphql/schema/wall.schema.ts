@@ -36,7 +36,16 @@ export const wallSchema = `
     depth: Int!
     author: WallAuthor!
     canDelete: Boolean!
+    likeCount: Int!
+    likedByMe: Boolean!
+    "For a reply at the deepest level: the sibling it answers (it is listed right after it)."
+    replyToId: ID
     replies: [WallComment!]!
+  }
+
+  type WallLikeResult {
+    liked: Boolean!
+    likeCount: Int!
   }
 
   type Wall {

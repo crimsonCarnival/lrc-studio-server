@@ -1,6 +1,6 @@
 import mercurius from 'mercurius';
 import { Context } from './context.js';
-import { getWall, addComment, deleteComment, setSubscription, WallError } from '../../modules/wall/wall.service.js';
+import { getWall, addComment, deleteComment, setLike, setSubscription, WallError } from '../../modules/wall/wall.service.js';
 
 // The client switches on `extensions.code`, so a WallError keeps its code.
 async function guarded<T>(run: () => Promise<T>): Promise<T> {
@@ -27,6 +27,8 @@ export const wallResolvers = {
       guarded(() => addComment(requireUser(ctx), args.accountName, args.body, args.parentId)),
     deleteWallComment: (_: unknown, args: { id: string }, ctx: Context) =>
       guarded(() => deleteComment(requireUser(ctx), args.id)),
+    setWallCommentLike: (_: unknown, args: { id: string; liked: boolean }, ctx: Context) =>
+      guarded(() => setLike(requireUser(ctx), args.id, args.liked)),
     setWallSubscription: (_: unknown, args: { accountName: string; subscribed: boolean }, ctx: Context) =>
       guarded(() => setSubscription(requireUser(ctx), args.accountName, args.subscribed)),
   },

@@ -8,9 +8,9 @@ import { invalidateBlockCache } from '../blocks/block-list.cache.js';
 import Notification from '../notifications/notification.model.js';
 import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { updatePreferences } from '../user-preferences/user-preferences.service.js';
-import { WallComment, WallSubscription } from './wall.models.js';
+import { WallComment, WallCommentLike, WallSubscription } from './wall.models.js';
 import Project from '../projects/project.model.js';
-import { addComment, deleteComment, getWall, setSubscription, WallError } from './wall.service.js';
+import { addComment, deleteComment, getWall, setLike, setSubscription, WallError } from './wall.service.js';
 
 let mongo: MongoMemoryServer;
 beforeAll(async () => {
@@ -27,7 +27,7 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}), Block.deleteMany({}), Notification.deleteMany({}),
     UserPreferences.deleteMany({}), WallComment.deleteMany({}), WallSubscription.deleteMany({}),
-    Project.deleteMany({}),
+    Project.deleteMany({}), WallCommentLike.deleteMany({}),
   ]);
 });
 
@@ -44,16 +44,31 @@ const codeOf = async (run: () => Promise<unknown>) => {
 };
 
 describe('wall comments and replies', () => {
-  it('nests replies two levels deep and refuses a third', async () => {
+  it('nests replies two levels deep, and puts a reply to the deepest level beside it', async () => {
     const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
     const top = await addComment(a, 'sam', 'first');
     const reply = await addComment(b, 'sam', 'second', top.id);
     const nested = await addComment(a, 'sam', 'third', reply.id);
-    expect(await codeOf(() => addComment(b, 'sam', 'fourth', nested.id))).toBe('max_depth');
+    const later = await addComment(b, 'sam', 'later', reply.id);
+    const answer = await addComment(b, 'sam', 'fourth', nested.id);
+    expect(answer).toMatchObject({ depth: 2, replyToId: nested.id });
 
     const wall = await getWall(owner, 'sam');
     expect(wall.total).toBe(1);
-    expect(wall.comments[0].replies[0].replies[0]).toMatchObject({ body: 'third', depth: 2 });
+    // The answer sits right below the comment it answers, ahead of the older 'later'.
+    expect(wall.comments[0].replies[0].replies.map(r => r.id)).toEqual([nested.id, answer.id, later.id]);
+  });
+
+  it('tells the author of the deepest-level comment that it was answered', async () => {
+    await mkUser('sam');
+    const a = await mkUser('ann'), b = await mkUser('bob');
+    const top = await addComment(a, 'sam', 'first');
+    const reply = await addComment(b, 'sam', 'second', top.id);
+    const nested = await addComment(a, 'sam', 'third', reply.id);
+    await Notification.deleteMany({});
+    await addComment(b, 'sam', 'fourth', nested.id);
+    await new Promise(r => setTimeout(r, 50));
+    expect(await Notification.findOne({ userId: a, type: 'wall_comment' }).lean()).toMatchObject({ meta: { reply: true } });
   });
 
   it('subscribes the author when they comment, and tells the owner and earlier commenters once', async () => {
@@ -127,6 +142,32 @@ describe('wall comments and replies', () => {
     expect(await setSubscription(a, 'sam', false)).toBe(false);
     expect(await WallSubscription.countDocuments({})).toBe(0);
     expect(await setSubscription(owner, 'sam', true)).toBe(false);
+  });
+});
+
+describe('likes', () => {
+  it('counts likes once per person and shows the viewer theirs', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
+    const c = await addComment(a, 'sam', 'hi');
+    expect(await setLike(b, c.id, true)).toEqual({ liked: true, likeCount: 1 });
+    expect(await setLike(b, c.id, true)).toEqual({ liked: true, likeCount: 1 });
+    await setLike(owner, c.id, true);
+
+    expect((await getWall(b, 'sam')).comments[0]).toMatchObject({ likeCount: 2, likedByMe: true });
+    expect((await getWall(a, 'sam')).comments[0]).toMatchObject({ likeCount: 2, likedByMe: false });
+    expect(await setLike(b, c.id, false)).toEqual({ liked: false, likeCount: 1 });
+  });
+
+  it('refuses a like from someone blocked with the author, and drops likes with the comment', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
+    const c = await addComment(a, 'sam', 'hi');
+    await setLike(owner, c.id, true);
+    await Block.create({ blockerId: a, blockedId: b });
+    invalidateBlockCache(a); invalidateBlockCache(b);
+    expect(await codeOf(() => setLike(b, c.id, true))).toBe('forbidden');
+
+    await deleteComment(a, c.id);
+    expect(await WallCommentLike.countDocuments({})).toBe(0);
   });
 });
 

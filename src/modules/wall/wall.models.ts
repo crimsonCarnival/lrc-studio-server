@@ -8,6 +8,9 @@ export interface IWallComment {
   wallUserId: mongoose.Types.ObjectId;
   authorId: mongoose.Types.ObjectId;
   parentId: mongoose.Types.ObjectId | null;
+  /** Set on a reply to a comment already at the deepest level: the reply sits beside it
+   *  (same parent) and is listed right after it. */
+  replyToId?: mongoose.Types.ObjectId | null;
   depth: number;
   body: string;
   createdAt: Date;
@@ -18,6 +21,7 @@ const wallCommentSchema = new mongoose.Schema<IWallComment>(
     wallUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', default: null },
+    replyToId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', default: null },
     depth: { type: Number, required: true, min: 0, max: WALL_MAX_DEPTH, default: 0 },
     body: { type: String, required: true, trim: true, maxlength: WALL_MAX_LENGTH },
   },
@@ -29,6 +33,25 @@ wallCommentSchema.index({ wallUserId: 1, parentId: 1, createdAt: -1 });
 wallCommentSchema.index({ parentId: 1 }, { sparse: true });
 
 export const WallComment = mongoose.model<IWallComment>('WallComment', wallCommentSchema);
+
+/** One person's like on one comment; the count is derived from these rows, never stored. */
+export interface IWallCommentLike {
+  commentId: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
+  createdAt: Date;
+}
+
+const wallCommentLikeSchema = new mongoose.Schema<IWallCommentLike>(
+  {
+    commentId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_comment_likes' },
+);
+
+wallCommentLikeSchema.index({ commentId: 1, userId: 1 }, { unique: true });
+
+export const WallCommentLike = mongoose.model<IWallCommentLike>('WallCommentLike', wallCommentLikeSchema);
 
 export interface IWallSubscription {
   wallUserId: mongoose.Types.ObjectId;

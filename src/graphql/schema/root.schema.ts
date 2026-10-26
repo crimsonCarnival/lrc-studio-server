@@ -78,6 +78,8 @@ export const rootSchema = `
     unfollow(accountName: String!): Boolean!
     addWallComment(accountName: String!, body: String!, parentId: ID): WallComment!
     deleteWallComment(id: ID!): Boolean!
+    "Like (liked: true) or unlike a wall comment. Idempotent."
+    setWallCommentLike(id: ID!, liked: Boolean!): WallLikeResult!
     setWallSubscription(accountName: String!, subscribed: Boolean!): Boolean!
     "What you hear about a followed user's projects: off, uploads or all."
     setFollowNotify(accountName: String!, level: String!): Boolean!

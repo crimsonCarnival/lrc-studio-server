@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import User from '../users/user.model.js';
 import type { IUser } from '../users/user.model.js';
-import { WallComment, WallSubscription, WALL_MAX_DEPTH, WALL_MAX_LENGTH } from './wall.models.js';
+import { WallComment, WallCommentLike, WallSubscription, WALL_MAX_DEPTH, WALL_MAX_LENGTH } from './wall.models.js';
 import type { IWallComment } from './wall.models.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import UserPreferences from '../user-preferences/user-preferences.model.js';
@@ -51,7 +51,29 @@ export interface WallCommentView {
   depth: number;
   author: WallAuthor;
   canDelete: boolean;
+  likeCount: number;
+  likedByMe: boolean;
+  /** The sibling this reply answers, for a reply at the deepest level; otherwise null. */
+  replyToId: string | null;
   replies: WallCommentView[];
+}
+
+/**
+ * Siblings oldest first, except that a reply to a sibling comes right after that sibling
+ * (and after the earlier replies to it), so a conversation at the deepest level reads in order.
+ */
+export function orderSiblings<T extends { id: string; replyToId: string | null }>(siblings: T[]): T[] {
+  const ids = new Set(siblings.map((s) => s.id));
+  const answers = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const s of siblings) {
+    if (s.replyToId && ids.has(s.replyToId)) answers.set(s.replyToId, [...(answers.get(s.replyToId) ?? []), s]);
+    else roots.push(s);
+  }
+  const out: T[] = [];
+  const visit = (s: T) => { out.push(s); for (const a of answers.get(s.id) ?? []) visit(a); };
+  roots.forEach(visit);
+  return out;
 }
 
 export interface WallView {
@@ -133,6 +155,22 @@ export async function getWall(
   const blockedSet = await getBlockedSet(viewerId);
   const resolved = await resolveTags(all.map(c => c.body), viewerId);
 
+  // Like counts for the whole page in one aggregation, and which of them are the viewer's.
+  const commentIds = all.map(c => c._id);
+  const [likeCounts, myLikes] = await Promise.all([
+    commentIds.length
+      ? WallCommentLike.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
+          { $match: { commentId: { $in: commentIds } } },
+          { $group: { _id: '$commentId', n: { $sum: 1 } } },
+        ])
+      : [],
+    viewerId && commentIds.length
+      ? WallCommentLike.find({ commentId: { $in: commentIds }, userId: oid(viewerId) }).select('commentId').lean()
+      : [],
+  ]);
+  const likeCountOf = new Map(likeCounts.map(l => [l._id.toString(), l.n]));
+  const likedByViewer = new Set(myLikes.map(l => l.commentId.toString()));
+
   const build = (c: LeanComment, byParent: Map<string, LeanComment[]>): WallCommentView | null => {
     const author = authorById.get(c.authorId.toString());
     if (!author || author.isDeleted || blockedSet.has(c.authorId.toString())) return null;
@@ -144,7 +182,10 @@ export async function getWall(
       depth: c.depth,
       author: authorView(author, !untaggable.has(c.authorId.toString())),
       canDelete: viewerId === c.authorId.toString() || viewerIsOwner || viewerIsStaff,
-      replies: (byParent.get(c._id.toString()) ?? []).map(r => build(r, byParent)).filter((r): r is WallCommentView => r !== null),
+      likeCount: likeCountOf.get(c._id.toString()) ?? 0,
+      likedByMe: likedByViewer.has(c._id.toString()),
+      replyToId: c.replyToId?.toString() ?? null,
+      replies: orderSiblings((byParent.get(c._id.toString()) ?? []).map(r => build(r, byParent)).filter((r): r is WallCommentView => r !== null)),
     };
   };
   const byParent = new Map<string, LeanComment[]>();
@@ -196,20 +237,29 @@ export async function addComment(
   if (recent >= RATE_LIMIT_COUNT) throw new WallError('rate_limited');
 
   let parent: LeanComment | null = null;
+  // The comment being answered. Usually the parent; for a reply to a comment already at the
+  // deepest level, the new reply sits beside it (same parent, same depth) instead of under it.
+  let answered: LeanComment | null = null;
   let depth = 0;
   if (parentId) {
-    parent = await WallComment.findOne({ _id: parentId, wallUserId: owner._id }).lean<LeanComment>();
-    if (!parent) throw new WallError('not_found');
+    if (!mongoose.isValidObjectId(parentId)) throw new WallError('not_found');
+    answered = await WallComment.findOne({ _id: parentId, wallUserId: owner._id }).lean<LeanComment>();
+    if (!answered) throw new WallError('not_found');
+    parent = answered;
+    if (answered.depth >= WALL_MAX_DEPTH) {
+      parent = answered.parentId ? await WallComment.findById(answered.parentId).lean<LeanComment>() : null;
+      if (!parent) throw new WallError('not_found');
+    }
     depth = parent.depth + 1;
-    if (depth > WALL_MAX_DEPTH) throw new WallError('max_depth');
     // Replying to someone who blocked you, or whom you blocked, is not allowed either.
-    if (parent.authorId.toString() !== authorId && await isBlockedEitherWay(authorId, parent.authorId.toString())) throw new WallError('forbidden');
+    if (answered.authorId.toString() !== authorId && await isBlockedEitherWay(authorId, answered.authorId.toString())) throw new WallError('forbidden');
   }
 
   const created = await WallComment.create({
     wallUserId: owner._id,
     authorId: oid(authorId),
     parentId: parent?._id ?? null,
+    replyToId: answered && answered._id.toString() !== parent?._id.toString() ? answered._id : null,
     depth,
     body,
   });
@@ -233,7 +283,7 @@ export async function addComment(
     .select('userId')
     .lean<{ userId: mongoose.Types.ObjectId }[]>()).map((s) => s.userId.toString());
 
-  announce({ owner, author, authorId, parent, subscriberIds, mentionedIds: tags.userIds }).catch(() => {});
+  announce({ owner, author, authorId, answered, subscriberIds, mentionedIds: tags.userIds }).catch(() => {});
 
   return {
     id: created._id.toString(),
@@ -243,15 +293,18 @@ export async function addComment(
     depth,
     author: authorView(author, (await getPreferences(authorId)).allowTags !== false),
     canDelete: true,
+    likeCount: 0,
+    likedByMe: false,
+    replyToId: created.replyToId?.toString() ?? null,
     replies: [],
   };
 }
 
-async function announce({ owner, author, authorId, parent, subscriberIds, mentionedIds }: {
+async function announce({ owner, author, authorId, answered, subscriberIds, mentionedIds }: {
   owner: LeanUser;
   author: LeanUser;
   authorId: string;
-  parent: LeanComment | null;
+  answered: LeanComment | null;
   subscriberIds: string[];
   mentionedIds: string[];
 }): Promise<void> {
@@ -272,9 +325,9 @@ async function announce({ owner, author, authorId, parent, subscriberIds, mentio
   }
 
   // Whoever wrote the comment being answered hears it as a reply.
-  if (parent && !told.has(parent.authorId.toString())) {
-    told.add(parent.authorId.toString());
-    await notifyWallComment({ recipientId: parent.authorId.toString(), actor, wallOwnerAccountName: wall, reply: true }).catch(() => {});
+  if (answered && !told.has(answered.authorId.toString())) {
+    told.add(answered.authorId.toString());
+    await notifyWallComment({ recipientId: answered.authorId.toString(), actor, wallOwnerAccountName: wall, reply: true }).catch(() => {});
   }
   // The wall's owner, then everyone subscribed to it.
   if (!told.has(ownerId)) {
@@ -308,7 +361,30 @@ export async function deleteComment(viewerId: string, commentId: string): Promis
     doomed.push(...frontier);
   }
   await WallComment.deleteMany({ _id: { $in: doomed } });
+  await WallCommentLike.deleteMany({ commentId: { $in: doomed } });
   return true;
+}
+
+/**
+ * Likes (or unlikes) a comment for `viewerId`. Idempotent: liking twice keeps one like.
+ * Anyone who can see the comment may like it, which excludes people in a block
+ * relationship with the wall's owner or with the comment's author.
+ */
+export async function setLike(viewerId: string, commentId: string, liked: boolean): Promise<{ liked: boolean; likeCount: number }> {
+  if (!mongoose.isValidObjectId(commentId)) throw new WallError('not_found');
+  const comment = await WallComment.findById(commentId).lean<LeanComment>();
+  if (!comment) throw new WallError('not_found');
+  const owner = await User.findById(comment.wallUserId).select('isDeleted ban').lean<LeanUser>();
+  if (!owner || owner.isDeleted || owner.ban?.active) throw new WallError('not_found');
+  if ((await getPreferences(comment.wallUserId.toString())).wallEnabled === false) throw new WallError('wall_disabled');
+  for (const otherId of new Set([comment.wallUserId.toString(), comment.authorId.toString()])) {
+    if (otherId !== viewerId && await isBlockedEitherWay(viewerId, otherId)) throw new WallError('forbidden');
+  }
+
+  const key = { commentId: comment._id, userId: oid(viewerId) };
+  if (liked) await WallCommentLike.updateOne(key, { $setOnInsert: key }, { upsert: true });
+  else await WallCommentLike.deleteOne(key);
+  return { liked, likeCount: await WallCommentLike.countDocuments({ commentId: comment._id }) };
 }
 
 export async function setSubscription(viewerId: string, accountName: string, subscribed: boolean): Promise<boolean> {
