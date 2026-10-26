@@ -110,3 +110,27 @@ describe('aggregated and one-off notifications', () => {
     expect(doc?.meta).toMatchObject({ level: 5 });
   });
 });
+
+describe('concurrent folding', () => {
+  it('folds simultaneous wall comments into one unread notification', async () => {
+    await Notification.init(); // the unique index is what serialises the upserts
+    const owner = id().toString();
+    // Wide enough that the upserts reliably overlap; five rarely did against a local server.
+    const commenters = Array.from({ length: 40 }, (_, i) => actor(id(), `fan${i}`));
+    await Promise.all(commenters.map((a) =>
+      notifyWallComment({ recipientId: owner, actor: a, wallOwnerAccountName: 'sam', reply: false })));
+    const docs = await Notification.find({ userId: owner, type: 'wall_comment' }).lean();
+    expect(docs).toHaveLength(1);
+    expect(docs[0].actorCount).toBe(40);
+  });
+
+  it('starts a fresh notification once the folded one is read', async () => {
+    await Notification.init();
+    const owner = id().toString();
+    const notify = (name: string) => notifyWallComment({ recipientId: owner, actor: actor(id(), name), wallOwnerAccountName: 'sam', reply: false });
+    await notify('ann');
+    await Notification.updateMany({ userId: owner }, { $set: { read: true } });
+    await notify('bob');
+    expect(await Notification.countDocuments({ userId: owner, type: 'wall_comment' })).toBe(2);
+  });
+});

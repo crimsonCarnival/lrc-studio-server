@@ -47,6 +47,9 @@ const notificationSchema = new mongoose.Schema(
     // (xp_changed: { delta, before, after }; role_changed: { from, to };
     // streak_warning: { current, day }).
     meta:         { type: mongoose.Schema.Types.Mixed, default: null },
+    // Set by notifications.events' deliver() for notifications that fold repeat events into
+    // one unread row; the unique index below makes concurrent folds land on the same row.
+    dedupeKey:    { type: String },
   },
   { timestamps: true, collection: 'notifications' }
 );
@@ -73,6 +76,14 @@ notificationSchema.index(
   { unique: true, partialFilterExpression: { type: 'follow' }, name: 'unique_follow_per_user' }
 );
 
+// One unread folded notification per recipient and event key (wall comments, followed
+// projects, playlist saves, …). Without it two concurrent upserts both insert. Rows
+// written before dedupeKey existed have none and are left out of the index.
+notificationSchema.index(
+  { userId: 1, dedupeKey: 1 },
+  { unique: true, partialFilterExpression: { read: false, dedupeKey: { $exists: true } }, name: 'unique_unread_dedupe_key' }
+);
+
 export interface INotification {
   _id: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
@@ -89,6 +100,7 @@ export interface INotification {
   actorCount: number;
   body: string | null;
   meta: Record<string, unknown> | null;
+  dedupeKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }

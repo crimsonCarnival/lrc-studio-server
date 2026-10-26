@@ -30,6 +30,11 @@ interface Actor {
 
 const actorDoc = (a: Actor) => ({ userId: oid(a.userId), accountName: a.accountName, avatarUrl: a.avatarUrl });
 
+/** The `match` a folded notification is found by, as one string (keys sorted, so order never matters). */
+function dedupeKeyOf(match: Record<string, unknown>): string {
+  return JSON.stringify(Object.keys(match).sort().map((k) => [k, match[k]]));
+}
+
 /**
  * Creates the recipient's notification, or folds this event into the unread one that already
  * matches `match` (more actors, bumped count). `match` also supplies the new document's
@@ -44,11 +49,15 @@ async function deliver(
 ): Promise<void> {
   const prefs = await getPreferences(recipientId);
   if (prefs.notifications[pref] === false) return;
-  const doc = await Notification.findOneAndUpdate(
-    { userId: oid(recipientId), ...match, read: false },
-    update,
-    { upsert: true, returnDocument: 'after' },
-  );
+  const filter = { userId: oid(recipientId), ...match, read: false };
+  const withKey = { ...update, $setOnInsert: { ...(update.$setOnInsert as object | undefined), dedupeKey: dedupeKeyOf(match) } };
+  const upsert = () => Notification.findOneAndUpdate(filter, withKey, { upsert: true, returnDocument: 'after' });
+  // Two concurrent upserts can both miss and both insert; the unique index on
+  // (userId, dedupeKey) rejects the second, and the retry folds into the winner.
+  const doc = await upsert().catch((err: unknown) => {
+    if ((err as { code?: number }).code === 11000) return upsert();
+    throw err;
+  });
   const plain = doc.toObject() as unknown as INotification;
   // A batch only touches heaps that are already loaded; offline users read from the DB.
   if (fanOut) enqueueNotifIfLoaded(recipientId, plain);
