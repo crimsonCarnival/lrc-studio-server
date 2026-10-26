@@ -7,6 +7,7 @@ import cors from './plugins/cors.js';
 import socket from './plugins/socket.js';
 import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rateLimit.js';
+import csrf from './plugins/csrf.js';
 import auth, { verifyAdminSudo } from './plugins/auth.js';
 import mercurius from 'mercurius';
 import { NoSchemaIntrospectionCustomRule } from 'graphql';
@@ -16,6 +17,7 @@ import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
 import fastifyCookie from '@fastify/cookie';
 import { handleFastifyError } from './shared/errorHandler.js';
+import { getEnv } from './config/env.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import lyricsRoutes from './modules/lyrics/lyrics.routes.js';
@@ -46,10 +48,28 @@ const envToLogger: Record<string, Record<string, unknown>> = {
   production: { level: 'warn' },
 };
 
+// Resolvers signal expected failures with plain Error messages the client
+// reads ('not_found', 'Unauthorized', ...), so only these classes are masked:
+// their messages carry query shapes, paths and driver detail.
+const INTERNAL_ERROR_NAMES = new Set([
+  'CastError', 'ValidationError', 'MongooseError', 'MongoServerError', 'MongoError',
+  'TransactionError', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError',
+]);
+
+function isInternalError(err: Error | undefined): boolean {
+  return process.env.NODE_ENV === 'production' && !!err && INTERNAL_ERROR_NAMES.has(err.name);
+}
+
+/** A hop count trusts the nearest N proxies, as proxy-addr does for a number. */
+function toFastifyTrustProxy(value: boolean | number | string[]) {
+  return typeof value === 'number' ? (_addr: string, hop: number) => hop < value : value;
+}
+
 async function build() {
   const app = Fastify({
     logger: envToLogger[process.env.NODE_ENV as string] ?? envToLogger.production,
-    trustProxy: true,
+    // See env.TRUST_PROXY — `true` lets a direct caller choose request.ip.
+    trustProxy: toFastifyTrustProxy(getEnv().TRUST_PROXY),
     // JSON/text bodies only — audio uploads go client→Cloudinary directly via
     // signed URL and never pass through this limit. 5MB comfortably covers a
     // full-project PATCH (large words-mode projects with translations).
@@ -61,6 +81,7 @@ async function build() {
   });
   await app.register(helmet);
   await app.register(cors);
+  await app.register(csrf);
   await app.register(socket);
   await app.register(rateLimit);
   await app.register(mongoose);
@@ -96,9 +117,12 @@ async function build() {
     errorFormatter: (result, ctx) => {
       const formatted = mercurius.defaultErrorFormatter(result, ctx);
       if (formatted.response.errors) {
-        formatted.response.errors = formatted.response.errors.map(err => ({
+        const originals = result.errors ?? [];
+        formatted.response.errors = formatted.response.errors.map((err, i) => ({
           ...err,
-          message: err.message.replace(/\s*Did you mean.*?\?/gi, ''),
+          message: isInternalError(originals[i]?.originalError)
+            ? 'internal_error'
+            : err.message.replace(/\s*Did you mean.*?\?/gi, ''),
         }));
       }
       return formatted;

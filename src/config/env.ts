@@ -18,6 +18,15 @@ export interface Env {
    * takeover of one subdomain cannot replay the session on another.
    */
   COOKIE_DOMAIN?: string;
+  /**
+   * Fastify `trustProxy`: how request.ip is derived from X-Forwarded-For.
+   * `true` trusts the whole header, so its leftmost (client-written) entry
+   * becomes request.ip and every IP rate limit / IP ban can be bypassed by any
+   * caller that reaches this server directly. Set a hop count (e.g. `1`) or a
+   * comma-separated list of proxy IPs/CIDRs that matches the real proxy chain.
+   * Defaults to `true` only to preserve existing behaviour until that is set.
+   */
+  TRUST_PROXY: boolean | number | string[];
   APP_URL: string;
   APP_URLS: string[];
   PASSWORD_RESET_URL: string;
@@ -95,6 +104,14 @@ function requireEnv(name: string, value: string | undefined, requiredInProductio
   return value;
 }
 
+export function parseTrustProxy(raw: string | undefined): boolean | number | string[] {
+  const value = raw?.trim();
+  if (!value || value === 'true') return true;
+  if (value === 'false') return false;
+  if (/^\d+$/.test(value)) return parseInt(value, 10);
+  return value.split(',').map(v => v.trim()).filter(Boolean);
+}
+
 export function loadEnv(): Env {
   const corsOrigin = requireEnv('CORS_ORIGIN', process.env.CORS_ORIGIN, true) ?? 'http://localhost:5173';
   const appUrlString = process.env.APP_URL ?? corsOrigin;
@@ -117,6 +134,7 @@ export function loadEnv(): Env {
     JWT_AUDIENCE: process.env.JWT_AUDIENCE,
     CORS_ORIGIN: corsOrigin,
     COOKIE_DOMAIN: process.env.COOKIE_DOMAIN,
+    TRUST_PROXY: parseTrustProxy(process.env.TRUST_PROXY),
     APP_URL: primaryAppUrl,
     APP_URLS: appUrls,
     PASSWORD_RESET_URL: process.env.PASSWORD_RESET_URL ?? primaryAppUrl,
