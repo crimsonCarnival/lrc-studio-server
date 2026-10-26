@@ -25,6 +25,7 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
     showActivityHeatmap: prefs.showActivityHeatmap === true,
     showXpProgress: prefs.showXpProgress === true,
     wallEnabled: prefs.wallEnabled !== false,
+    country: prefs.country ?? null,
     notifications: {
       ...prefs.notifications,
       streak_warning: prefs.notifications?.streak_warning !== false,

@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { checkVideoAvailability, fetchEmbeddability, lookupCountry } from './youtube.service.js';
+import { checkVideoAvailability, fetchEmbeddability, viewerCountry } from './youtube.service.js';
 import type { YoutubeAvailability } from './youtube.service.js';
 
 /**
@@ -13,7 +13,7 @@ async function resolveAvailability(request: FastifyRequest, reply: FastifyReply)
   }
   const { videoId } = request.query as { videoId: string };
   try {
-    return await checkVideoAvailability(videoId, await lookupCountry(request.ip));
+    return await checkVideoAvailability(videoId, await viewerCountry(request.userId));
   } catch (error) {
     request.log.warn({ err: error, videoId }, 'YouTube availability check failed');
     reply.code(502).send({ error: 'check_failed', code: 'check_failed' });

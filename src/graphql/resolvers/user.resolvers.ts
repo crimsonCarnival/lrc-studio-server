@@ -38,6 +38,7 @@ import type { IBadgeDefinition } from '../../modules/badges/badge-definition.mod
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import { socialGraph } from '../../lib/social-graph.js';
 import { getPreferences, updatePreferences } from '../../modules/user-preferences/user-preferences.service.js';
+import { isCountryCode } from '../../utils/countries.js';
 import type { IUserPreferences } from '../../modules/user-preferences/user-preferences.model.js';
 
 /** Input shape for updateProfile mutation */
@@ -855,6 +856,10 @@ export const userResolvers = {
           throw new Error('Invalid countryVisibility value');
         }
       }
+      // The user's own choice; null clears it. Never derived from their IP.
+      if (input.country !== undefined && input.country !== null && !isCountryCode(input.country)) {
+        throw new Error('Invalid country value');
+      }
 
       if (Array.isArray(input.miniProfileBadgeIds) && (input.miniProfileBadgeIds as string[]).length > 3) {
         throw new Error('Maximum 3 mini profile badges allowed');
@@ -1023,27 +1028,21 @@ export const userResolvers = {
       
       return new Date(user.lastOnlineAt).toISOString();
     },
+    // The country the user chose in settings (preferences.country), never one derived
+    // from their IP. They and staff always see it; others per countryVisibility.
     country: async (user: IUser, _args: unknown, context: Context) => {
       const id = (user._id ?? user.id).toString();
-      
-      if (context.userId === id) {
-        if (!user.lastIp) return null;
-        if (user.lastIp === '127.0.0.1' || user.lastIp === '::1') return 'LOCAL';
-        const geoip = (await import('geoip-lite')).default;
-        return geoip.lookup(user.lastIp)?.country ?? null;
-      }
-      
+      const prefs = await getPreferences(id);
+      const country = prefs.country ?? null;
+      if (!country) return null;
+
+      if (context.userId === id) return country;
+
       if (context.userId) {
         const requester = await User.findById(context.userId).select('permissions').lean<IUser>();
-        if (hasPermission(requester?.permissions, 'users.view')) {
-          if (!user.lastIp) return null;
-          if (user.lastIp === '127.0.0.1' || user.lastIp === '::1') return 'LOCAL';
-          const geoip = (await import('geoip-lite')).default;
-          return geoip.lookup(user.lastIp)?.country ?? null;
-        }
+        if (hasPermission(requester?.permissions, 'users.view')) return country;
       }
-      
-      const prefs = await getPreferences(id);
+
       const visibility = prefs.countryVisibility ?? 'nobody';
       
       if (visibility === 'nobody') return null;
@@ -1069,10 +1068,8 @@ export const userResolvers = {
 
         if (!mutualIds.includes(context.userId)) return null;
       }
-      
-      if (!user.lastIp || user.lastIp === '127.0.0.1' || user.lastIp === '::1') return null;
-      const geoip = (await import('geoip-lite')).default;
-      return geoip.lookup(user.lastIp)?.country ?? null;
+
+      return country;
     },
   },
 };

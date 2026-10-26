@@ -1,3 +1,5 @@
+import { getPreferences } from '../user-preferences/user-preferences.service.js';
+
 /**
  * Stable, machine-readable availability codes. The client maps each to an i18n
  * message; never send upstream error text instead of one of these.
@@ -131,12 +133,14 @@ export async function checkVideoAvailability(videoId: string, viewerCountry: str
   return 'restricted';
 }
 
-/** Best-effort ISO country for an IP; null when unknown (private/loopback IPs, lookup failure). */
-export async function lookupCountry(ip: string | undefined): Promise<string | null> {
-  if (!ip) return null;
+/**
+ * The viewer's country for region checks: the one a signed-in viewer chose in settings.
+ * Null for anyone else, which skips the region check rather than guessing from the IP.
+ */
+export async function viewerCountry(userId: string | null | undefined): Promise<string | null> {
+  if (!userId) return null;
   try {
-    const geoip = (await import('geoip-lite')).default;
-    return geoip.lookup(ip)?.country ?? null;
+    return (await getPreferences(userId)).country ?? null;
   } catch {
     return null;
   }

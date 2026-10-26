@@ -146,6 +146,8 @@ export const rootSchema = `
     showFollowers: Boolean!
     onlineVisibility: String!
     lastOnlineVisibility: String!
+    "ISO 3166-1 alpha-2, chosen by the user; null when unset."
+    country: String
     countryVisibility: String!
     defaultProjectPrivacy: String!
     miniProfileBadgesEnabled: Boolean!
@@ -178,6 +180,8 @@ export const rootSchema = `
     showFollowers: Boolean
     onlineVisibility: String
     lastOnlineVisibility: String
+    "ISO 3166-1 alpha-2, or null to clear."
+    country: String
     countryVisibility: String
     defaultProjectPrivacy: String
     miniProfileBadgesEnabled: Boolean

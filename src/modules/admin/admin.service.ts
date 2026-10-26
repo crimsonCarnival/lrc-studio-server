@@ -19,6 +19,7 @@ import JobLog from '../../db/job-log.model.js';
 import { getOnlineUserIds } from '../../socket/presence.js';
 import RolePermissionsConfig from './role-permissions-config.model.js';
 import { syncOwnerVisibility } from '../users/owner-visibility.service.js';
+import UserPreferences from '../user-preferences/user-preferences.model.js';
 
 // Staff-protection: resolve the acting admin's rank. A null actor (system call)
 // is treated as top rank so internal automation isn't blocked.
@@ -97,11 +98,12 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   const uploadCountMap = new Map((uploadCounts as { _id: string; count: number; storageUsed: number }[]).map(r => [r._id.toString(), { count: r.count, storageUsed: r.storageUsed || 0 }]));
   const sessionMap = new Map((sessionData as { _id: mongoose.Types.ObjectId; deviceId: string; deviceName: string }[]).map(s => [s._id.toString(), { lastDeviceId: s.deviceId, lastDeviceName: s.deviceName }]));
 
-  // Dynamic: geoip-lite reads its binary dataset synchronously at module
-  // load. A static import here loaded that dataset into every instance at
-  // startup whether or not this (admin-only, list-paginated) path was ever
-  // hit — the three other call sites already do it this way.
-  const geoip = (await import('geoip-lite')).default;
+  // The country each user chose in settings; there is no IP-based lookup.
+  const pageIds = (page as unknown as { _id: mongoose.Types.ObjectId }[]).map((u) => u._id);
+  const chosenCountries = await UserPreferences.find({ userId: { $in: pageIds }, country: { $ne: null } })
+    .select('userId country')
+    .lean<{ userId: mongoose.Types.ObjectId; country: string }[]>();
+  const countryMap = new Map(chosenCountries.map((p) => [p.userId.toString(), p.country]));
   const users = (page as unknown as Record<string, unknown>[]).map((u) => {
     const { _id, __v, ...rest } = u;
     return {
@@ -110,7 +112,7 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
       projectCount: projectCountMap.get((_id as mongoose.Types.ObjectId).toString()) ?? 0,
       uploadCount: uploadCountMap.get((_id as mongoose.Types.ObjectId).toString())?.count ?? 0,
       storageUsed: uploadCountMap.get((_id as mongoose.Types.ObjectId).toString())?.storageUsed ?? 0,
-      country: rest.lastIp && rest.lastIp !== '127.0.0.1' && rest.lastIp !== '::1' ? geoip.lookup(rest.lastIp as string)?.country : null,
+      country: countryMap.get((_id as mongoose.Types.ObjectId).toString()) ?? null,
       isOnline: getOnlineUserIds().includes((_id as mongoose.Types.ObjectId).toString()),
       ...(sessionMap.get((_id as mongoose.Types.ObjectId).toString()) ?? {}),
     };

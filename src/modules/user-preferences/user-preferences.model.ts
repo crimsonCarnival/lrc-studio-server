@@ -23,6 +23,8 @@ export interface IUserPreferences {
   showFollowers: boolean;
   onlineVisibility: 'everyone' | 'friends' | 'nobody';
   lastOnlineVisibility: 'everyone' | 'friends' | 'nobody';
+  /** ISO 3166-1 alpha-2, chosen by the user in settings; null when they haven't. */
+  country: string | null;
   countryVisibility: 'everyone' | 'friends' | 'nobody';
   defaultProjectPrivacy: 'public' | 'private';
   miniProfileBadgesEnabled: boolean;
@@ -61,6 +63,7 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   showFollowers:            { type: Boolean, default: true },
   onlineVisibility:         { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'friends' },
   lastOnlineVisibility:     { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'friends' },
+  country:                  { type: String, default: null, match: /^[A-Z]{2}$/ },
   countryVisibility:        { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'nobody' },
   defaultProjectPrivacy:    { type: String, enum: ['public', 'private'], default: 'public' },
   miniProfileBadgesEnabled: { type: Boolean, default: true },
