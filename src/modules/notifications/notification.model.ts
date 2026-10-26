@@ -14,6 +14,7 @@ const NOTIFICATION_TYPES = [
   'streak_warning',
   'followed_project',
   'wall_comment',
+  'mention',
   'level_up',
   'playlist_saved',
   'star_milestone',

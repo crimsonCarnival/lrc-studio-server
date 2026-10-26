@@ -30,6 +30,7 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
       streak_warning: prefs.notifications?.streak_warning !== false,
       followed_project: prefs.notifications?.followed_project !== false,
       wall_comment: prefs.notifications?.wall_comment !== false,
+      mention: prefs.notifications?.mention !== false,
       level_up: prefs.notifications?.level_up !== false,
       playlist_saved: prefs.notifications?.playlist_saved !== false,
       star_milestone: prefs.notifications?.star_milestone !== false,

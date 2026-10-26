@@ -9,6 +9,7 @@ import Notification from '../notifications/notification.model.js';
 import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { updatePreferences } from '../user-preferences/user-preferences.service.js';
 import { WallComment, WallSubscription } from './wall.models.js';
+import Project from '../projects/project.model.js';
 import { addComment, deleteComment, getWall, setSubscription, WallError } from './wall.service.js';
 
 let mongo: MongoMemoryServer;
@@ -26,6 +27,7 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}), Block.deleteMany({}), Notification.deleteMany({}),
     UserPreferences.deleteMany({}), WallComment.deleteMany({}), WallSubscription.deleteMany({}),
+    Project.deleteMany({}),
   ]);
 });
 
@@ -125,5 +127,63 @@ describe('wall comments and replies', () => {
     expect(await setSubscription(a, 'sam', false)).toBe(false);
     expect(await WallSubscription.countDocuments({})).toBe(0);
     expect(await setSubscription(owner, 'sam', true)).toBe(false);
+  });
+});
+
+describe('tags', () => {
+  const settle = () => new Promise(r => setTimeout(r, 50));
+  async function mkProject(ownerId: string, publicId: string, isPublic: boolean) {
+    await Project.collection.insertOne({ publicId, slug: publicId, title: `Song ${publicId}`, userId: new mongoose.Types.ObjectId(ownerId), public: isPublic, coverImage: '' });
+  }
+
+  it('resolves tagged people and projects', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    await mkProject(owner, 'pub1', true);
+    const saved = await addComment(a, 'sam', `hey @[u:${owner}] look @[p:pub1]`);
+    expect(saved.mentions).toEqual([{ id: owner, accountName: 'sam', displayName: null }]);
+    expect(saved.projectRefs).toMatchObject([{ publicId: 'pub1', title: 'Song pub1', ownerAccountName: 'sam' }]);
+  });
+
+  it('refuses a tag that does not resolve for the author', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    await mkProject(owner, 'secret', false);
+    expect(await codeOf(() => addComment(a, 'sam', '@[p:secret]'))).toBe('invalid_body');
+    expect(await codeOf(() => addComment(a, 'sam', `@[u:${new mongoose.Types.ObjectId()}]`))).toBe('invalid_body');
+  });
+
+  it('lets owners tag their own private project, and hides it from everyone else', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    await mkProject(owner, 'mine', false);
+    await addComment(owner, 'sam', 'wip @[p:mine]');
+    expect((await getWall(owner, 'sam')).comments[0].projectRefs).toHaveLength(1);
+    expect((await getWall(a, 'sam')).comments[0].projectRefs).toHaveLength(0);
+    expect((await getWall(null, 'sam')).comments[0].projectRefs).toHaveLength(0);
+  });
+
+  it('tells a tagged person with a mention instead of a plain comment notification', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
+    await addComment(b, 'sam', 'first'); // bob is now subscribed
+    await addComment(a, 'sam', `@[u:${b}] and @[u:${owner}] see this`);
+    await settle();
+    expect(await Notification.countDocuments({ userId: b, type: 'mention' })).toBe(1);
+    expect(await Notification.countDocuments({ userId: b, type: 'wall_comment' })).toBe(0);
+    expect(await Notification.countDocuments({ userId: owner, type: 'mention' })).toBe(1);
+  });
+
+  it('falls back to the plain notification when the tagged person turned mentions off', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    await updatePreferences(owner, { notifications: { mention: false } } as never);
+    await addComment(a, 'sam', `@[u:${owner}] hi`);
+    await settle();
+    expect(await Notification.countDocuments({ userId: owner, type: 'mention' })).toBe(0);
+    expect(await Notification.countDocuments({ userId: owner, type: 'wall_comment' })).toBe(1);
+  });
+
+  it('does not notify you for tagging yourself', async () => {
+    const a = await mkUser('ann');
+    await mkUser('sam');
+    await addComment(a, 'sam', `@[u:${a}] note to self`);
+    await settle();
+    expect(await Notification.countDocuments({ userId: a })).toBe(0);
   });
 });

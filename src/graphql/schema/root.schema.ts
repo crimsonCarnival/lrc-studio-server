@@ -134,6 +134,7 @@ export const rootSchema = `
     streak_warning: Boolean!
     followed_project: Boolean!
     wall_comment: Boolean!
+    mention: Boolean!
     level_up: Boolean!
     playlist_saved: Boolean!
     star_milestone: Boolean!
@@ -165,6 +166,7 @@ export const rootSchema = `
     streak_warning: Boolean
     followed_project: Boolean
     wall_comment: Boolean
+    mention: Boolean
     level_up: Boolean
     playlist_saved: Boolean
     star_milestone: Boolean

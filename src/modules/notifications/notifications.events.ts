@@ -46,9 +46,9 @@ async function deliver(
   match: Record<string, unknown>,
   update: Record<string, unknown>,
   { fanOut = false }: { fanOut?: boolean } = {},
-): Promise<void> {
+): Promise<boolean> {
   const prefs = await getPreferences(recipientId);
-  if (prefs.notifications[pref] === false) return;
+  if (prefs.notifications[pref] === false) return false;
   const filter = { userId: oid(recipientId), ...match, read: false };
   const withKey = { ...update, $setOnInsert: { ...(update.$setOnInsert as object | undefined), dedupeKey: dedupeKeyOf(match) } };
   const upsert = () => Notification.findOneAndUpdate(filter, withKey, { upsert: true, returnDocument: 'after' });
@@ -63,6 +63,7 @@ async function deliver(
   if (fanOut) enqueueNotifIfLoaded(recipientId, plain);
   else enqueueNotif(recipientId, plain);
   emit(recipientId, plain);
+  return true;
 }
 
 async function blocked(recipientId: string, actorId: string): Promise<boolean> {
@@ -203,6 +204,31 @@ export async function notifyWallComment(params: {
     recipientId,
     'wall_comment',
     { type: 'wall_comment', 'meta.wall': wallOwnerAccountName, 'meta.reply': reply },
+    {
+      $setOnInsert: { sticky: false, body: null },
+      $set: { read: false },
+      $addToSet: { actors: actorDoc(actor) },
+      $inc: { actorCount: 1 },
+    },
+  );
+}
+
+/**
+ * `actor` tagged `recipientId` in a comment on `wallOwner`'s wall. Unread tags on the same
+ * wall fold into one notification. Returns whether one was delivered (false when the
+ * recipient turned mentions off, or is in a block relationship with the actor).
+ */
+export async function notifyMention(params: {
+  recipientId: string;
+  actor: Actor;
+  wallOwnerAccountName: string;
+}): Promise<boolean> {
+  const { recipientId, actor, wallOwnerAccountName } = params;
+  if (recipientId === actor.userId || await blocked(recipientId, actor.userId)) return false;
+  return deliver(
+    recipientId,
+    'mention',
+    { type: 'mention', 'meta.wall': wallOwnerAccountName },
     {
       $setOnInsert: { sticky: false, body: null },
       $set: { read: false },

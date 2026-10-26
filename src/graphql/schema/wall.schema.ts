@@ -7,9 +7,28 @@ export const wallSchema = `
     staffRole: String
   }
 
+  "A person tagged in a comment, as @[u:<id>] in its body."
+  type WallMention {
+    id: ID!
+    accountName: String!
+    displayName: String
+  }
+
+  "A project tagged in a comment, as @[p:<publicId>] in its body. Only listed when the viewer may see it."
+  type WallProjectRef {
+    publicId: ID!
+    title: String!
+    slug: String!
+    coverImage: String
+    ownerAccountName: String!
+  }
+
   type WallComment {
     id: ID!
+    "May contain tag tokens; resolve them through mentions and projectRefs."
     body: String!
+    mentions: [WallMention!]!
+    projectRefs: [WallProjectRef!]!
     createdAt: String!
     "0 for a comment, 1 for a reply, 2 for a reply to a reply."
     depth: Int!

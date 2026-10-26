@@ -7,7 +7,9 @@ import { getPreferences } from '../user-preferences/user-preferences.service.js'
 import { getBlockedSet, isBlockedEitherWay } from '../blocks/block.service.js';
 import { hasPermission } from '../../shared/permissions.js';
 import { stripHtml } from '../../utils/sanitize.js';
-import { notifyWallComment } from '../notifications/notifications.events.js';
+import { notifyWallComment, notifyMention } from '../notifications/notifications.events.js';
+import { parseTags, tagsAreValid, resolveTags, tagsOf } from './wall-mentions.js';
+import type { WallMention, WallProjectRef } from './wall-mentions.js';
 
 const PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 50;
@@ -40,6 +42,8 @@ export interface WallAuthor {
 export interface WallCommentView {
   id: string;
   body: string;
+  mentions: WallMention[];
+  projectRefs: WallProjectRef[];
   createdAt: string;
   depth: number;
   author: WallAuthor;
@@ -117,6 +121,7 @@ export async function getWall(
   const viewerIsOwner = viewerId === ownerId;
   const viewerIsStaff = !!viewer && hasPermission(viewer.permissions, 'users.ban');
   const blockedSet = await getBlockedSet(viewerId);
+  const resolved = await resolveTags(all.map(c => c.body), viewerId);
 
   const build = (c: LeanComment, byParent: Map<string, LeanComment[]>): WallCommentView | null => {
     const author = authorById.get(c.authorId.toString());
@@ -124,6 +129,7 @@ export async function getWall(
     return {
       id: c._id.toString(),
       body: c.body,
+      ...tagsOf(c.body, resolved),
       createdAt: c.createdAt.toISOString(),
       depth: c.depth,
       author: authorView(author),
@@ -169,6 +175,9 @@ export async function addComment(
 
   const body = stripHtml(rawBody ?? '').trim();
   if (body.length < 1 || body.length > WALL_MAX_LENGTH) throw new WallError('invalid_body');
+  // A forged, stale or out-of-reach tag (someone else's private project) rejects the comment.
+  const tags = parseTags(body);
+  if (!(await tagsAreValid(authorId, tags))) throw new WallError('invalid_body');
 
   const recent = await WallComment.countDocuments({ authorId: oid(authorId), createdAt: { $gte: new Date(Date.now() - RATE_LIMIT_WINDOW_MS) } });
   if (recent >= RATE_LIMIT_COUNT) throw new WallError('rate_limited');
@@ -211,11 +220,12 @@ export async function addComment(
     .select('userId')
     .lean<{ userId: mongoose.Types.ObjectId }[]>()).map((s) => s.userId.toString());
 
-  announce({ owner, author, authorId, parent, subscriberIds }).catch(() => {});
+  announce({ owner, author, authorId, parent, subscriberIds, mentionedIds: tags.userIds }).catch(() => {});
 
   return {
     id: created._id.toString(),
     body,
+    ...tagsOf(body, await resolveTags([body], authorId)),
     createdAt: created.createdAt.toISOString(),
     depth,
     author: authorView(author),
@@ -224,17 +234,29 @@ export async function addComment(
   };
 }
 
-async function announce({ owner, author, authorId, parent, subscriberIds }: {
+async function announce({ owner, author, authorId, parent, subscriberIds, mentionedIds }: {
   owner: LeanUser;
   author: LeanUser;
   authorId: string;
   parent: LeanComment | null;
   subscriberIds: string[];
+  mentionedIds: string[];
 }): Promise<void> {
   const ownerId = owner._id.toString();
   const actor = { userId: authorId, accountName: author.accountName ?? '', avatarUrl: author.avatarUrl ?? null };
   const wall = owner.accountName ?? '';
   const told = new Set<string>([authorId]);
+
+  // Being tagged is the most specific news, so a tagged person hears that instead of a
+  // plain "new comment". Someone in a block relationship with the wall's owner cannot
+  // open the wall, so they are not told about a tag on it.
+  // Only a delivered mention replaces the plain notification: with mentions switched off,
+  // a subscriber still hears about the comment the usual way.
+  for (const id of mentionedIds) {
+    if (told.has(id)) continue;
+    if (id !== ownerId && await isBlockedEitherWay(id, ownerId)) { told.add(id); continue; }
+    if (await notifyMention({ recipientId: id, actor, wallOwnerAccountName: wall }).catch(() => false)) told.add(id);
+  }
 
   // Whoever wrote the comment being answered hears it as a reply.
   if (parent && !told.has(parent.authorId.toString())) {
