@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { archiveDeletedUsers } from '../jobs/archive-deleted-users.js';
+import { runMediaSweep } from '../jobs/media-sweep.job.js';
 import { recomputeTrendingScores } from '../jobs/trending.job.js';
 import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js';
 import { syncRolePermissions } from '../modules/admin/admin.service.js';
@@ -48,6 +49,13 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
 
       // Weekly, Sunday 02:00 UTC.
       await defineRecurring('archive-deleted-users', '0 2 * * 0', archiveDeletedUsers);
+
+      // Weekly, Sunday 03:00 UTC — after the archive, so archived users' avatars and banners count as orphaned.
+      // Logs only unless MEDIA_SWEEP_DELETE=true.
+      await defineRecurring('media-sweep', '0 3 * * 0', async () => {
+        const result = await runMediaSweep();
+        if (result) fastify.log.info({ result }, '[jobs] media sweep');
+      });
 
       // Heavy aggregations — the reason these must not run once per instance.
       await defineRecurring('recompute-rankings', '1 hour', async () => {
