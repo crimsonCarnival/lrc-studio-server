@@ -8,6 +8,8 @@ export interface ActivityDoc {
   type: string;
   createdAt?: Date | string;
   actorId?: { toString(): string } | string;
+  coverImage?: string;
+  targetPath?: string;
 }
 
 interface LeanUser {
@@ -57,6 +59,17 @@ export const activityResolvers = {
     // Convert snake_case DB enum to SCREAMING_SNAKE_CASE GQL enum
     type: (a: ActivityDoc) => a.type.toUpperCase(),
     createdAt: (a: ActivityDoc) => (a.createdAt ? new Date(a.createdAt).toISOString() : null),
+    // A follow's cover is the followed user's avatar. The stored copy dies when
+    // they change it (the old file is deleted on replace), so read the current
+    // one. Account names in anyone's history stay reserved, so this lookup finds
+    // the same user or nobody; nobody (renamed) falls back to the stored copy.
+    coverImage: async (a: ActivityDoc) => {
+      if (a.type !== 'user_followed' || !a.targetPath) return a.coverImage ?? null;
+      const target = await User.findOne({ accountName: a.targetPath.replace(/^\//, '') })
+        .select('avatarUrl')
+        .lean<{ avatarUrl?: string | null }>();
+      return target ? target.avatarUrl ?? null : a.coverImage ?? null;
+    },
     actor: async (a: ActivityDoc) => {
       const user = await User.findById(a.actorId)
         .select('accountName displayName avatarUrl')

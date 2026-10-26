@@ -3,6 +3,7 @@ import type { FlattenMaps } from 'mongoose';
 import Notification, { type INotification, type NotificationType } from './notification.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import Follow from '../../db/follow.model.js';
+import User from '../../db/user.model.js';
 import { enqueueNotif, enqueueNotifIfLoaded, peekNotifs, loadHeap, clearHeap } from '../../lib/notification-heap.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { getCachedBlockedSet } from '../blocks/block-list.cache.js';
@@ -301,6 +302,31 @@ export async function resolveSticky(
   }
 }
 
+/**
+ * Actor avatars are copied in when a notification is written, and the old
+ * file is deleted when its owner replaces it, so the copy would render as a
+ * broken image. One query swaps in each actor's current avatar.
+ */
+async function withCurrentAvatars(notifications: INotification[]): Promise<INotification[]> {
+  const actorIds = new Set<string>();
+  for (const n of notifications) for (const a of n.actors ?? []) if (a.userId) actorIds.add(String(a.userId));
+  if (actorIds.size === 0) return notifications;
+
+  const users = await User.find({ _id: { $in: [...actorIds] } })
+    .select('avatarUrl')
+    .lean<Array<{ _id: mongoose.Types.ObjectId; avatarUrl?: string | null }>>();
+  const avatarOf = new Map(users.map((u) => [u._id.toString(), u.avatarUrl ?? null]));
+
+  return notifications.map((n) => ({
+    ...n,
+    actors: (n.actors ?? []).map((a) => {
+      const id = String(a.userId);
+      // Deleted users keep the stored copy; there is nothing newer.
+      return avatarOf.has(id) ? { ...a, avatarUrl: avatarOf.get(id)! } : a;
+    }),
+  }));
+}
+
 export async function listNotifications(
   userId: string
 ): Promise<{ notifications: NotificationDoc[]; unreadCount: number }> {
@@ -321,10 +347,11 @@ export async function listNotifications(
           { actors: { $elemMatch: { userId: { $nin: blockedIds } } } },
         ],
       };
-  const [prioritized, unreadCount] = await Promise.all([
+  const [unread, unreadCount] = await Promise.all([
     getPrioritizedUnread(userId, 50),
     Notification.countDocuments(unreadFilter),
   ]);
+  const prioritized = await withCurrentAvatars(unread);
   if (blockedSet.size === 0) return { notifications: prioritized as unknown as NotificationDoc[], unreadCount };
 
   // Received before the block: drop the blocked actors, and the notification
