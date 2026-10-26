@@ -15,6 +15,8 @@ let mongo: MongoMemoryServer;
 beforeAll(async () => {
   mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
+  // Folding concurrent notifications relies on its unique index existing.
+  await Notification.init();
 });
 afterAll(async () => {
   await mongoose.disconnect();

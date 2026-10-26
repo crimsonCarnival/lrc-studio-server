@@ -204,7 +204,14 @@ export async function addComment(
     );
   }
 
-  announce({ owner, author, authorId, parent }).catch(() => {});
+  // Who hears about this comment is decided now, not when the background send runs:
+  // otherwise someone who subscribes a moment later is told about a comment that predates them.
+  const subscriberIds = (await WallSubscription.find({ wallUserId: owner._id })
+    .limit(MAX_SUBSCRIBER_FANOUT)
+    .select('userId')
+    .lean<{ userId: mongoose.Types.ObjectId }[]>()).map((s) => s.userId.toString());
+
+  announce({ owner, author, authorId, parent, subscriberIds }).catch(() => {});
 
   return {
     id: created._id.toString(),
@@ -217,11 +224,12 @@ export async function addComment(
   };
 }
 
-async function announce({ owner, author, authorId, parent }: {
+async function announce({ owner, author, authorId, parent, subscriberIds }: {
   owner: LeanUser;
   author: LeanUser;
   authorId: string;
   parent: LeanComment | null;
+  subscriberIds: string[];
 }): Promise<void> {
   const ownerId = owner._id.toString();
   const actor = { userId: authorId, accountName: author.accountName ?? '', avatarUrl: author.avatarUrl ?? null };
@@ -238,9 +246,7 @@ async function announce({ owner, author, authorId, parent }: {
     told.add(ownerId);
     await notifyWallComment({ recipientId: ownerId, actor, wallOwnerAccountName: wall, reply: false }).catch(() => {});
   }
-  const subs = await WallSubscription.find({ wallUserId: owner._id }).limit(MAX_SUBSCRIBER_FANOUT).select('userId').lean<{ userId: mongoose.Types.ObjectId }[]>();
-  await Promise.all(subs.map(async ({ userId }) => {
-    const id = userId.toString();
+  await Promise.all(subscriberIds.map(async (id) => {
     if (told.has(id)) return;
     told.add(id);
     await notifyWallComment({ recipientId: id, actor, wallOwnerAccountName: wall, reply: false }).catch(() => {});
