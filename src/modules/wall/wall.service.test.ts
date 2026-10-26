@@ -184,6 +184,8 @@ describe('tags', () => {
     await updatePreferences(owner, { allowTags: false });
     expect(await codeOf(() => addComment(a, 'sam', `@[u:${owner}] hi`))).toBe('tag_not_allowed');
     expect(await codeOf(() => addComment(owner, 'sam', `@[u:${a}] and @[u:${owner}]`))).toBe('none');
+    // The wall says so, so a reply to them doesn't start by tagging them.
+    expect((await getWall(a, 'sam')).comments[0].author.allowsTags).toBe(false);
   });
 
   it('does not notify you for tagging yourself', async () => {

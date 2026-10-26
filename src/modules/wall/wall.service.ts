@@ -4,6 +4,7 @@ import type { IUser } from '../users/user.model.js';
 import { WallComment, WallSubscription, WALL_MAX_DEPTH, WALL_MAX_LENGTH } from './wall.models.js';
 import type { IWallComment } from './wall.models.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
+import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { getBlockedSet, isBlockedEitherWay } from '../blocks/block.service.js';
 import { hasPermission } from '../../shared/permissions.js';
 import { stripHtml } from '../../utils/sanitize.js';
@@ -37,6 +38,8 @@ export interface WallAuthor {
   displayName: string | null;
   avatarUrl: string | null;
   staffRole: string | null;
+  /** Whether others may tag this author (the client pre-tags a reply only when they may). */
+  allowsTags: boolean;
 }
 
 export interface WallCommentView {
@@ -65,12 +68,13 @@ async function findOwner(accountName: string): Promise<LeanUser> {
   return owner;
 }
 
-const authorView = (u: LeanUser): WallAuthor => ({
+const authorView = (u: LeanUser, allowsTags: boolean): WallAuthor => ({
   id: u._id.toString(),
   accountName: u.accountName ?? '',
   displayName: u.displayName ?? null,
   avatarUrl: u.avatarUrl ?? null,
   staffRole: u.role && u.role !== 'user' ? u.role : null,
+  allowsTags,
 });
 
 /**
@@ -116,6 +120,12 @@ export async function getWall(
     ? await User.find({ _id: { $in: authorIds.map(oid) } }).select('accountName displayName avatarUrl role').lean<LeanUser[]>()
     : [];
   const authorById = new Map(authors.map(a => [a._id.toString(), a]));
+  const untaggable = new Set(
+    (authorIds.length
+      ? await UserPreferences.find({ userId: { $in: authorIds.map(oid) }, allowTags: false }).select('userId').lean()
+      : []
+    ).map(p => p.userId.toString()),
+  );
 
   const viewer = viewerId ? await User.findById(viewerId).select('permissions').lean<LeanUser>() : null;
   const viewerIsOwner = viewerId === ownerId;
@@ -132,7 +142,7 @@ export async function getWall(
       ...tagsOf(c.body, resolved),
       createdAt: c.createdAt.toISOString(),
       depth: c.depth,
-      author: authorView(author),
+      author: authorView(author, !untaggable.has(c.authorId.toString())),
       canDelete: viewerId === c.authorId.toString() || viewerIsOwner || viewerIsStaff,
       replies: (byParent.get(c._id.toString()) ?? []).map(r => build(r, byParent)).filter((r): r is WallCommentView => r !== null),
     };
@@ -231,7 +241,7 @@ export async function addComment(
     ...tagsOf(body, await resolveTags([body], authorId)),
     createdAt: created.createdAt.toISOString(),
     depth,
-    author: authorView(author),
+    author: authorView(author, (await getPreferences(authorId)).allowTags !== false),
     canDelete: true,
     replies: [],
   };

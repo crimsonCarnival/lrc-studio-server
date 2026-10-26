@@ -5,6 +5,8 @@ export const wallSchema = `
     displayName: String
     avatarUrl: String
     staffRole: String
+    "False when this author switched tagging off."
+    allowsTags: Boolean!
   }
 
   "A person tagged in a comment, as @[u:<id>] in its body."
