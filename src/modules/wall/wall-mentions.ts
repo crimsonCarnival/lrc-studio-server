@@ -11,7 +11,6 @@ import mongoose from 'mongoose';
 import User from '../users/user.model.js';
 import Project from '../projects/project.model.js';
 import Upload from '../uploads/upload.model.js';
-import { youtubeThumbnail } from '../../utils/cover-image.js';
 
 export const MAX_TAGS_PER_COMMENT = 10;
 
@@ -106,14 +105,12 @@ export async function resolveTags(bodies: string[], viewerId: string | null): Pr
       ? User.find({ _id: { $in: ownerIds } }).select('accountName').lean<{ _id: mongoose.Types.ObjectId; accountName?: string }[]>()
       : [],
     uploadIds.length
-      ? Upload.find({ _id: { $in: uploadIds } }).select('coverImage source uploadUrl').lean<{ _id: mongoose.Types.ObjectId; coverImage?: string | null; source?: string; uploadUrl?: string | null }[]>()
+      ? Upload.find({ _id: { $in: uploadIds } }).select('coverImage').lean<{ _id: mongoose.Types.ObjectId; coverImage?: string | null }[]>()
       : [],
   ]);
   const ownerName = new Map(owners.map((o) => [o._id.toString(), o.accountName ?? '']));
-  const uploadCover = new Map(uploads.map((u) => [
-    u._id.toString(),
-    u.coverImage || (u.source === 'youtube' ? youtubeThumbnail(u.uploadUrl ?? '') : null),
-  ]));
+  // Only stored covers (from the song-info lookup); no cover means the card shows none.
+  const uploadCover = new Map(uploads.map((u) => [u._id.toString(), u.coverImage || null]));
 
   const resolved: ResolvedTags = { users: new Map(), projects: new Map() };
   for (const u of users) {
