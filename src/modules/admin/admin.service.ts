@@ -582,7 +582,18 @@ export async function listBannedIps(): Promise<Record<string, unknown>[]> {
   });
 }
 
+/** Roles the actor may not act against: their own rank and everything above it. */
+async function protectedRolesFor(adminId: string): Promise<Role[]> {
+  const myRank = await actorRank(adminId);
+  return (Object.keys(ROLE_RANK) as Role[]).filter(r => ROLE_RANK[r] >= myRank);
+}
+
 export async function blockIp(ip: string, reason: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {
+  // A network ban is a ban on every account behind it, so it is held to the
+  // same rank rule as banning an account directly.
+  if (await User.exists({ lastIp: ip, role: { $in: await protectedRolesFor(adminId) } })) {
+    return { error: 'Cannot block a network used by a user of equal or higher rank', status: 403 };
+  }
   const existing = await BannedIp.findOne({ ip });
   if (existing) return { error: 'IP already banned', status: 409 };
 
@@ -610,6 +621,10 @@ export async function listBannedDevices(): Promise<Record<string, unknown>[]> {
 }
 
 export async function blockDevice(deviceId: string, reason: string, adminId: string, actorIp?: string): Promise<Record<string, unknown>> {
+  const deviceOwner = await UserDevice.findOne({ deviceId }).select('userId').lean<{ userId?: unknown }>();
+  if (deviceOwner?.userId && await User.exists({ _id: deviceOwner.userId, role: { $in: await protectedRolesFor(adminId) } })) {
+    return { error: 'Cannot block a device used by a user of equal or higher rank', status: 403 };
+  }
   const existing = await BannedDevice.findOne({ deviceId });
   if (existing) return { error: 'Device already banned', status: 409 };
 
