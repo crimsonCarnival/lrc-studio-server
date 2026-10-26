@@ -26,6 +26,7 @@ import adminRoutes from './modules/admin/admin.routes.js';
 import youtubeRoutes from './modules/youtube/youtube.routes.js';
 import geniusRoutes from './modules/genius/genius.routes.js';
 import healthRoutes from './modules/health/health.routes.js';
+import rootRoutes from './modules/root/root.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
 import ogRoutes from './modules/og/og.routes.js';
 import asrRoutes from './modules/asr/asr.routes.js';
@@ -132,6 +133,7 @@ async function build() {
   await app.register(lyricsRoutes, { prefix: '/editor' });
   await app.register(geniusRoutes, { prefix: '/lyrics' });
 
+  await app.register(rootRoutes);
   await app.register(healthRoutes, { prefix: '/health' });
   await app.register(notificationsRoutes, { prefix: '/notifications' });
   await app.register(ogRoutes, { prefix: '/og' });
