@@ -13,6 +13,7 @@ import { requestResolvers }  from './request.resolvers.js';
 import { artistResolvers }   from './artist.resolvers.js';
 import { badgeResolvers }    from './badge.resolvers.js';
 import { wallResolvers }     from './wall.resolvers.js';
+import { reportResolvers }   from './report.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -30,6 +31,7 @@ export const resolvers = {
     ...artistResolvers.Query,
     ...badgeResolvers.Query,
     ...wallResolvers.Query,
+    ...reportResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -43,6 +45,7 @@ export const resolvers = {
     ...requestResolvers.Mutation,
     ...badgeResolvers.Mutation,
     ...wallResolvers.Mutation,
+    ...reportResolvers.Mutation,
   },
   User:     userResolvers.User,
   PublicUser: publicUserResolvers,
