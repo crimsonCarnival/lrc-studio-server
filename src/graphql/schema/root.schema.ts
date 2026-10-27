@@ -9,7 +9,7 @@ export const rootSchema = `
     health: HealthStatus!
     me: User
     "A page of a wall (0-based). With focus, the page holding that comment, with the replies on the way to it in full; after is ignored (kept for older clients)."
-    wall(accountName: String!, page: Int, limit: Int, focus: ID, after: String): Wall!
+    wall(accountName: String!, page: Int, limit: Int, focus: ID, after: String, sort: String): Wall!
     "More replies to a comment, after the first offset."
     wallReplies(commentId: ID!, offset: Int, limit: Int): [WallComment!]!
     "One comment as the viewer sees it; null when it isn't shown to them."
@@ -17,6 +17,14 @@ export const rootSchema = `
     wallCommentLikers(id: ID!, limit: Int): WallLikers!
     "Reported wall comments, for moderators (users.ban)."
     wallReports(status: String): [WallReport!]!
+    "Reported wall comments grouped by comment, for moderators (users.ban)."
+    wallReportGroups(status: String, limit: Int): [WallReportGroup!]!
+    "Comments with open reports, for moderators (users.ban)."
+    wallOpenReportCount: Int!
+    "The viewer's own reports and what became of them."
+    myWallReports(limit: Int, offset: Int): MyWallReports!
+    "A comment's earlier versions, oldest first, then the current one."
+    wallCommentHistory(id: ID!): [WallCommentRevision!]!
     project(id: ID!): Project
     projects(limit: Int, offset: Int): [Project!]!
     upload(id: ID!): Upload
@@ -97,6 +105,20 @@ export const rootSchema = `
     "Moderators only. action: dismiss | delete"
     resolveWallReport(id: ID!, action: String!): Boolean!
     setWallSubscription(accountName: String!, subscribed: Boolean!): Boolean!
+    "The wall's owner or a moderator: approve or reject a held comment, hide or unhide one."
+    moderateWallComment(id: ID!, action: String!): Boolean!
+    "The wall's owner or a moderator: delete everything authorId wrote on the wall. Returns how many."
+    purgeWallComments(accountName: String!, authorId: ID!): Int!
+    "The wall's owner blocks a commenter and removes everything they wrote on the wall. Returns how many."
+    blockWallCommenter(authorId: ID!): Int!
+    "Stop (or resume) hearing about replies in the thread the comment belongs to."
+    setWallThreadMute(id: ID!, muted: Boolean!): Boolean!
+    "Add (on: true) or take back the viewer's emoji reaction on a comment."
+    setWallCommentReaction(id: ID!, emoji: String!, on: Boolean!): [WallReaction!]!
+    "wall.restrict: stop someone commenting on walls for hours (1, 24, 168 or 720; null until lifted). Returns the end, or 'forever'."
+    restrictWallCommenter(userId: ID!, hours: Int, reason: String): String
+    "wall.restrict: lift someone's commenting restriction."
+    liftWallRestriction(userId: ID!): Boolean!
     "What you hear about a followed user's projects: off, uploads or all."
     setFollowNotify(accountName: String!, level: String!): Boolean!
     blockUser(accountName: String!): Boolean!
@@ -159,6 +181,10 @@ export const rootSchema = `
     star_milestone: Boolean!
     new_device: Boolean!
     appeal_result: Boolean!
+    "Staff with users.ban: a wall comment was reported."
+    wall_report: Boolean!
+    "A moderator reviewed one of your reports."
+    wall_report_reviewed: Boolean!
   }
 
   type UserPreferences {
@@ -175,6 +201,11 @@ export const rootSchema = `
     showXpProgress: Boolean!
     wallEnabled: Boolean!
     allowTags: Boolean!
+    "everyone, following (people the owner follows) or nobody."
+    wallWhoCanComment: String!
+    "nobody, new_accounts, not_followed or everyone: whose comments wait for approval."
+    wallHoldFrom: String!
+    wallMutedWords: [String!]!
     notifications: NotificationPreferences!
   }
 
@@ -195,6 +226,8 @@ export const rootSchema = `
     star_milestone: Boolean
     new_device: Boolean
     appeal_result: Boolean
+    wall_report: Boolean
+    wall_report_reviewed: Boolean
   }
 
   input UpdatePreferencesInput {
@@ -211,6 +244,9 @@ export const rootSchema = `
     showXpProgress: Boolean
     wallEnabled: Boolean
     allowTags: Boolean
+    wallWhoCanComment: String
+    wallHoldFrom: String
+    wallMutedWords: [String!]
     notifications: NotificationPreferencesInput
   }
 

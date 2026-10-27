@@ -18,7 +18,19 @@ export interface IWallComment {
   editedAt?: Date | null;
   /** When the wall's owner pinned it (top-level only, one per wall). */
   pinnedAt?: Date | null;
+  /**
+   * visible: shown to everyone. pending: held for the owner's approval (only the owner, its
+   * author and moderators see it). hidden: hidden by the owner or a moderator (same audience).
+   */
+  status?: WallCommentStatus;
+  /** Why a pending comment was held. */
+  heldReason?: 'approval' | 'muted_word' | null;
+  /** Earlier bodies, oldest first: one entry per edit. */
+  revisions?: { body: string; editedAt: Date }[];
 }
+
+export const WALL_COMMENT_STATUSES = ['visible', 'pending', 'hidden'] as const;
+export type WallCommentStatus = (typeof WALL_COMMENT_STATUSES)[number];
 
 const wallCommentSchema = new mongoose.Schema<IWallComment>(
   {
@@ -30,6 +42,9 @@ const wallCommentSchema = new mongoose.Schema<IWallComment>(
     body: { type: String, required: true, trim: true, maxlength: WALL_MAX_LENGTH },
     editedAt: { type: Date, default: null },
     pinnedAt: { type: Date, default: null },
+    status: { type: String, enum: WALL_COMMENT_STATUSES, default: 'visible' },
+    heldReason: { type: String, enum: ['approval', 'muted_word', null], default: null },
+    revisions: { type: [{ _id: false, body: String, editedAt: Date }], default: [] },
   },
   { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_comments' },
 );
@@ -67,6 +82,8 @@ export interface IWallCommentReport {
   commentId: mongoose.Types.ObjectId;
   wallUserId: mongoose.Types.ObjectId;
   reporterId: mongoose.Types.ObjectId;
+  /** Who wrote the reported comment; kept so their record survives the comment's removal. */
+  authorId?: mongoose.Types.ObjectId | null;
   reason: WallReportReason;
   note: string;
   status: 'open' | 'dismissed' | 'actioned';
@@ -80,6 +97,7 @@ const wallCommentReportSchema = new mongoose.Schema<IWallCommentReport>(
     commentId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', required: true },
     wallUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     reporterId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     reason: { type: String, enum: WALL_REPORT_REASONS, required: true },
     note: { type: String, default: '', maxlength: 300 },
     status: { type: String, enum: ['open', 'dismissed', 'actioned'], default: 'open', index: true },
@@ -91,6 +109,8 @@ const wallCommentReportSchema = new mongoose.Schema<IWallCommentReport>(
 
 // One report per person per comment; reporting again just updates it.
 wallCommentReportSchema.index({ commentId: 1, reporterId: 1 }, { unique: true });
+// A reporter's own history, newest first.
+wallCommentReportSchema.index({ reporterId: 1, createdAt: -1 });
 
 export const WallCommentReport = mongoose.model<IWallCommentReport>('WallCommentReport', wallCommentReportSchema);
 
@@ -112,3 +132,69 @@ wallSubscriptionSchema.index({ wallUserId: 1, userId: 1 }, { unique: true });
 wallSubscriptionSchema.index({ userId: 1 });
 
 export const WallSubscription = mongoose.model<IWallSubscription>('WallSubscription', wallSubscriptionSchema);
+
+/** One person's emoji reaction on one comment; a person may react with several emoji. */
+export interface IWallCommentReaction {
+  commentId: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
+  /** A quick-reaction code or a single emoji (see reactions/reaction.emoji.ts). */
+  emoji: string;
+  createdAt: Date;
+}
+
+const wallCommentReactionSchema = new mongoose.Schema<IWallCommentReaction>(
+  {
+    commentId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    emoji: { type: String, required: true, maxlength: 32 },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_comment_reactions' },
+);
+
+wallCommentReactionSchema.index({ commentId: 1, userId: 1, emoji: 1 }, { unique: true });
+
+export const WallCommentReaction = mongoose.model<IWallCommentReaction>('WallCommentReaction', wallCommentReactionSchema);
+
+/** Someone who stopped hearing about replies in one thread (keyed by its top-level comment). */
+export interface IWallThreadMute {
+  userId: mongoose.Types.ObjectId;
+  rootId: mongoose.Types.ObjectId;
+  createdAt: Date;
+}
+
+const wallThreadMuteSchema = new mongoose.Schema<IWallThreadMute>(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    rootId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', required: true },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_thread_mutes' },
+);
+
+wallThreadMuteSchema.index({ userId: 1, rootId: 1 }, { unique: true });
+wallThreadMuteSchema.index({ rootId: 1 });
+
+export const WallThreadMute = mongoose.model<IWallThreadMute>('WallThreadMute', wallThreadMuteSchema);
+
+/**
+ * A moderator stopped someone from commenting on any wall, until `until` (null: until lifted).
+ * Set and lifted by staff with wall.restrict; one row per person, the latest decision wins.
+ */
+export interface IWallRestriction {
+  userId: mongoose.Types.ObjectId;
+  until: Date | null;
+  reason: string;
+  createdBy: mongoose.Types.ObjectId;
+  createdAt: Date;
+}
+
+const wallRestrictionSchema = new mongoose.Schema<IWallRestriction>(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+    until: { type: Date, default: null },
+    reason: { type: String, default: '', maxlength: 300 },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_restrictions' },
+);
+
+export const WallRestriction = mongoose.model<IWallRestriction>('WallRestriction', wallRestrictionSchema);

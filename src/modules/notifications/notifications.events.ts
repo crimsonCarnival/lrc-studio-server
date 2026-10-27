@@ -42,13 +42,13 @@ function dedupeKeyOf(match: Record<string, unknown>): string {
  */
 async function deliver(
   recipientId: string,
-  pref: PrefKey,
+  pref: PrefKey | null,
   match: Record<string, unknown>,
   update: Record<string, unknown>,
   { fanOut = false }: { fanOut?: boolean } = {},
 ): Promise<boolean> {
-  const prefs = await getPreferences(recipientId);
-  if (prefs.notifications[pref] === false) return false;
+  // A null pref is a notice the recipient can't switch off (a sanction on their account).
+  if (pref && (await getPreferences(recipientId)).notifications[pref] === false) return false;
   const filter = { userId: oid(recipientId), ...match, read: false };
   const withKey = { ...update, $setOnInsert: { ...(update.$setOnInsert as object | undefined), dedupeKey: dedupeKeyOf(match) } };
   const upsert = () => Notification.findOneAndUpdate(filter, withKey, { upsert: true, returnDocument: 'after' });
@@ -263,6 +263,56 @@ export async function notifyMention(params: {
       $set: { read: false, ...(commentId ? { 'meta.commentId': commentId } : {}) },
       $addToSet: { actors: actorDoc(actor) },
       $inc: { actorCount: 1 },
+    },
+  );
+}
+
+// ─── Wall reports ────────────────────────────────────────────────────────────
+
+/**
+ * Someone reported a wall comment: every moderator (users.ban) hears it. Unread ones fold
+ * into one notification per moderator ("ann and 2 others reported wall comments").
+ */
+export async function notifyWallReport(params: { moderatorIds: string[]; actor: Actor; wallOwnerAccountName: string; commentId: string }): Promise<void> {
+  const { moderatorIds, actor, wallOwnerAccountName, commentId } = params;
+  await Promise.all(moderatorIds.filter(id => id !== actor.userId).map(id => deliver(
+    id,
+    'wall_report',
+    { type: 'wall_report' },
+    {
+      $setOnInsert: { sticky: false, body: null },
+      $set: { read: false, 'meta.wall': wallOwnerAccountName, 'meta.commentId': commentId },
+      $addToSet: { actors: actorDoc(actor) },
+      $inc: { actorCount: 1 },
+    },
+    { fanOut: true },
+  ).catch(() => false)));
+}
+
+/** A moderator settled `recipientId`'s report: the comment was removed, or the report dismissed. */
+export async function notifyWallReportReviewed(params: { recipientId: string; reportId: string; outcome: 'dismissed' | 'actioned'; wallOwnerAccountName: string }): Promise<void> {
+  const { recipientId, reportId, outcome, wallOwnerAccountName } = params;
+  await deliver(
+    recipientId,
+    'wall_report_reviewed',
+    { type: 'wall_report_reviewed', 'meta.reportId': reportId },
+    {
+      $setOnInsert: { sticky: false, body: null, actors: [], actorCount: 0 },
+      $set: { read: false, 'meta.outcome': outcome, 'meta.wall': wallOwnerAccountName },
+    },
+  );
+}
+
+/** A moderator stopped `recipientId` from commenting on walls, until `until` (null: until lifted). */
+export async function notifyWallRestricted(params: { recipientId: string; until: Date | null; reason: string }): Promise<void> {
+  const { recipientId, until, reason } = params;
+  await deliver(
+    recipientId,
+    null,
+    { type: 'wall_restricted', 'meta.until': until?.toISOString() ?? null },
+    {
+      $setOnInsert: { sticky: false, actors: [], actorCount: 0 },
+      $set: { read: false, body: reason || null },
     },
   );
 }

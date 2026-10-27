@@ -1,5 +1,13 @@
 import mongoose from 'mongoose';
 
+export const WALL_COMMENT_POLICIES = ['everyone', 'following', 'nobody'] as const;
+export type WallCommentPolicy = (typeof WALL_COMMENT_POLICIES)[number];
+/** new_accounts: accounts younger than a week. not_followed: anyone the owner doesn't follow. */
+export const WALL_HOLD_POLICIES = ['nobody', 'new_accounts', 'not_followed', 'everyone'] as const;
+export type WallHoldPolicy = (typeof WALL_HOLD_POLICIES)[number];
+export const WALL_MUTED_WORDS_MAX = 50;
+export const WALL_MUTED_WORD_MAX_LENGTH = 40;
+
 export interface INotificationPrefs {
   follow: boolean;
   reaction: boolean;
@@ -17,6 +25,8 @@ export interface INotificationPrefs {
   star_milestone: boolean;
   new_device: boolean;
   appeal_result: boolean;
+  wall_report: boolean;
+  wall_report_reviewed: boolean;
 }
 
 export interface IUserPreferences {
@@ -40,6 +50,12 @@ export interface IUserPreferences {
   wallEnabled: boolean;
   // Whether other people can tag this user in comments. Never limits whom they tag.
   allowTags: boolean;
+  // Who may comment on this user's wall (the owner always may).
+  wallWhoCanComment: WallCommentPolicy;
+  // Whose comments wait for the owner's approval before others see them.
+  wallHoldFrom: WallHoldPolicy;
+  // Comments containing any of these (case-insensitive) are held for approval.
+  wallMutedWords: string[];
   notifications: INotificationPrefs;
 }
 
@@ -60,6 +76,8 @@ const notifPrefsSchema = new mongoose.Schema<INotificationPrefs>({
   star_milestone: { type: Boolean, default: true },
   new_device: { type: Boolean, default: true },
   appeal_result: { type: Boolean, default: true },
+  wall_report: { type: Boolean, default: true },
+  wall_report_reviewed: { type: Boolean, default: true },
 }, { _id: false });
 
 const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
@@ -76,6 +94,9 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   showXpProgress:           { type: Boolean, default: false },
   wallEnabled:              { type: Boolean, default: true },
   allowTags:                { type: Boolean, default: true },
+  wallWhoCanComment:        { type: String, enum: WALL_COMMENT_POLICIES, default: 'everyone' },
+  wallHoldFrom:             { type: String, enum: WALL_HOLD_POLICIES, default: 'nobody' },
+  wallMutedWords:           { type: [String], default: [] },
   notifications:           { type: notifPrefsSchema, default: () => ({}) },
 }, { timestamps: true, collection: 'user_preferences' });
 
