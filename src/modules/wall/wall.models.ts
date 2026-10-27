@@ -14,6 +14,10 @@ export interface IWallComment {
   depth: number;
   body: string;
   createdAt: Date;
+  /** When the author last edited it; edits are allowed for a short while after posting. */
+  editedAt?: Date | null;
+  /** When the wall's owner pinned it (top-level only, one per wall). */
+  pinnedAt?: Date | null;
 }
 
 const wallCommentSchema = new mongoose.Schema<IWallComment>(
@@ -24,6 +28,8 @@ const wallCommentSchema = new mongoose.Schema<IWallComment>(
     replyToId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', default: null },
     depth: { type: Number, required: true, min: 0, max: WALL_MAX_DEPTH, default: 0 },
     body: { type: String, required: true, trim: true, maxlength: WALL_MAX_LENGTH },
+    editedAt: { type: Date, default: null },
+    pinnedAt: { type: Date, default: null },
   },
   { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_comments' },
 );
@@ -52,6 +58,41 @@ const wallCommentLikeSchema = new mongoose.Schema<IWallCommentLike>(
 wallCommentLikeSchema.index({ commentId: 1, userId: 1 }, { unique: true });
 
 export const WallCommentLike = mongoose.model<IWallCommentLike>('WallCommentLike', wallCommentLikeSchema);
+
+export const WALL_REPORT_REASONS = ['spam', 'harassment', 'hate', 'sexual', 'other'] as const;
+export type WallReportReason = (typeof WALL_REPORT_REASONS)[number];
+
+/** One person's report of one comment, waiting for (or settled by) a moderator. */
+export interface IWallCommentReport {
+  commentId: mongoose.Types.ObjectId;
+  wallUserId: mongoose.Types.ObjectId;
+  reporterId: mongoose.Types.ObjectId;
+  reason: WallReportReason;
+  note: string;
+  status: 'open' | 'dismissed' | 'actioned';
+  resolvedBy?: mongoose.Types.ObjectId | null;
+  resolvedAt?: Date | null;
+  createdAt: Date;
+}
+
+const wallCommentReportSchema = new mongoose.Schema<IWallCommentReport>(
+  {
+    commentId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', required: true },
+    wallUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    reporterId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    reason: { type: String, enum: WALL_REPORT_REASONS, required: true },
+    note: { type: String, default: '', maxlength: 300 },
+    status: { type: String, enum: ['open', 'dismissed', 'actioned'], default: 'open', index: true },
+    resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    resolvedAt: { type: Date, default: null },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_comment_reports' },
+);
+
+// One report per person per comment; reporting again just updates it.
+wallCommentReportSchema.index({ commentId: 1, reporterId: 1 }, { unique: true });
+
+export const WallCommentReport = mongoose.model<IWallCommentReport>('WallCommentReport', wallCommentReportSchema);
 
 export interface IWallSubscription {
   wallUserId: mongoose.Types.ObjectId;

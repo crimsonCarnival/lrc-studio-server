@@ -8,7 +8,15 @@ export const rootSchema = `
   type Query {
     health: HealthStatus!
     me: User
-    wall(accountName: String!, after: String, limit: Int): Wall!
+    "A page of a wall (0-based). With focus, the page holding that comment, with the replies on the way to it in full; after is ignored (kept for older clients)."
+    wall(accountName: String!, page: Int, limit: Int, focus: ID, after: String): Wall!
+    "More replies to a comment, after the first offset."
+    wallReplies(commentId: ID!, offset: Int, limit: Int): [WallComment!]!
+    "One comment as the viewer sees it; null when it isn't shown to them."
+    wallComment(id: ID!): WallComment
+    wallCommentLikers(id: ID!, limit: Int): WallLikers!
+    "Reported wall comments, for moderators (users.ban)."
+    wallReports(status: String): [WallReport!]!
     project(id: ID!): Project
     projects(limit: Int, offset: Int): [Project!]!
     upload(id: ID!): Upload
@@ -80,6 +88,14 @@ export const rootSchema = `
     deleteWallComment(id: ID!): Boolean!
     "Like (liked: true) or unlike a wall comment. Idempotent."
     setWallCommentLike(id: ID!, liked: Boolean!): WallLikeResult!
+    "The author only, shortly after posting."
+    editWallComment(id: ID!, body: String!): WallComment!
+    "The wall's owner only; one pinned top-level comment per wall."
+    setWallCommentPin(id: ID!, pinned: Boolean!): Boolean!
+    "reason: spam | harassment | hate | sexual | other"
+    reportWallComment(id: ID!, reason: String!, note: String): Boolean!
+    "Moderators only. action: dismiss | delete"
+    resolveWallReport(id: ID!, action: String!): Boolean!
     setWallSubscription(accountName: String!, subscribed: Boolean!): Boolean!
     "What you hear about a followed user's projects: off, uploads or all."
     setFollowNotify(accountName: String!, level: String!): Boolean!
@@ -137,6 +153,7 @@ export const rootSchema = `
     followed_project: Boolean!
     wall_comment: Boolean!
     mention: Boolean!
+    comment_like: Boolean!
     level_up: Boolean!
     playlist_saved: Boolean!
     star_milestone: Boolean!
@@ -172,6 +189,7 @@ export const rootSchema = `
     followed_project: Boolean
     wall_comment: Boolean
     mention: Boolean
+    comment_like: Boolean
     level_up: Boolean
     playlist_saved: Boolean
     star_milestone: Boolean

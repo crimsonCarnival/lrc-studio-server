@@ -216,6 +216,31 @@ export async function notifyWallComment(params: {
 }
 
 /**
+ * `actor` liked `recipientId`'s comment on `wallOwner`'s wall. Unread likes on the same comment
+ * fold into one notification ("ann and 3 others liked your comment").
+ */
+export async function notifyCommentLike(params: {
+  recipientId: string;
+  actor: Actor;
+  wallOwnerAccountName: string;
+  commentId: string;
+}): Promise<void> {
+  const { recipientId, actor, wallOwnerAccountName, commentId } = params;
+  if (recipientId === actor.userId || await blocked(recipientId, actor.userId)) return;
+  await deliver(
+    recipientId,
+    'comment_like',
+    { type: 'comment_like', 'meta.commentId': commentId },
+    {
+      $setOnInsert: { sticky: false, body: null },
+      $set: { read: false, 'meta.wall': wallOwnerAccountName },
+      $addToSet: { actors: actorDoc(actor) },
+      $inc: { actorCount: 1 },
+    },
+  );
+}
+
+/**
  * `actor` tagged `recipientId` in a comment on `wallOwner`'s wall. Unread tags on the same
  * wall fold into one notification. Returns whether one was delivered (false when the
  * recipient turned mentions off, or is in a block relationship with the actor).

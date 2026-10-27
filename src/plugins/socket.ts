@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/mongo-adapter';
 import { parseCookie } from 'cookie';
 import { verifyLiveAccessToken } from './auth.js';
+import { wallRoom } from '../modules/wall/wall.service.js';
 import { setIO } from '../socket/socket.manager.js';
 import { initSocialGraph } from '../lib/social-graph.js';
 import { initRequestQueue } from '../modules/requests/request.queue.js';
@@ -236,6 +237,19 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     fastify.log.info('Request queue initialized');
     io.on('connection', (socket) => {
       fastify.log.info({ socketId: socket.id }, 'socket connected');
+
+      // Watching a profile wall live: changes arrive as 'wall:event' and each viewer refetches
+      // what they may see. Anyone who can open the wall may watch it, guests included.
+      socket.on('wall:watch', async (accountName: unknown) => {
+        if (typeof accountName !== 'string' || accountName.length > 60) return;
+        const room = await wallRoom((socket.data.userId as string | undefined) ?? null, accountName);
+        if (!room) return;
+        for (const r of socket.rooms) if (r.startsWith('wall:') && r !== room) socket.leave(r);
+        socket.join(room);
+      });
+      socket.on('wall:unwatch', () => {
+        for (const r of socket.rooms) if (r.startsWith('wall:')) socket.leave(r);
+      });
 
       socket.on('join:user', async (ack?: unknown) => {
         // Identity comes only from the verified JWT in the handshake, never from

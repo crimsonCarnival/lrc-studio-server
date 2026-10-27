@@ -8,9 +8,12 @@ import { invalidateBlockCache } from '../blocks/block-list.cache.js';
 import Notification from '../notifications/notification.model.js';
 import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { updatePreferences } from '../user-preferences/user-preferences.service.js';
-import { WallComment, WallCommentLike, WallSubscription } from './wall.models.js';
+import { WallComment, WallCommentLike, WallCommentReport, WallSubscription } from './wall.models.js';
 import Project from '../projects/project.model.js';
-import { addComment, deleteComment, getWall, setLike, setSubscription, WallError } from './wall.service.js';
+import {
+  addComment, deleteComment, editComment, getComment, getLikers, getReplies, getWall, listReports, reportComment,
+  resolveReport, setLike, setPin, setSubscription, WallError, REPLY_PREVIEW, EDIT_WINDOW_MS,
+} from './wall.service.js';
 
 let mongo: MongoMemoryServer;
 beforeAll(async () => {
@@ -27,7 +30,7 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}), Block.deleteMany({}), Notification.deleteMany({}),
     UserPreferences.deleteMany({}), WallComment.deleteMany({}), WallSubscription.deleteMany({}),
-    Project.deleteMany({}), WallCommentLike.deleteMany({}),
+    Project.deleteMany({}), WallCommentLike.deleteMany({}), WallCommentReport.deleteMany({}),
   ]);
 });
 
@@ -243,5 +246,118 @@ describe('tags', () => {
     await addComment(a, 'sam', `@[u:${a}] note to self`);
     await settle();
     expect(await Notification.countDocuments({ userId: a })).toBe(0);
+  });
+});
+
+describe('paging, replies and links', () => {
+  it('sends the first replies with each comment and the rest in batches', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    const top = await addComment(a, 'sam', 'top');
+    for (let i = 0; i < REPLY_PREVIEW + 2; i++) await addComment(owner, 'sam', `r${i}`, top.id);
+    const shown = (await getWall(a, 'sam')).comments[0];
+    expect(shown.replies).toHaveLength(REPLY_PREVIEW);
+    expect(shown).toMatchObject({ replyCount: REPLY_PREVIEW + 2, descendantCount: REPLY_PREVIEW + 2 });
+    expect((await getReplies(a, top.id, REPLY_PREVIEW, 10)).map(r => r.body)).toEqual([`r${REPLY_PREVIEW}`, `r${REPLY_PREVIEW + 1}`]);
+  });
+
+  it('counts every comment, and opens the page holding a linked reply with its thread in full', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    const old = await addComment(a, 'sam', 'old');
+    for (let i = 0; i < REPLY_PREVIEW + 1; i++) await addComment(owner, 'sam', `r${i}`, old.id);
+    const deep = await addComment(owner, 'sam', 'deep', old.id);
+    for (let i = 0; i < 3; i++) await addComment(a, 'sam', `new${i}`);
+
+    const page = await getWall(a, 'sam', { limit: 2, focus: deep.id });
+    expect(page.page).toBe(1);
+    expect(page.totalAll).toBe(1 + REPLY_PREVIEW + 1 + 1 + 3);
+    expect(page.comments.find(c => c.id === old.id)?.replies.map(r => r.id)).toContain(deep.id);
+  });
+
+  it('shows the pinned comment first on page one, for its owner only to pin', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    const first = await addComment(a, 'sam', 'first');
+    await addComment(a, 'sam', 'second');
+    expect(await codeOf(() => setPin(a, first.id, true))).toBe('forbidden');
+    await setPin(owner, first.id, true);
+    const wall = await getWall(a, 'sam');
+    expect(wall.comments.map(c => c.body)).toEqual(['first', 'second']);
+    expect(wall.comments[0].pinned).toBe(true);
+    expect(wall.total).toBe(1); // the pinned one doesn't count towards paging
+  });
+
+  it('marks a reply whose answered comment is gone', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    const top = await addComment(a, 'sam', 'top');
+    const reply = await addComment(owner, 'sam', 'reply', top.id);
+    const nested = await addComment(a, 'sam', 'nested', reply.id);
+    const answer = await addComment(owner, 'sam', 'answer', nested.id);
+    await deleteComment(a, nested.id);
+    expect(await getComment(a, answer.id)).toMatchObject({ replyToId: nested.id });
+    const shown = (await getWall(a, 'sam')).comments[0].replies[0].replies[0];
+    expect(shown).toMatchObject({ id: answer.id, replyToMissing: true });
+  });
+});
+
+describe('edits', () => {
+  it('lets the author edit within the window, marks it, and tells only newly tagged people', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
+    const c = await addComment(a, 'sam', `hi @[u:${owner}]`);
+    expect(c.canEdit).toBe(true);
+    expect(await codeOf(() => editComment(b, c.id, 'nope'))).toBe('forbidden');
+    await new Promise(r => setTimeout(r, 50));
+    await Notification.deleteMany({});
+
+    const edited = await editComment(a, c.id, `hi @[u:${owner}] and @[u:${b}]`);
+    expect(edited.editedAt).not.toBeNull();
+    await new Promise(r => setTimeout(r, 50));
+    expect(await Notification.countDocuments({ userId: b, type: 'mention' })).toBe(1);
+    expect(await Notification.countDocuments({ userId: owner, type: 'mention' })).toBe(0);
+  });
+
+  it('refuses once the window has passed', async () => {
+    await mkUser('sam');
+    const a = await mkUser('ann');
+    const c = await addComment(a, 'sam', 'hi');
+    // Straight to the collection: Mongoose treats createdAt as immutable.
+    await WallComment.collection.updateOne({ _id: new mongoose.Types.ObjectId(c.id) }, { $set: { createdAt: new Date(Date.now() - EDIT_WINDOW_MS - 1000) } });
+    expect(await codeOf(() => editComment(a, c.id, 'later'))).toBe('edit_window_closed');
+  });
+});
+
+describe('like notifications and likers', () => {
+  it('tells the author once per new like, folded per comment, and lists who liked it', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
+    const c = await addComment(a, 'sam', 'hi');
+    await setLike(owner, c.id, true);
+    await setLike(b, c.id, true);
+    await setLike(b, c.id, true); // again: no news
+    await setLike(a, c.id, true); // your own: no news
+    await new Promise(r => setTimeout(r, 50));
+    const notes = await Notification.find({ userId: a, type: 'comment_like' }).lean();
+    expect(notes).toHaveLength(1);
+    expect(notes[0].actorCount).toBe(2);
+    const likers = await getLikers(owner, c.id);
+    expect(likers.total).toBe(3);
+    expect(likers.users.map(u => u.accountName).sort()).toEqual(['ann', 'bob', 'sam']);
+  });
+});
+
+describe('reports', () => {
+  it('lets others report a comment, and moderators dismiss or delete it', async () => {
+    await mkUser('sam');
+    const a = await mkUser('ann'), b = await mkUser('bob'), mod = await mkUser('mia', ['users.ban']);
+    const c = await addComment(a, 'sam', 'rude');
+    expect(await codeOf(() => reportComment(a, c.id, 'spam', null))).toBe('forbidden');
+    expect(await codeOf(() => reportComment(b, c.id, 'nonsense', null))).toBe('invalid_body');
+    await reportComment(b, c.id, 'harassment', 'not nice');
+
+    expect(await codeOf(() => listReports(b))).toBe('forbidden');
+    const [report] = await listReports(mod);
+    expect(report).toMatchObject({ reason: 'harassment', note: 'not nice', openCount: 1, comment: { id: c.id } });
+
+    await resolveReport(mod, report.id, 'delete');
+    expect(await WallComment.countDocuments({ _id: c.id })).toBe(0);
+    expect(await listReports(mod)).toHaveLength(0);
+    expect(await listReports(mod, 'actioned')).toHaveLength(1);
   });
 });
