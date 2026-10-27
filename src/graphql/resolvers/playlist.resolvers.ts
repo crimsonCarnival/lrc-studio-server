@@ -12,6 +12,7 @@ import { Context } from './context.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
 import { visibilityForNewContent } from '../../modules/users/owner-visibility.service.js';
 import { getBlockedSet, isHiddenByBlock } from '../../modules/blocks/block.service.js';
+import { removePlaylist } from '../../modules/playlists/playlists.service.js';
 
 type LeanPlaylist = IPlaylist & { _id: mongoose.Types.ObjectId };
 type LeanProject = IProject & { _id: mongoose.Types.ObjectId; publicId: string };
@@ -210,8 +211,7 @@ export const playlistResolvers = {
       const playlist = await Playlist.findById(id);
       if (!playlist) throw new Error('not_found');
       if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
-      await SavedPlaylist.deleteMany({ playlistId: new mongoose.Types.ObjectId(id) });
-      await Playlist.deleteOne({ _id: id });
+      await removePlaylist(playlist._id);
       return true;
     },
 

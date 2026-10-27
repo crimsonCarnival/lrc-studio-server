@@ -2,8 +2,8 @@ import mongoose from 'mongoose';
 import User from '../users/user.model.js';
 import type { IUser } from '../users/user.model.js';
 import {
-  WallComment, WallCommentLike, WallCommentReaction, WallCommentReport, WallRestriction, WallSubscription, WallThreadMute,
-  WALL_MAX_DEPTH, WALL_MAX_LENGTH, WALL_REPORT_REASONS,
+  WallComment, WallCommentLike, WallCommentReaction, WallRestriction, WallSubscription, WallThreadMute,
+  WALL_MAX_DEPTH, WALL_MAX_LENGTH,
 } from './wall.models.js';
 import type { IWallComment, WallCommentStatus } from './wall.models.js';
 import Follow from '../users/follow.model.js';
@@ -16,9 +16,10 @@ import { getBlockedSet, isBlockedEitherWay } from '../blocks/block.service.js';
 import { hasPermission, rankOf } from '../../shared/permissions.js';
 import { stripHtml } from '../../utils/sanitize.js';
 import {
-  notifyWallComment, notifyMention, notifyCommentLike, notifyWallReport, notifyWallReportReviewed, notifyWallRestricted,
+  notifyWallComment, notifyMention, notifyCommentLike, notifyWallRestricted,
 } from '../notifications/notifications.events.js';
 import { getIO } from '../../socket/socket.manager.js';
+import { settleReports } from '../reports/reports.service.js';
 import { parseTags, checkTags, resolveTags, tagsOf } from './wall-mentions.js';
 import type { WallMention, WallProjectRef } from './wall-mentions.js';
 
@@ -678,10 +679,7 @@ export async function deleteComment(viewerId: string, commentId: string): Promis
   await WallCommentReaction.deleteMany({ commentId: { $in: doomed } });
   await WallThreadMute.deleteMany({ rootId: { $in: doomed } });
   // Reports on what was removed are settled by the removal; they stay as a record.
-  await WallCommentReport.updateMany(
-    { commentId: { $in: doomed }, status: 'open' },
-    { $set: { status: 'actioned', resolvedBy: oid(viewerId), resolvedAt: new Date() } },
-  );
+  await settleReports('wall_comment', doomed, 'actioned', viewerId);
   emitWall(comment.wallUserId.toString(), { type: 'delete', commentId });
   return true;
 }
@@ -949,281 +947,6 @@ export async function setPin(viewerId: string, commentId: string, pinned: boolea
   }
   emitWall(viewerId, { type: 'pin', commentId: pinned ? commentId : null });
   return pinned;
-}
-
-// Per reporter: enough for a bad day on a busy wall, not enough to flood the queue.
-const REPORT_LIMIT_COUNT = 20;
-const REPORT_LIMIT_WINDOW_MS = 60 * 60_000;
-
-/** Moderators (users.ban) who hear about new reports. */
-async function moderatorIds(): Promise<string[]> {
-  const mods = await User.find({ permissions: 'users.ban', isDeleted: { $ne: true }, 'ban.active': { $ne: true } }).select('_id').limit(200).lean<LeanUser[]>();
-  return mods.map(m => m._id.toString());
-}
-
-/** Comments with open reports: the count on the moderators' Reports tab. */
-export async function openReportCount(): Promise<number> {
-  return (await WallCommentReport.distinct('commentId', { status: 'open' })).length;
-}
-
-/** Tells moderators watching the dashboard that the queue changed. */
-async function emitReportQueue(): Promise<void> {
-  try { getIO().to('admin').emit('admin:wall_reports', { open: await openReportCount() }); } catch { /* socket not ready */ }
-}
-
-/**
- * Reports a comment to the moderators. Anyone signed in who can see it, except its author;
- * reporting the same comment again updates the reason and reopens a settled report. A new
- * report reaches the moderators at once (a notification, and the dashboard's live count).
- */
-export async function reportComment(viewerId: string, commentId: string, reason: string, rawNote: string | null | undefined): Promise<boolean> {
-  if (!(WALL_REPORT_REASONS as readonly string[]).includes(reason)) throw new WallError('invalid_body');
-  const comment = await getComment(viewerId, commentId);
-  if (!comment) throw new WallError('not_found');
-  if (comment.author.id === viewerId) throw new WallError('forbidden');
-  const doc = await WallComment.findById(commentId).select('wallUserId authorId').lean<LeanComment>();
-  if (!doc) throw new WallError('not_found');
-  const recent = await WallCommentReport.countDocuments({ reporterId: oid(viewerId), createdAt: { $gte: new Date(Date.now() - REPORT_LIMIT_WINDOW_MS) } });
-  if (recent >= REPORT_LIMIT_COUNT) throw new WallError('rate_limited');
-  const note = stripHtml(rawNote ?? '').trim().slice(0, 300);
-  const previous = await WallCommentReport.findOne({ commentId: oid(commentId), reporterId: oid(viewerId) }).select('status').lean();
-  await WallCommentReport.updateOne(
-    { commentId: oid(commentId), reporterId: oid(viewerId) },
-    {
-      // createdAt is reset too, so a reopened report sits at the end of the queue and counts toward the limit.
-      $set: { reason, note, status: 'open', resolvedBy: null, resolvedAt: null, createdAt: new Date() },
-      $setOnInsert: { commentId: oid(commentId), reporterId: oid(viewerId), wallUserId: doc.wallUserId, authorId: doc.authorId },
-    },
-    { upsert: true, timestamps: false },
-  );
-  // Updating a report that is still open is not news.
-  if (previous?.status !== 'open') {
-    const [reporter, wallOwner] = await Promise.all([
-      User.findById(viewerId).select('accountName avatarUrl').lean<LeanUser>(),
-      User.findById(doc.wallUserId).select('accountName').lean<LeanUser>(),
-    ]);
-    notifyWallReport({
-      moderatorIds: await moderatorIds(),
-      actor: { userId: viewerId, accountName: reporter?.accountName ?? '', avatarUrl: reporter?.avatarUrl ?? null },
-      wallOwnerAccountName: wallOwner?.accountName ?? '',
-      commentId,
-    }).catch(() => {});
-    emitReportQueue().catch(() => {});
-  }
-  return true;
-}
-
-type ReportStatus = 'open' | 'dismissed' | 'actioned';
-type LeanReport = { _id: mongoose.Types.ObjectId; commentId: mongoose.Types.ObjectId; wallUserId: mongoose.Types.ObjectId; reporterId: mongoose.Types.ObjectId; authorId?: mongoose.Types.ObjectId | null; reason: string; note: string; status: ReportStatus; createdAt: Date; resolvedAt?: Date | null };
-
-interface ReportCommentView {
-  id: string;
-  body: string;
-  mentions: WallMention[];
-  projectRefs: WallProjectRef[];
-  author: WallAuthor | null;
-  createdAt: string;
-  status: WallCommentStatus;
-}
-
-export interface WallReportView {
-  id: string;
-  reason: string;
-  note: string;
-  status: string;
-  createdAt: string;
-  resolvedAt: string | null;
-  /** How many open reports this comment has, this one included. */
-  openCount: number;
-  reporter: WallAuthor | null;
-  wallAccountName: string;
-  comment: ReportCommentView | null;
-}
-
-export interface WallReportGroupView {
-  /** The comment's id (it stays even once the comment is gone). */
-  commentId: string;
-  wallAccountName: string;
-  comment: ReportCommentView | null;
-  /** The comment it answers, for context; null for a top-level comment. */
-  parent: ReportCommentView | null;
-  reports: WallReportView[];
-  openCount: number;
-  latestAt: string;
-  /** The author's record: comments removed after reports in the last 30 days, and any restriction. */
-  authorActionedCount: number;
-  authorRestrictedUntil: string | null;
-}
-
-async function requireModerator(viewerId: string): Promise<void> {
-  if (!(await isModerator(viewerId))) throw new WallError('forbidden');
-}
-
-/** Views of reports and their comments (with tags resolved for `viewerId`). */
-async function reportViews(viewerId: string, reports: LeanReport[], withParents = false) {
-  const commentIds = [...new Set(reports.map(r => r.commentId.toString()))];
-  const comments = await WallComment.find({ _id: { $in: commentIds } }).lean<LeanComment[]>();
-  const parents = withParents
-    ? await WallComment.find({ _id: { $in: comments.map(c => c.replyToId ?? c.parentId).filter(Boolean) } }).lean<LeanComment[]>()
-    : [];
-  const userIds = [...new Set([
-    ...reports.map(r => r.reporterId.toString()),
-    ...reports.map(r => r.wallUserId.toString()),
-    ...[...comments, ...parents].map(c => c.authorId.toString()),
-  ])];
-  const [users, openCounts, resolved] = await Promise.all([
-    User.find({ _id: { $in: userIds } }).select('accountName displayName avatarUrl role').lean<LeanUser[]>(),
-    WallCommentReport.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
-      { $match: { commentId: { $in: commentIds.map(oid) }, status: 'open' } },
-      { $group: { _id: '$commentId', n: { $sum: 1 } } },
-    ]),
-    resolveTags([...comments, ...parents].map(c => c.body), viewerId),
-  ]);
-  const userById = new Map(users.map(u => [u._id.toString(), u]));
-  const commentById = new Map([...comments, ...parents].map(c => [c._id.toString(), c]));
-  const openCountOf = new Map(openCounts.map(o => [o._id.toString(), o.n]));
-  const person = (id: string) => { const u = userById.get(id); return u ? authorView(u, true) : null; };
-  const commentView = (c: LeanComment | undefined): ReportCommentView | null => c ? {
-    id: c._id.toString(), body: c.body, ...tagsOf(c.body, resolved), author: person(c.authorId.toString()),
-    createdAt: c.createdAt.toISOString(), status: c.status ?? 'visible',
-  } : null;
-  const view = (r: LeanReport): WallReportView => ({
-    id: r._id.toString(),
-    reason: r.reason,
-    note: r.note,
-    status: r.status,
-    createdAt: r.createdAt.toISOString(),
-    resolvedAt: r.resolvedAt?.toISOString() ?? null,
-    openCount: openCountOf.get(r.commentId.toString()) ?? 0,
-    reporter: person(r.reporterId.toString()),
-    wallAccountName: userById.get(r.wallUserId.toString())?.accountName ?? '',
-    comment: commentView(commentById.get(r.commentId.toString())),
-  });
-  const parentOf = (commentId: string) => {
-    const c = commentById.get(commentId);
-    const pid = c ? (c.replyToId ?? c.parentId)?.toString() : null;
-    return pid ? commentView(commentById.get(pid)) : null;
-  };
-  return { view, parentOf, commentById };
-}
-
-/** Reports for moderators (users.ban), oldest open first. */
-export async function listReports(viewerId: string, status: ReportStatus = 'open', limit = 50): Promise<WallReportView[]> {
-  await requireModerator(viewerId);
-  const reports = await WallCommentReport.find({ status }).sort({ createdAt: status === 'open' ? 1 : -1 }).limit(Math.min(100, Math.max(1, limit))).lean<LeanReport[]>();
-  const { view } = await reportViews(viewerId, reports);
-  return reports.map(view);
-}
-
-/**
- * Reports for moderators, one entry per comment: every report on it with that status, the
- * comment it answers, and its author's record. Open ones oldest first, settled ones newest first.
- */
-export async function listReportGroups(viewerId: string, status: ReportStatus = 'open', limit = 30): Promise<WallReportGroupView[]> {
-  await requireModerator(viewerId);
-  const latest = await WallCommentReport.aggregate<{ _id: mongoose.Types.ObjectId; at: Date }>([
-    { $match: { status } },
-    { $group: { _id: '$commentId', at: { $max: status === 'open' ? '$createdAt' : { $ifNull: ['$resolvedAt', '$createdAt'] } } } },
-    { $sort: { at: status === 'open' ? 1 : -1 } },
-    { $limit: Math.min(100, Math.max(1, limit)) },
-  ]);
-  const reports = await WallCommentReport.find({ commentId: { $in: latest.map(l => l._id) }, status }).sort({ createdAt: 1 }).lean<LeanReport[]>();
-  const { view, parentOf, commentById } = await reportViews(viewerId, reports, true);
-
-  const authorIds = [...new Set([
-    ...[...commentById.values()].map(c => c.authorId.toString()),
-    ...reports.flatMap(r => r.authorId ? [r.authorId.toString()] : []),
-  ])];
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60_000);
-  const [actioned, restrictions] = await Promise.all([
-    // Distinct comments of theirs removed after a report (reports keep the author's id).
-    WallCommentReport.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
-      { $match: { status: 'actioned', resolvedAt: { $gte: since }, authorId: { $in: authorIds.map(oid) } } },
-      { $group: { _id: '$authorId', n: { $addToSet: '$commentId' } } },
-      { $project: { n: { $size: '$n' } } },
-    ]),
-    WallRestriction.find({ userId: { $in: authorIds.map(oid) } }).lean(),
-  ]);
-  const actionedOf = new Map(actioned.map(a => [a._id.toString(), a.n]));
-  const restrictionOf = new Map(restrictions
-    .filter(r => !r.until || r.until.getTime() > Date.now())
-    .map(r => [r.userId.toString(), r.until?.toISOString() ?? 'forever']));
-
-  const byComment = new Map<string, WallReportView[]>();
-  for (const r of reports) {
-    const key = r.commentId.toString();
-    byComment.set(key, [...(byComment.get(key) ?? []), view(r)]);
-  }
-  return latest.filter(l => byComment.has(l._id.toString())).map(l => {
-    const key = l._id.toString();
-    const group = byComment.get(key)!;
-    const authorId = commentById.get(key)?.authorId.toString() ?? reports.find(r => r.commentId.toString() === key && r.authorId)?.authorId?.toString() ?? null;
-    return {
-      commentId: key,
-      wallAccountName: group[0].wallAccountName,
-      comment: group[0].comment,
-      parent: parentOf(key),
-      reports: group,
-      openCount: group[0].openCount,
-      latestAt: l.at.toISOString(),
-      authorActionedCount: authorId ? actionedOf.get(authorId) ?? 0 : 0,
-      authorRestrictedUntil: authorId ? restrictionOf.get(authorId) ?? null : null,
-    };
-  });
-}
-
-/** The viewer's own reports, newest first, with what became of each. */
-export async function listMyReports(viewerId: string, limit = 50, offset = 0): Promise<{ reports: WallReportView[]; total: number }> {
-  const filter = { reporterId: oid(viewerId) };
-  const [reports, total] = await Promise.all([
-    WallCommentReport.find(filter).sort({ createdAt: -1 }).skip(Math.max(0, offset)).limit(Math.min(100, Math.max(1, limit))).lean<LeanReport[]>(),
-    WallCommentReport.countDocuments(filter),
-  ]);
-  const { view } = await reportViews(viewerId, reports);
-  // A reporter learns the outcome, not how many others reported it.
-  return { reports: reports.map(r => ({ ...view(r), openCount: 0 })), total };
-}
-
-/**
- * Settles a report. 'delete' removes the comment (and with it every open report on it);
- * 'dismiss' closes this comment's open reports without touching it. Each reporter is told,
- * and the decision goes in the audit log.
- */
-export async function resolveReport(viewerId: string, reportId: string, action: 'dismiss' | 'delete', ip?: string | null): Promise<boolean> {
-  await requireModerator(viewerId);
-  const report = mongoose.isValidObjectId(reportId) ? await WallCommentReport.findById(reportId).lean<LeanReport>() : null;
-  if (!report) throw new WallError('not_found');
-  const settled = await WallCommentReport.find({ commentId: report.commentId, status: 'open' }).select('_id reporterId').lean<LeanReport[]>();
-  const comment = await WallComment.findById(report.commentId).select('authorId body').lean<LeanComment>();
-  const outcome = action === 'delete' ? 'actioned' : 'dismissed';
-  if (action === 'delete') {
-    await deleteComment(viewerId, report.commentId.toString());
-  }
-  // Already-deleted comment: still close its reports.
-  await WallCommentReport.updateMany(
-    { commentId: report.commentId, status: 'open' },
-    { $set: { status: outcome, resolvedBy: oid(viewerId), resolvedAt: new Date() } },
-  );
-
-  const [wallOwner, author] = await Promise.all([
-    User.findById(report.wallUserId).select('accountName').lean<LeanUser>(),
-    comment ? User.findById(comment.authorId).select('accountName').lean<LeanUser>() : null,
-  ]);
-  for (const r of settled) {
-    notifyWallReportReviewed({
-      recipientId: r.reporterId.toString(), reportId: r._id.toString(), outcome, wallOwnerAccountName: wallOwner?.accountName ?? '',
-    }).catch(() => {});
-  }
-  await logAdminAction({
-    adminId: viewerId,
-    action: action === 'delete' ? 'wall_report_delete' : 'wall_report_dismiss',
-    targetId: comment?.authorId.toString() ?? null,
-    targetName: author?.accountName ?? null,
-    details: `${settled.length} report(s) on ${wallOwner?.accountName ?? '?'}'s wall${comment ? `: ${comment.body.slice(0, 200)}` : ''}`,
-    ip,
-  }).catch(() => {});
-  emitReportQueue().catch(() => {});
-  return true;
 }
 
 // ─── Commenting restrictions (wall.restrict) ────────────────────────────────

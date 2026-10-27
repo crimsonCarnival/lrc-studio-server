@@ -8,11 +8,16 @@ import { invalidateBlockCache } from '../blocks/block-list.cache.js';
 import Notification from '../notifications/notification.model.js';
 import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { updatePreferences } from '../user-preferences/user-preferences.service.js';
-import { WallComment, WallCommentLike, WallCommentReport, WallSubscription } from './wall.models.js';
+import { WallComment, WallCommentLike, WallSubscription } from './wall.models.js';
+import { Report } from '../reports/report.model.js';
+import { ReportError } from '../reports/reports.service.js';
+import {
+  reportWallComment as reportComment, listWallReports as listReports, resolveWallReport as resolveReport,
+} from '../reports/reports.legacy.js';
 import Project from '../projects/project.model.js';
 import {
-  addComment, deleteComment, editComment, getComment, getLikers, getReplies, getWall, listReports, reportComment,
-  resolveReport, setLike, setPin, setSubscription, WallError, REPLY_PREVIEW, EDIT_WINDOW_MS,
+  addComment, deleteComment, editComment, getComment, getLikers, getReplies, getWall,
+  setLike, setPin, setSubscription, WallError, REPLY_PREVIEW, EDIT_WINDOW_MS,
 } from './wall.service.js';
 
 let mongo: MongoMemoryServer;
@@ -30,7 +35,7 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}), Block.deleteMany({}), Notification.deleteMany({}),
     UserPreferences.deleteMany({}), WallComment.deleteMany({}), WallSubscription.deleteMany({}),
-    Project.deleteMany({}), WallCommentLike.deleteMany({}), WallCommentReport.deleteMany({}),
+    Project.deleteMany({}), WallCommentLike.deleteMany({}), Report.deleteMany({}),
   ]);
 });
 
@@ -42,7 +47,7 @@ async function mkUser(accountName: string, permissions: string[] = []): Promise<
 }
 
 const codeOf = async (run: () => Promise<unknown>) => {
-  try { await run(); } catch (err) { return err instanceof WallError ? err.code : 'other'; }
+  try { await run(); } catch (err) { return err instanceof WallError || err instanceof ReportError ? err.code : 'other'; }
   return 'none';
 };
 

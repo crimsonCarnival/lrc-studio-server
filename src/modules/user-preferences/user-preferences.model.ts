@@ -27,6 +27,8 @@ export interface INotificationPrefs {
   appeal_result: boolean;
   wall_report: boolean;
   wall_report_reviewed: boolean;
+  report: boolean;
+  report_reviewed: boolean;
 }
 
 export interface IUserPreferences {
@@ -78,6 +80,8 @@ const notifPrefsSchema = new mongoose.Schema<INotificationPrefs>({
   appeal_result: { type: Boolean, default: true },
   wall_report: { type: Boolean, default: true },
   wall_report_reviewed: { type: Boolean, default: true },
+  report: { type: Boolean, default: true },
+  report_reviewed: { type: Boolean, default: true },
 }, { _id: false });
 
 const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
