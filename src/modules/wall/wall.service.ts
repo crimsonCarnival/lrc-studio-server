@@ -230,6 +230,18 @@ async function buildViews(
 
   // Roots are siblings only when they share a parent (wallReplies); otherwise each stands alone.
   const rootIds = new Set(roots.map(r => r._id.toString()));
+  // A root built on its own (a new reply, an edit, a live refetch) answers a sibling that
+  // isn't among the roots, so look that sibling up rather than calling it missing.
+  const outside = [...new Set(roots.map(r => r.replyToId?.toString()).filter((id): id is string => !!id && !rootIds.has(id)))];
+  if (outside.length) {
+    const answered = await WallComment.find({ _id: { $in: outside.map(oid) } }).select('authorId').lean<LeanComment[]>();
+    const answeredAuthors = await User.find({ _id: { $in: answered.map(c => c.authorId) } }).select('isDeleted').lean<LeanUser[]>();
+    const liveAuthors = new Set(answeredAuthors.filter(u => !u.isDeleted).map(u => u._id.toString()));
+    for (const c of answered) {
+      const authorId = c.authorId.toString();
+      if (liveAuthors.has(authorId) && !blockedSet.has(authorId)) rootIds.add(c._id.toString());
+    }
+  }
   return roots.map(r => build(r, rootIds)).filter((v): v is WallCommentView => v !== null);
 }
 

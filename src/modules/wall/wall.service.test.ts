@@ -285,6 +285,17 @@ describe('paging, replies and links', () => {
     expect(wall.total).toBe(1); // the pinned one doesn't count towards paging
   });
 
+  it('does not mark a new, edited or refetched reply as answering a missing comment', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    const top = await addComment(a, 'sam', 'top');
+    const reply = await addComment(owner, 'sam', 'reply', top.id);
+    const nested = await addComment(a, 'sam', 'xd', reply.id);
+    const answer = await addComment(owner, 'sam', 'answer', nested.id);
+    expect(answer).toMatchObject({ replyToId: nested.id, replyToMissing: false });
+    expect(await getComment(a, answer.id)).toMatchObject({ replyToMissing: false });
+    expect(await editComment(owner, answer.id, 'edited')).toMatchObject({ replyToMissing: false });
+  });
+
   it('marks a reply whose answered comment is gone', async () => {
     const owner = await mkUser('sam'), a = await mkUser('ann');
     const top = await addComment(a, 'sam', 'top');
@@ -292,7 +303,7 @@ describe('paging, replies and links', () => {
     const nested = await addComment(a, 'sam', 'nested', reply.id);
     const answer = await addComment(owner, 'sam', 'answer', nested.id);
     await deleteComment(a, nested.id);
-    expect(await getComment(a, answer.id)).toMatchObject({ replyToId: nested.id });
+    expect(await getComment(a, answer.id)).toMatchObject({ replyToId: nested.id, replyToMissing: true });
     const shown = (await getWall(a, 'sam')).comments[0].replies[0].replies[0];
     expect(shown).toMatchObject({ id: answer.id, replyToMissing: true });
   });
