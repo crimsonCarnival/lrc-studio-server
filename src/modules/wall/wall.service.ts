@@ -1,14 +1,23 @@
 import mongoose from 'mongoose';
 import User from '../users/user.model.js';
 import type { IUser } from '../users/user.model.js';
-import { WallComment, WallCommentLike, WallCommentReport, WallSubscription, WALL_MAX_DEPTH, WALL_MAX_LENGTH, WALL_REPORT_REASONS } from './wall.models.js';
-import type { IWallComment } from './wall.models.js';
+import {
+  WallComment, WallCommentLike, WallCommentReaction, WallCommentReport, WallRestriction, WallSubscription, WallThreadMute,
+  WALL_MAX_DEPTH, WALL_MAX_LENGTH, WALL_REPORT_REASONS,
+} from './wall.models.js';
+import type { IWallComment, WallCommentStatus } from './wall.models.js';
+import Follow from '../users/follow.model.js';
+import { blockUser } from '../blocks/block.service.js';
+import { isValidReaction } from '../reactions/reaction.emoji.js';
+import { logAdminAction } from '../admin/admin.service.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { getBlockedSet, isBlockedEitherWay } from '../blocks/block.service.js';
-import { hasPermission } from '../../shared/permissions.js';
+import { hasPermission, rankOf } from '../../shared/permissions.js';
 import { stripHtml } from '../../utils/sanitize.js';
-import { notifyWallComment, notifyMention, notifyCommentLike } from '../notifications/notifications.events.js';
+import {
+  notifyWallComment, notifyMention, notifyCommentLike, notifyWallReport, notifyWallReportReviewed, notifyWallRestricted,
+} from '../notifications/notifications.events.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { parseTags, checkTags, resolveTags, tagsOf } from './wall-mentions.js';
 import type { WallMention, WallProjectRef } from './wall-mentions.js';
@@ -23,7 +32,7 @@ const MAX_SUBSCRIBER_FANOUT = 500;
 
 /** The error codes the resolvers pass on; the client maps each to a message. */
 export class WallError extends Error {
-  constructor(public code: 'not_found' | 'wall_disabled' | 'forbidden' | 'invalid_body' | 'rate_limited' | 'max_depth' | 'tag_not_allowed' | 'edit_window_closed') {
+  constructor(public code: 'not_found' | 'wall_disabled' | 'forbidden' | 'invalid_body' | 'rate_limited' | 'max_depth' | 'tag_not_allowed' | 'edit_window_closed' | 'comments_closed' | 'restricted') {
     super(code);
   }
 }
@@ -68,7 +77,27 @@ export interface WallCommentView {
   replyCount: number;
   descendantCount: number;
   replies: WallCommentView[];
+  /** visible to everyone, pending the owner's approval, or hidden by the owner or a moderator. */
+  status: WallCommentStatus;
+  /** For a pending comment: held by the owner's approval setting, or for a muted word. */
+  heldReason: 'approval' | 'muted_word' | null;
+  /** The viewer may approve, hide and unhide it (the wall's owner, or a moderator). */
+  canModerate: boolean;
+  /** How many times it was edited; the history comes from wallCommentHistory. */
+  revisionCount: number;
+  reactions: WallReactionCount[];
+  /** For a top-level comment: the viewer stopped hearing about replies in its thread. */
+  mutedByMe: boolean;
 }
+
+export interface WallReactionCount {
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
+
+export const WALL_SORTS = ['newest', 'oldest', 'top'] as const;
+export type WallSort = (typeof WALL_SORTS)[number];
 
 /**
  * Siblings oldest first, except that a reply to a sibling comes right after that sibling
@@ -99,6 +128,15 @@ export interface WallView {
   /** The page returned (0-based); differs from the one asked for when `focus` chose it. */
   page: number;
   subscribed: boolean;
+  sort: WallSort;
+  /** The viewer may post (signed in, allowed by the owner's setting, not restricted). */
+  canComment: boolean;
+  /** The owner's setting: everyone, following or nobody. */
+  commentPolicy: 'everyone' | 'following' | 'nobody';
+  /** The viewer's own commenting restriction, if a moderator set one (ISO; 'forever' when open-ended). */
+  restrictedUntil: string | null;
+  /** For the owner and moderators: comments waiting for approval. */
+  pendingCount: number;
 }
 
 async function findOwner(accountName: string): Promise<LeanUser> {
@@ -122,6 +160,62 @@ const authorView = (u: LeanUser, allowsTags: boolean): WallAuthor => ({
   staffRole: u.role && u.role !== 'user' ? u.role : null,
   allowsTags,
 });
+
+const isModerator = async (viewerId: string | null): Promise<boolean> => {
+  if (!viewerId) return false;
+  const viewer = await User.findById(viewerId).select('permissions').lean<LeanUser>();
+  return !!viewer && hasPermission(viewer.permissions, 'users.ban');
+};
+
+/** Comments a viewer may see: the visible ones, their own, and everything for the owner and moderators. */
+function statusFilter(viewerId: string | null, ownerId: string, moderator: boolean): Record<string, unknown> {
+  if (viewerId === ownerId || moderator) return {};
+  const visible = { status: { $in: ['visible', null] } };
+  return viewerId ? { $or: [visible, { authorId: oid(viewerId) }] } : visible;
+}
+
+/** The viewer's active commenting restriction, if any. */
+async function activeRestriction(userId: string): Promise<{ until: Date | null } | null> {
+  const r = await WallRestriction.findOne({ userId: oid(userId) }).lean();
+  if (!r) return null;
+  if (r.until && r.until.getTime() <= Date.now()) return null;
+  return { until: r.until };
+}
+
+/** Why `authorId` may not comment on `owner`'s wall, or null when they may. */
+async function commentBlocker(authorId: string, ownerId: string, policy: string): Promise<'comments_closed' | 'restricted' | null> {
+  if (await activeRestriction(authorId)) return 'restricted';
+  if (authorId === ownerId) return null;
+  if (policy === 'nobody') return 'comments_closed';
+  if (policy === 'following' && !(await Follow.exists({ followerId: oid(ownerId), followingId: oid(authorId) }))) return 'comments_closed';
+  return null;
+}
+
+const NEW_ACCOUNT_MS = 7 * 24 * 60 * 60_000;
+
+/** Whether a new (or edited) comment waits for the owner: their hold setting, or a muted word. */
+async function holdReason(authorId: string, ownerId: string, body: string): Promise<'approval' | 'muted_word' | null> {
+  if (authorId === ownerId) return null;
+  const prefs = await getPreferences(ownerId);
+  const lower = body.toLowerCase();
+  if ((prefs.wallMutedWords ?? []).some(w => w && lower.includes(w))) return 'muted_word';
+  switch (prefs.wallHoldFrom) {
+    case 'everyone': return 'approval';
+    case 'not_followed':
+      return (await Follow.exists({ followerId: oid(ownerId), followingId: oid(authorId) })) ? null : 'approval';
+    case 'new_accounts': {
+      const author = await User.findById(authorId).select('createdAt').lean<LeanUser>();
+      return author?.createdAt && Date.now() - new Date(author.createdAt).getTime() < NEW_ACCOUNT_MS ? 'approval' : null;
+    }
+    default: return null;
+  }
+}
+
+/** The top-level comment a comment's thread hangs from. */
+async function rootOf(comment: LeanComment): Promise<LeanComment> {
+  const above = await ancestorsOf(comment);
+  return above[above.length - 1] ?? comment;
+}
 
 /** How long after posting the author may still edit a comment. */
 export const EDIT_WINDOW_MS = 15 * 60_000;
@@ -177,6 +271,33 @@ async function buildViews(
   const likeCountOf = new Map(likeCounts.map(l => [l._id.toString(), l.n]));
   const likedByViewer = new Set(myLikes.map(l => l.commentId.toString()));
 
+  // Reactions per comment and emoji, oldest emoji first; and the viewer's thread mutes.
+  const [reactionRows, mutes] = await Promise.all([
+    WallCommentReaction.aggregate<{ _id: { c: mongoose.Types.ObjectId; e: string }; n: number; mine: number; first: Date }>([
+      { $match: { commentId: { $in: commentIds } } },
+      {
+        $group: {
+          _id: { c: '$commentId', e: '$emoji' },
+          n: { $sum: 1 },
+          mine: { $sum: { $cond: [{ $eq: ['$userId', viewerId ? oid(viewerId) : null] }, 1, 0] } },
+          first: { $min: '$createdAt' },
+        },
+      },
+      { $sort: { first: 1 } },
+    ]),
+    viewerId
+      ? WallThreadMute.find({ userId: oid(viewerId), rootId: { $in: all.filter(c => !c.parentId).map(c => c._id) } }).select('rootId').lean()
+      : [],
+  ]);
+  const reactionsOf = new Map<string, WallReactionCount[]>();
+  for (const r of reactionRows) {
+    const key = r._id.c.toString();
+    reactionsOf.set(key, [...(reactionsOf.get(key) ?? []), { emoji: r._id.e, count: r.n, mine: r.mine > 0 }]);
+  }
+  const mutedRoots = new Set(mutes.map(m => m.rootId.toString()));
+  // Held and hidden comments: the owner, moderators and the comment's author see them.
+  const canSee = (c: LeanComment) => !c.status || c.status === 'visible' || viewerIsOwner || viewerIsStaff || c.authorId.toString() === viewerId;
+
   const byParent = new Map<string, LeanComment[]>();
   for (const c of all) {
     if (!c.parentId) continue;
@@ -187,7 +308,7 @@ async function buildViews(
 
   const build = (c: LeanComment, shownSiblings: Set<string>): WallCommentView | null => {
     const author = authorById.get(c.authorId.toString());
-    if (!author || author.isDeleted || blockedSet.has(c.authorId.toString())) return null;
+    if (!author || author.isDeleted || blockedSet.has(c.authorId.toString()) || !canSee(c)) return null;
     const children = orderSiblings(
       (byParent.get(c._id.toString()) ?? [])
         .map(r => ({ id: r._id.toString(), replyToId: r.replyToId?.toString() ?? null, doc: r })),
@@ -197,7 +318,7 @@ async function buildViews(
     // Two passes: which children are shown decides each child's replyToMissing.
     const candidates = children.filter(ch => {
       const a = authorById.get(ch.doc.authorId.toString());
-      const shown = !!a && !a.isDeleted && !blockedSet.has(ch.doc.authorId.toString());
+      const shown = !!a && !a.isDeleted && !blockedSet.has(ch.doc.authorId.toString()) && canSee(ch.doc);
       if (shown) visibleChildIds.add(ch.id);
       return shown;
     });
@@ -225,6 +346,12 @@ async function buildViews(
       replyCount: built.length,
       descendantCount: built.reduce((n, r) => n + 1 + r.descendantCount, 0),
       replies: expand.has(c._id.toString()) ? built : built.slice(0, REPLY_PREVIEW),
+      status: c.status ?? 'visible',
+      heldReason: c.status === 'pending' ? (c.heldReason ?? 'approval') : null,
+      canModerate: viewerIsOwner || viewerIsStaff,
+      revisionCount: c.revisions?.length ?? 0,
+      reactions: reactionsOf.get(c._id.toString()) ?? [],
+      mutedByMe: mutedRoots.has(c._id.toString()),
     };
   };
 
@@ -259,30 +386,40 @@ async function ancestorsOf(comment: LeanComment): Promise<LeanComment[]> {
 }
 
 /**
- * One page of a wall: top-level comments newest first (the pinned one first on page 0),
- * each with its first few replies. With `focus` (a linked comment) the page holding it is
- * chosen, and the replies on the way to it are sent in full.
+ * One page of a wall: top-level comments newest first (or oldest first, or most liked), the
+ * pinned one first on page 0, each with its first few replies. With `focus` (a linked
+ * comment) the page holding it is chosen, newest first, and the replies on the way to it are
+ * sent in full. Held and hidden comments are only listed for those who may see them.
  */
 export async function getWall(
   viewerId: string | null,
   accountName: string,
-  { page: askedPage, limit, focus }: { page?: number | null; limit?: number | null; focus?: string | null } = {},
+  { page: askedPage, limit, focus, sort: askedSort }: { page?: number | null; limit?: number | null; focus?: string | null; sort?: string | null } = {},
 ): Promise<WallView> {
   const owner = await findOwner(accountName);
   const ownerId = owner._id.toString();
+  let sort: WallSort = (WALL_SORTS as readonly string[]).includes(askedSort ?? '') ? askedSort as WallSort : 'newest';
+  const prefs = await getPreferences(ownerId);
+  const commentPolicy = prefs.wallWhoCanComment ?? 'everyone';
   if (!(await visibleWall(viewerId, owner))) {
-    return { enabled: false, comments: [], hasMore: false, total: 0, totalAll: 0, page: 0, subscribed: false };
+    return {
+      enabled: false, comments: [], hasMore: false, total: 0, totalAll: 0, page: 0, subscribed: false,
+      sort, canComment: false, commentPolicy, restrictedUntil: null, pendingCount: 0,
+    };
   }
 
+  const moderator = await isModerator(viewerId);
+  const seen = statusFilter(viewerId, ownerId, moderator);
   const size = Math.min(MAX_PAGE_SIZE, Math.max(1, limit ?? PAGE_SIZE));
   // Unpinned top-level comments page; the pinned one rides along on page 0.
-  const topFilter = { wallUserId: owner._id, parentId: null, pinnedAt: null };
+  const topFilter = { wallUserId: owner._id, parentId: null, pinnedAt: null, ...seen };
 
   let page = Math.max(0, askedPage ?? 0);
   const expand = new Set<string>();
   if (focus && mongoose.isValidObjectId(focus)) {
     const target = await WallComment.findOne({ _id: focus, wallUserId: owner._id }).lean<LeanComment>();
     if (target) {
+      sort = 'newest';
       const above = await ancestorsOf(target);
       above.forEach(a => expand.add(a._id.toString()));
       const top = above[above.length - 1] ?? target;
@@ -290,11 +427,28 @@ export async function getWall(
     }
   }
 
-  const [pinned, topPlusOne, total, totalAll] = await Promise.all([
-    page === 0 ? WallComment.findOne({ wallUserId: owner._id, parentId: null, pinnedAt: { $ne: null } }).lean<LeanComment>() : null,
-    WallComment.find(topFilter).sort({ createdAt: -1 }).skip(page * size).limit(size + 1).lean<LeanComment[]>(),
+  const pageOf = async (): Promise<LeanComment[]> => {
+    if (sort !== 'top') {
+      return WallComment.find(topFilter).sort({ createdAt: sort === 'oldest' ? 1 : -1 }).skip(page * size).limit(size + 1).lean<LeanComment[]>();
+    }
+    // Most liked first, then newest.
+    return WallComment.aggregate<LeanComment>([
+      { $match: topFilter },
+      { $lookup: { from: 'wall_comment_likes', localField: '_id', foreignField: 'commentId', as: 'likes', pipeline: [{ $project: { _id: 1 } }] } },
+      { $addFields: { likeTotal: { $size: '$likes' } } },
+      { $sort: { likeTotal: -1, createdAt: -1 } },
+      { $skip: page * size },
+      { $limit: size + 1 },
+      { $project: { likes: 0, likeTotal: 0 } },
+    ]);
+  };
+
+  const [pinned, topPlusOne, total, totalAll, pendingCount] = await Promise.all([
+    page === 0 ? WallComment.findOne({ wallUserId: owner._id, parentId: null, pinnedAt: { $ne: null }, ...seen }).lean<LeanComment>() : null,
+    pageOf(),
     WallComment.countDocuments(topFilter),
-    WallComment.countDocuments({ wallUserId: owner._id }),
+    WallComment.countDocuments({ wallUserId: owner._id, ...seen }),
+    viewerId === ownerId || moderator ? WallComment.countDocuments({ wallUserId: owner._id, status: 'pending' }) : 0,
   ]);
   const hasMore = topPlusOne.length > size;
   const roots = [...(pinned ? [pinned] : []), ...topPlusOne.slice(0, size)];
@@ -302,6 +456,8 @@ export async function getWall(
   const subscribed = viewerId && viewerId !== ownerId
     ? !!(await WallSubscription.exists({ wallUserId: owner._id, userId: oid(viewerId) }))
     : false;
+  const restriction = viewerId ? await activeRestriction(viewerId) : null;
+  const blocker = viewerId ? await commentBlocker(viewerId, ownerId, commentPolicy) : 'comments_closed';
 
   return {
     enabled: true,
@@ -311,6 +467,11 @@ export async function getWall(
     totalAll,
     page,
     subscribed,
+    sort,
+    canComment: !blocker,
+    commentPolicy,
+    restrictedUntil: restriction ? (restriction.until?.toISOString() ?? 'forever') : null,
+    pendingCount,
   };
 }
 
@@ -354,7 +515,10 @@ export async function addComment(
   const owner = await findOwner(accountName);
   const ownerId = owner._id.toString();
   if (authorId !== ownerId && await isBlockedEitherWay(authorId, ownerId)) throw new WallError('forbidden');
-  if ((await getPreferences(ownerId)).wallEnabled === false) throw new WallError('wall_disabled');
+  const prefs = await getPreferences(ownerId);
+  if (prefs.wallEnabled === false) throw new WallError('wall_disabled');
+  const blocker = await commentBlocker(authorId, ownerId, prefs.wallWhoCanComment ?? 'everyone');
+  if (blocker) throw new WallError(blocker);
 
   const body = stripHtml(rawBody ?? '').trim();
   if (body.length < 1 || body.length > WALL_MAX_LENGTH) throw new WallError('invalid_body');
@@ -387,6 +551,7 @@ export async function addComment(
     if (answered.authorId.toString() !== authorId && await isBlockedEitherWay(authorId, answered.authorId.toString())) throw new WallError('forbidden');
   }
 
+  const held = await holdReason(authorId, ownerId, body);
   const created = await WallComment.create({
     wallUserId: owner._id,
     authorId: oid(authorId),
@@ -394,6 +559,8 @@ export async function addComment(
     replyToId: answered && answered._id.toString() !== parent?._id.toString() ? answered._id : null,
     depth,
     body,
+    status: held ? 'pending' : 'visible',
+    heldReason: held,
   });
 
   const author = await User.findById(authorId).select('accountName displayName avatarUrl role').lean<LeanUser>();
@@ -415,7 +582,18 @@ export async function addComment(
     .select('userId')
     .lean<{ userId: mongoose.Types.ObjectId }[]>()).map((s) => s.userId.toString());
 
-  announce({ owner, author, authorId, answered, subscriberIds, mentionedIds: tags.userIds, commentId: created._id.toString() }).catch(() => {});
+  // A held comment is news to the owner only; the rest hear about it once it is approved.
+  if (held) {
+    notifyWallComment({
+      recipientId: ownerId,
+      actor: { userId: authorId, accountName: author.accountName ?? '', avatarUrl: author.avatarUrl ?? null },
+      wallOwnerAccountName: owner.accountName ?? '',
+      reply: false,
+      commentId: created._id.toString(),
+    }).catch(() => {});
+  } else {
+    announce({ owner, author, authorId, answered, subscriberIds, mentionedIds: tags.userIds, commentId: created._id.toString() }).catch(() => {});
+  }
   // Everyone watching the wall fetches it as they may see it.
   emitWall(ownerId, { type: 'comment', commentId: created._id.toString(), parentId: parent?._id.toString() ?? null });
 
@@ -423,7 +601,7 @@ export async function addComment(
   return view;
 }
 
-async function announce({ owner, author, authorId, answered, subscriberIds, mentionedIds, commentId }: {
+async function announce({ owner, author, authorId, answered, subscriberIds, mentionedIds, commentId, skip = [] }: {
   owner: LeanUser;
   author: LeanUser;
   authorId: string;
@@ -431,11 +609,22 @@ async function announce({ owner, author, authorId, answered, subscriberIds, ment
   subscriberIds: string[];
   mentionedIds: string[];
   commentId: string;
+  /** Already told (the owner, when a held comment is approved). */
+  skip?: string[];
 }): Promise<void> {
   const ownerId = owner._id.toString();
   const actor = { userId: authorId, accountName: author.accountName ?? '', avatarUrl: author.avatarUrl ?? null };
   const wall = owner.accountName ?? '';
-  const told = new Set<string>([authorId]);
+  const told = new Set<string>([authorId, ...skip]);
+  // People who muted this thread hear nothing about replies in it (a tag still reaches them).
+  if (answered) {
+    const root = await rootOf(answered);
+    const muted = await WallThreadMute.find({ rootId: root._id }).select('userId').lean();
+    for (const m of muted) {
+      const id = m.userId.toString();
+      if (!mentionedIds.includes(id)) told.add(id);
+    }
+  }
 
   // Being tagged is the most specific news, so a tagged person hears that instead of a
   // plain "new comment". Someone in a block relationship with the wall's owner cannot
@@ -486,6 +675,8 @@ export async function deleteComment(viewerId: string, commentId: string): Promis
   }
   await WallComment.deleteMany({ _id: { $in: doomed } });
   await WallCommentLike.deleteMany({ commentId: { $in: doomed } });
+  await WallCommentReaction.deleteMany({ commentId: { $in: doomed } });
+  await WallThreadMute.deleteMany({ rootId: { $in: doomed } });
   // Reports on what was removed are settled by the removal; they stay as a record.
   await WallCommentReport.updateMany(
     { commentId: { $in: doomed }, status: 'open' },
@@ -579,7 +770,15 @@ export async function editComment(viewerId: string, commentId: string, rawBody: 
   if (tagCheck === 'not_allowed') throw new WallError('tag_not_allowed');
 
   const editedAt = new Date();
-  await WallComment.updateOne({ _id: comment._id }, { $set: { body, editedAt } });
+  // An edit that brings in a muted word sends a visible comment back for approval.
+  const held = (comment.status ?? 'visible') === 'visible' && await holdReason(viewerId, owner._id.toString(), body) === 'muted_word';
+  await WallComment.updateOne(
+    { _id: comment._id },
+    {
+      $set: { body, editedAt, ...(held ? { status: 'pending', heldReason: 'muted_word' } : {}) },
+      $push: { revisions: { body: comment.body, editedAt: comment.editedAt ?? comment.createdAt } },
+    },
+  );
 
   const before = new Set(parseTags(comment.body).userIds);
   const added = tags.userIds.filter(id => !before.has(id) && id !== viewerId);
@@ -593,8 +792,147 @@ export async function editComment(viewerId: string, commentId: string, rawBody: 
   }
   emitWall(owner._id.toString(), { type: 'edit', commentId });
 
-  const [view] = await buildViews(viewerId, owner, [{ ...comment, body, editedAt }]);
+  const revisions = [...(comment.revisions ?? []), { body: comment.body, editedAt: comment.editedAt ?? comment.createdAt }];
+  const [view] = await buildViews(viewerId, owner, [{
+    ...comment, body, editedAt, revisions,
+    ...(held ? { status: 'pending' as const, heldReason: 'muted_word' as const } : {}),
+  }]);
   return view;
+}
+
+/** The comment, its wall's owner, and whether `viewerId` moderates it (the owner, or staff with users.ban). */
+async function moderatedComment(viewerId: string, commentId: string): Promise<{ comment: LeanComment; owner: LeanUser; asStaff: boolean }> {
+  const comment = mongoose.isValidObjectId(commentId) ? await WallComment.findById(commentId).lean<LeanComment>() : null;
+  if (!comment) throw new WallError('not_found');
+  const owner = await User.findById(comment.wallUserId).lean<LeanUser>();
+  if (!owner || owner.isDeleted) throw new WallError('not_found');
+  if (owner._id.toString() === viewerId) return { comment, owner, asStaff: false };
+  if (await isModerator(viewerId)) return { comment, owner, asStaff: true };
+  throw new WallError('forbidden');
+}
+
+/**
+ * The owner (or a moderator) approves a held comment, rejects it (deleting it), or hides or
+ * unhides one. An approved comment is announced the way a new one is; the owner already heard.
+ */
+export async function moderateComment(viewerId: string, commentId: string, action: 'approve' | 'reject' | 'hide' | 'unhide', ip?: string | null): Promise<boolean> {
+  const { comment, owner, asStaff } = await moderatedComment(viewerId, commentId);
+  const ownerId = owner._id.toString();
+  const status = comment.status ?? 'visible';
+  if (action === 'reject') {
+    if (status !== 'pending') throw new WallError('forbidden');
+    await deleteComment(viewerId, commentId);
+  } else if (action === 'approve') {
+    if (status !== 'pending') return true;
+    await WallComment.updateOne({ _id: comment._id }, { $set: { status: 'visible', heldReason: null } });
+    const [author, answered, subscribers] = await Promise.all([
+      User.findById(comment.authorId).select('accountName displayName avatarUrl role').lean<LeanUser>(),
+      comment.replyToId ? WallComment.findById(comment.replyToId).lean<LeanComment>()
+        : comment.parentId ? WallComment.findById(comment.parentId).lean<LeanComment>() : null,
+      WallSubscription.find({ wallUserId: owner._id }).limit(MAX_SUBSCRIBER_FANOUT).select('userId').lean<{ userId: mongoose.Types.ObjectId }[]>(),
+    ]);
+    if (author) {
+      announce({
+        owner, author, authorId: comment.authorId.toString(), answered,
+        subscriberIds: subscribers.map(x => x.userId.toString()),
+        mentionedIds: parseTags(comment.body).userIds, commentId, skip: [ownerId],
+      }).catch(() => {});
+    }
+  } else {
+    const next = action === 'hide' ? 'hidden' : 'visible';
+    if (action === 'unhide' && status !== 'hidden') return true;
+    await WallComment.updateOne({ _id: comment._id }, { $set: { status: next } });
+  }
+  if (asStaff) {
+    const author = await User.findById(comment.authorId).select('accountName').lean<LeanUser>();
+    await logAdminAction({
+      adminId: viewerId, action: `wall_comment_${action}`, targetId: comment.authorId.toString(),
+      targetName: author?.accountName ?? null, details: `On ${owner.accountName}'s wall: ${comment.body.slice(0, 200)}`, ip,
+    }).catch(() => {});
+  }
+  emitWall(ownerId, { type: 'reload' });
+  return true;
+}
+
+/**
+ * Deletes everything `authorId` wrote on `wallAccountName`'s wall (with the replies beneath).
+ * The wall's owner or a moderator; returns how many of their comments went.
+ */
+export async function purgeAuthorComments(viewerId: string, wallAccountName: string, authorId: string, ip?: string | null): Promise<number> {
+  if (!mongoose.isValidObjectId(authorId)) throw new WallError('not_found');
+  const owner = await User.findOne({ accountName: wallAccountName.toLowerCase() }).lean<LeanUser>();
+  if (!owner) throw new WallError('not_found');
+  const asStaff = owner._id.toString() !== viewerId;
+  if (asStaff && !(await isModerator(viewerId))) throw new WallError('forbidden');
+  const theirs = await WallComment.find({ wallUserId: owner._id, authorId: oid(authorId) }).sort({ depth: 1 }).select('_id').lean<LeanComment[]>();
+  // Shallowest first: deleting a comment takes its replies with it, so later ids may be gone already.
+  for (const c of theirs) await deleteComment(viewerId, c._id.toString());
+  if (asStaff && theirs.length) {
+    const author = await User.findById(authorId).select('accountName').lean<LeanUser>();
+    await logAdminAction({
+      adminId: viewerId, action: 'wall_comments_purge', targetId: authorId, targetName: author?.accountName ?? null,
+      details: `${theirs.length} comment(s) on ${owner.accountName}'s wall`, ip,
+    }).catch(() => {});
+  }
+  emitWall(owner._id.toString(), { type: 'reload' });
+  return theirs.length;
+}
+
+/** The wall's owner blocks a commenter and removes everything they wrote on the wall. */
+export async function blockCommenter(viewerId: string, authorId: string): Promise<number> {
+  if (!mongoose.isValidObjectId(authorId) || authorId === viewerId) throw new WallError('forbidden');
+  const owner = await User.findById(viewerId).select('accountName').lean<LeanUser>();
+  if (!owner?.accountName) throw new WallError('not_found');
+  await blockUser(viewerId, authorId);
+  return purgeAuthorComments(viewerId, owner.accountName, authorId);
+}
+
+/** A comment's earlier versions, oldest first, then the current one; for anyone who can see it. */
+export async function getCommentHistory(viewerId: string | null, commentId: string): Promise<{ body: string; editedAt: string; current: boolean }[]> {
+  const view = await getComment(viewerId, commentId);
+  if (!view) throw new WallError('not_found');
+  const comment = await WallComment.findById(commentId).select('body revisions createdAt editedAt').lean<LeanComment>();
+  if (!comment) throw new WallError('not_found');
+  return [
+    ...(comment.revisions ?? []).map(r => ({ body: r.body, editedAt: r.editedAt.toISOString(), current: false })),
+    { body: comment.body, editedAt: (comment.editedAt ?? comment.createdAt).toISOString(), current: true },
+  ];
+}
+
+/** Stops (or resumes) telling `viewerId` about replies in the thread `commentId` belongs to. */
+export async function setThreadMute(viewerId: string, commentId: string, muted: boolean): Promise<boolean> {
+  const view = await getComment(viewerId, commentId);
+  if (!view) throw new WallError('not_found');
+  const comment = await WallComment.findById(commentId).lean<LeanComment>();
+  if (!comment) throw new WallError('not_found');
+  const root = await rootOf(comment);
+  const key = { userId: oid(viewerId), rootId: root._id };
+  if (muted) await WallThreadMute.updateOne(key, { $setOnInsert: key }, { upsert: true });
+  else await WallThreadMute.deleteOne(key);
+  return muted;
+}
+
+/** Adds (or takes back) the viewer's `emoji` reaction on a comment; who may is as for likes. */
+export async function setReaction(viewerId: string, commentId: string, emoji: string, on: boolean): Promise<WallReactionCount[]> {
+  if (!isValidReaction(emoji)) throw new WallError('invalid_body');
+  const comment = mongoose.isValidObjectId(commentId) ? await WallComment.findById(commentId).lean<LeanComment>() : null;
+  if (!comment || !(await getComment(viewerId, commentId))) throw new WallError('not_found');
+  if ((await getPreferences(comment.wallUserId.toString())).wallEnabled === false) throw new WallError('wall_disabled');
+  for (const otherId of new Set([comment.wallUserId.toString(), comment.authorId.toString()])) {
+    if (otherId !== viewerId && await isBlockedEitherWay(viewerId, otherId)) throw new WallError('forbidden');
+  }
+  const key = { commentId: comment._id, userId: oid(viewerId), emoji };
+  if (on) {
+    // A handful of different emoji per person per comment is plenty.
+    if (await WallCommentReaction.countDocuments({ commentId: comment._id, userId: oid(viewerId) }) >= 6
+      && !(await WallCommentReaction.exists(key))) throw new WallError('rate_limited');
+    await WallCommentReaction.updateOne(key, { $setOnInsert: key }, { upsert: true });
+  } else {
+    await WallCommentReaction.deleteOne(key);
+  }
+  emitWall(comment.wallUserId.toString(), { type: 'reaction', commentId });
+  const view = await getComment(viewerId, commentId);
+  return view?.reactions ?? [];
 }
 
 /** Pins (or unpins) a top-level comment; the wall's owner only, one pinned comment per wall. */
@@ -613,27 +951,79 @@ export async function setPin(viewerId: string, commentId: string, pinned: boolea
   return pinned;
 }
 
+// Per reporter: enough for a bad day on a busy wall, not enough to flood the queue.
+const REPORT_LIMIT_COUNT = 20;
+const REPORT_LIMIT_WINDOW_MS = 60 * 60_000;
+
+/** Moderators (users.ban) who hear about new reports. */
+async function moderatorIds(): Promise<string[]> {
+  const mods = await User.find({ permissions: 'users.ban', isDeleted: { $ne: true }, 'ban.active': { $ne: true } }).select('_id').limit(200).lean<LeanUser[]>();
+  return mods.map(m => m._id.toString());
+}
+
+/** Comments with open reports: the count on the moderators' Reports tab. */
+export async function openReportCount(): Promise<number> {
+  return (await WallCommentReport.distinct('commentId', { status: 'open' })).length;
+}
+
+/** Tells moderators watching the dashboard that the queue changed. */
+async function emitReportQueue(): Promise<void> {
+  try { getIO().to('admin').emit('admin:wall_reports', { open: await openReportCount() }); } catch { /* socket not ready */ }
+}
+
 /**
- * Reports a comment to the moderators. Anyone who can see it, except its author; reporting
- * the same comment again updates the reason and reopens a settled report.
+ * Reports a comment to the moderators. Anyone signed in who can see it, except its author;
+ * reporting the same comment again updates the reason and reopens a settled report. A new
+ * report reaches the moderators at once (a notification, and the dashboard's live count).
  */
 export async function reportComment(viewerId: string, commentId: string, reason: string, rawNote: string | null | undefined): Promise<boolean> {
   if (!(WALL_REPORT_REASONS as readonly string[]).includes(reason)) throw new WallError('invalid_body');
   const comment = await getComment(viewerId, commentId);
   if (!comment) throw new WallError('not_found');
   if (comment.author.id === viewerId) throw new WallError('forbidden');
-  const doc = await WallComment.findById(commentId).select('wallUserId').lean<LeanComment>();
+  const doc = await WallComment.findById(commentId).select('wallUserId authorId').lean<LeanComment>();
   if (!doc) throw new WallError('not_found');
+  const recent = await WallCommentReport.countDocuments({ reporterId: oid(viewerId), createdAt: { $gte: new Date(Date.now() - REPORT_LIMIT_WINDOW_MS) } });
+  if (recent >= REPORT_LIMIT_COUNT) throw new WallError('rate_limited');
   const note = stripHtml(rawNote ?? '').trim().slice(0, 300);
+  const previous = await WallCommentReport.findOne({ commentId: oid(commentId), reporterId: oid(viewerId) }).select('status').lean();
   await WallCommentReport.updateOne(
     { commentId: oid(commentId), reporterId: oid(viewerId) },
     {
-      $set: { reason, note, status: 'open', resolvedBy: null, resolvedAt: null },
-      $setOnInsert: { commentId: oid(commentId), reporterId: oid(viewerId), wallUserId: doc.wallUserId },
+      // createdAt is reset too, so a reopened report sits at the end of the queue and counts toward the limit.
+      $set: { reason, note, status: 'open', resolvedBy: null, resolvedAt: null, createdAt: new Date() },
+      $setOnInsert: { commentId: oid(commentId), reporterId: oid(viewerId), wallUserId: doc.wallUserId, authorId: doc.authorId },
     },
-    { upsert: true },
+    { upsert: true, timestamps: false },
   );
+  // Updating a report that is still open is not news.
+  if (previous?.status !== 'open') {
+    const [reporter, wallOwner] = await Promise.all([
+      User.findById(viewerId).select('accountName avatarUrl').lean<LeanUser>(),
+      User.findById(doc.wallUserId).select('accountName').lean<LeanUser>(),
+    ]);
+    notifyWallReport({
+      moderatorIds: await moderatorIds(),
+      actor: { userId: viewerId, accountName: reporter?.accountName ?? '', avatarUrl: reporter?.avatarUrl ?? null },
+      wallOwnerAccountName: wallOwner?.accountName ?? '',
+      commentId,
+    }).catch(() => {});
+    emitReportQueue().catch(() => {});
+  }
   return true;
+}
+
+type ReportStatus = 'open' | 'dismissed' | 'actioned';
+type LeanReport = { _id: mongoose.Types.ObjectId; commentId: mongoose.Types.ObjectId; wallUserId: mongoose.Types.ObjectId; reporterId: mongoose.Types.ObjectId; authorId?: mongoose.Types.ObjectId | null; reason: string; note: string; status: ReportStatus; createdAt: Date; resolvedAt?: Date | null };
+
+interface ReportCommentView {
+  id: string;
+  body: string;
+  mentions: WallMention[];
+  projectRefs: WallProjectRef[];
+  author: WallAuthor | null;
+  createdAt: string;
+  status: WallCommentStatus;
 }
 
 export interface WallReportView {
@@ -642,28 +1032,44 @@ export interface WallReportView {
   note: string;
   status: string;
   createdAt: string;
+  resolvedAt: string | null;
   /** How many open reports this comment has, this one included. */
   openCount: number;
   reporter: WallAuthor | null;
   wallAccountName: string;
-  comment: { id: string; body: string; mentions: WallMention[]; projectRefs: WallProjectRef[]; author: WallAuthor | null; createdAt: string } | null;
+  comment: ReportCommentView | null;
+}
+
+export interface WallReportGroupView {
+  /** The comment's id (it stays even once the comment is gone). */
+  commentId: string;
+  wallAccountName: string;
+  comment: ReportCommentView | null;
+  /** The comment it answers, for context; null for a top-level comment. */
+  parent: ReportCommentView | null;
+  reports: WallReportView[];
+  openCount: number;
+  latestAt: string;
+  /** The author's record: comments removed after reports in the last 30 days, and any restriction. */
+  authorActionedCount: number;
+  authorRestrictedUntil: string | null;
 }
 
 async function requireModerator(viewerId: string): Promise<void> {
-  const viewer = await User.findById(viewerId).select('permissions').lean<LeanUser>();
-  if (!viewer || !hasPermission(viewer.permissions, 'users.ban')) throw new WallError('forbidden');
+  if (!(await isModerator(viewerId))) throw new WallError('forbidden');
 }
 
-/** Reports for moderators (users.ban), oldest open first. */
-export async function listReports(viewerId: string, status: 'open' | 'dismissed' | 'actioned' = 'open', limit = 50): Promise<WallReportView[]> {
-  await requireModerator(viewerId);
-  const reports = await WallCommentReport.find({ status }).sort({ createdAt: status === 'open' ? 1 : -1 }).limit(Math.min(100, Math.max(1, limit))).lean();
+/** Views of reports and their comments (with tags resolved for `viewerId`). */
+async function reportViews(viewerId: string, reports: LeanReport[], withParents = false) {
   const commentIds = [...new Set(reports.map(r => r.commentId.toString()))];
   const comments = await WallComment.find({ _id: { $in: commentIds } }).lean<LeanComment[]>();
+  const parents = withParents
+    ? await WallComment.find({ _id: { $in: comments.map(c => c.replyToId ?? c.parentId).filter(Boolean) } }).lean<LeanComment[]>()
+    : [];
   const userIds = [...new Set([
     ...reports.map(r => r.reporterId.toString()),
     ...reports.map(r => r.wallUserId.toString()),
-    ...comments.map(c => c.authorId.toString()),
+    ...[...comments, ...parents].map(c => c.authorId.toString()),
   ])];
   const [users, openCounts, resolved] = await Promise.all([
     User.find({ _id: { $in: userIds } }).select('accountName displayName avatarUrl role').lean<LeanUser[]>(),
@@ -671,48 +1077,203 @@ export async function listReports(viewerId: string, status: 'open' | 'dismissed'
       { $match: { commentId: { $in: commentIds.map(oid) }, status: 'open' } },
       { $group: { _id: '$commentId', n: { $sum: 1 } } },
     ]),
-    resolveTags(comments.map(c => c.body), viewerId),
+    resolveTags([...comments, ...parents].map(c => c.body), viewerId),
   ]);
   const userById = new Map(users.map(u => [u._id.toString(), u]));
-  const commentById = new Map(comments.map(c => [c._id.toString(), c]));
+  const commentById = new Map([...comments, ...parents].map(c => [c._id.toString(), c]));
   const openCountOf = new Map(openCounts.map(o => [o._id.toString(), o.n]));
-  const view = (id: string) => { const u = userById.get(id); return u ? authorView(u, true) : null; };
-  return reports.map(r => {
-    const c = commentById.get(r.commentId.toString());
+  const person = (id: string) => { const u = userById.get(id); return u ? authorView(u, true) : null; };
+  const commentView = (c: LeanComment | undefined): ReportCommentView | null => c ? {
+    id: c._id.toString(), body: c.body, ...tagsOf(c.body, resolved), author: person(c.authorId.toString()),
+    createdAt: c.createdAt.toISOString(), status: c.status ?? 'visible',
+  } : null;
+  const view = (r: LeanReport): WallReportView => ({
+    id: r._id.toString(),
+    reason: r.reason,
+    note: r.note,
+    status: r.status,
+    createdAt: r.createdAt.toISOString(),
+    resolvedAt: r.resolvedAt?.toISOString() ?? null,
+    openCount: openCountOf.get(r.commentId.toString()) ?? 0,
+    reporter: person(r.reporterId.toString()),
+    wallAccountName: userById.get(r.wallUserId.toString())?.accountName ?? '',
+    comment: commentView(commentById.get(r.commentId.toString())),
+  });
+  const parentOf = (commentId: string) => {
+    const c = commentById.get(commentId);
+    const pid = c ? (c.replyToId ?? c.parentId)?.toString() : null;
+    return pid ? commentView(commentById.get(pid)) : null;
+  };
+  return { view, parentOf, commentById };
+}
+
+/** Reports for moderators (users.ban), oldest open first. */
+export async function listReports(viewerId: string, status: ReportStatus = 'open', limit = 50): Promise<WallReportView[]> {
+  await requireModerator(viewerId);
+  const reports = await WallCommentReport.find({ status }).sort({ createdAt: status === 'open' ? 1 : -1 }).limit(Math.min(100, Math.max(1, limit))).lean<LeanReport[]>();
+  const { view } = await reportViews(viewerId, reports);
+  return reports.map(view);
+}
+
+/**
+ * Reports for moderators, one entry per comment: every report on it with that status, the
+ * comment it answers, and its author's record. Open ones oldest first, settled ones newest first.
+ */
+export async function listReportGroups(viewerId: string, status: ReportStatus = 'open', limit = 30): Promise<WallReportGroupView[]> {
+  await requireModerator(viewerId);
+  const latest = await WallCommentReport.aggregate<{ _id: mongoose.Types.ObjectId; at: Date }>([
+    { $match: { status } },
+    { $group: { _id: '$commentId', at: { $max: status === 'open' ? '$createdAt' : { $ifNull: ['$resolvedAt', '$createdAt'] } } } },
+    { $sort: { at: status === 'open' ? 1 : -1 } },
+    { $limit: Math.min(100, Math.max(1, limit)) },
+  ]);
+  const reports = await WallCommentReport.find({ commentId: { $in: latest.map(l => l._id) }, status }).sort({ createdAt: 1 }).lean<LeanReport[]>();
+  const { view, parentOf, commentById } = await reportViews(viewerId, reports, true);
+
+  const authorIds = [...new Set([
+    ...[...commentById.values()].map(c => c.authorId.toString()),
+    ...reports.flatMap(r => r.authorId ? [r.authorId.toString()] : []),
+  ])];
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+  const [actioned, restrictions] = await Promise.all([
+    // Distinct comments of theirs removed after a report (reports keep the author's id).
+    WallCommentReport.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
+      { $match: { status: 'actioned', resolvedAt: { $gte: since }, authorId: { $in: authorIds.map(oid) } } },
+      { $group: { _id: '$authorId', n: { $addToSet: '$commentId' } } },
+      { $project: { n: { $size: '$n' } } },
+    ]),
+    WallRestriction.find({ userId: { $in: authorIds.map(oid) } }).lean(),
+  ]);
+  const actionedOf = new Map(actioned.map(a => [a._id.toString(), a.n]));
+  const restrictionOf = new Map(restrictions
+    .filter(r => !r.until || r.until.getTime() > Date.now())
+    .map(r => [r.userId.toString(), r.until?.toISOString() ?? 'forever']));
+
+  const byComment = new Map<string, WallReportView[]>();
+  for (const r of reports) {
+    const key = r.commentId.toString();
+    byComment.set(key, [...(byComment.get(key) ?? []), view(r)]);
+  }
+  return latest.filter(l => byComment.has(l._id.toString())).map(l => {
+    const key = l._id.toString();
+    const group = byComment.get(key)!;
+    const authorId = commentById.get(key)?.authorId.toString() ?? reports.find(r => r.commentId.toString() === key && r.authorId)?.authorId?.toString() ?? null;
     return {
-      id: r._id.toString(),
-      reason: r.reason,
-      note: r.note,
-      status: r.status,
-      createdAt: r.createdAt.toISOString(),
-      openCount: openCountOf.get(r.commentId.toString()) ?? 0,
-      reporter: view(r.reporterId.toString()),
-      wallAccountName: userById.get(r.wallUserId.toString())?.accountName ?? '',
-      comment: c ? { id: c._id.toString(), body: c.body, ...tagsOf(c.body, resolved), author: view(c.authorId.toString()), createdAt: c.createdAt.toISOString() } : null,
+      commentId: key,
+      wallAccountName: group[0].wallAccountName,
+      comment: group[0].comment,
+      parent: parentOf(key),
+      reports: group,
+      openCount: group[0].openCount,
+      latestAt: l.at.toISOString(),
+      authorActionedCount: authorId ? actionedOf.get(authorId) ?? 0 : 0,
+      authorRestrictedUntil: authorId ? restrictionOf.get(authorId) ?? null : null,
     };
   });
 }
 
+/** The viewer's own reports, newest first, with what became of each. */
+export async function listMyReports(viewerId: string, limit = 50, offset = 0): Promise<{ reports: WallReportView[]; total: number }> {
+  const filter = { reporterId: oid(viewerId) };
+  const [reports, total] = await Promise.all([
+    WallCommentReport.find(filter).sort({ createdAt: -1 }).skip(Math.max(0, offset)).limit(Math.min(100, Math.max(1, limit))).lean<LeanReport[]>(),
+    WallCommentReport.countDocuments(filter),
+  ]);
+  const { view } = await reportViews(viewerId, reports);
+  // A reporter learns the outcome, not how many others reported it.
+  return { reports: reports.map(r => ({ ...view(r), openCount: 0 })), total };
+}
+
 /**
  * Settles a report. 'delete' removes the comment (and with it every open report on it);
- * 'dismiss' closes this comment's open reports without touching it.
+ * 'dismiss' closes this comment's open reports without touching it. Each reporter is told,
+ * and the decision goes in the audit log.
  */
-export async function resolveReport(viewerId: string, reportId: string, action: 'dismiss' | 'delete'): Promise<boolean> {
+export async function resolveReport(viewerId: string, reportId: string, action: 'dismiss' | 'delete', ip?: string | null): Promise<boolean> {
   await requireModerator(viewerId);
-  const report = mongoose.isValidObjectId(reportId) ? await WallCommentReport.findById(reportId).lean() : null;
+  const report = mongoose.isValidObjectId(reportId) ? await WallCommentReport.findById(reportId).lean<LeanReport>() : null;
   if (!report) throw new WallError('not_found');
+  const settled = await WallCommentReport.find({ commentId: report.commentId, status: 'open' }).select('_id reporterId').lean<LeanReport[]>();
+  const comment = await WallComment.findById(report.commentId).select('authorId body').lean<LeanComment>();
+  const outcome = action === 'delete' ? 'actioned' : 'dismissed';
   if (action === 'delete') {
     await deleteComment(viewerId, report.commentId.toString());
-    // Already-deleted comment: still close its reports.
-    await WallCommentReport.updateMany(
-      { commentId: report.commentId, status: 'open' },
-      { $set: { status: 'actioned', resolvedBy: oid(viewerId), resolvedAt: new Date() } },
-    );
-  } else {
-    await WallCommentReport.updateMany(
-      { commentId: report.commentId, status: 'open' },
-      { $set: { status: 'dismissed', resolvedBy: oid(viewerId), resolvedAt: new Date() } },
-    );
+  }
+  // Already-deleted comment: still close its reports.
+  await WallCommentReport.updateMany(
+    { commentId: report.commentId, status: 'open' },
+    { $set: { status: outcome, resolvedBy: oid(viewerId), resolvedAt: new Date() } },
+  );
+
+  const [wallOwner, author] = await Promise.all([
+    User.findById(report.wallUserId).select('accountName').lean<LeanUser>(),
+    comment ? User.findById(comment.authorId).select('accountName').lean<LeanUser>() : null,
+  ]);
+  for (const r of settled) {
+    notifyWallReportReviewed({
+      recipientId: r.reporterId.toString(), reportId: r._id.toString(), outcome, wallOwnerAccountName: wallOwner?.accountName ?? '',
+    }).catch(() => {});
+  }
+  await logAdminAction({
+    adminId: viewerId,
+    action: action === 'delete' ? 'wall_report_delete' : 'wall_report_dismiss',
+    targetId: comment?.authorId.toString() ?? null,
+    targetName: author?.accountName ?? null,
+    details: `${settled.length} report(s) on ${wallOwner?.accountName ?? '?'}'s wall${comment ? `: ${comment.body.slice(0, 200)}` : ''}`,
+    ip,
+  }).catch(() => {});
+  emitReportQueue().catch(() => {});
+  return true;
+}
+
+// ─── Commenting restrictions (wall.restrict) ────────────────────────────────
+
+async function requireRestrictor(viewerId: string): Promise<LeanUser> {
+  const viewer = await User.findById(viewerId).select('permissions accountName').lean<LeanUser>();
+  if (!viewer || !hasPermission(viewer.permissions, 'wall.restrict')) throw new WallError('forbidden');
+  return viewer;
+}
+
+/** Hours a restriction can be set for; null is "until lifted". */
+export const RESTRICTION_HOURS = [1, 24, 24 * 7, 24 * 30] as const;
+
+/**
+ * Stops `userId` from commenting on any wall for `hours` (null: until lifted). Staff are
+ * protected from it like from bans: only someone of higher rank may restrict them.
+ */
+export async function restrictCommenter(viewerId: string, userId: string, hours: number | null, rawReason: string | null | undefined, ip?: string | null): Promise<string | null> {
+  const viewer = await requireRestrictor(viewerId);
+  if (!mongoose.isValidObjectId(userId) || userId === viewerId) throw new WallError('forbidden');
+  if (hours !== null && !(RESTRICTION_HOURS as readonly number[]).includes(hours)) throw new WallError('invalid_body');
+  const target = await User.findById(userId).select('accountName role').lean<LeanUser>();
+  if (!target) throw new WallError('not_found');
+  const me = await User.findById(viewerId).select('role').lean<LeanUser>();
+  if (rankOf(target.role) >= rankOf(me?.role) && rankOf(target.role) > 0) throw new WallError('forbidden');
+  const until = hours === null ? null : new Date(Date.now() + hours * 60 * 60_000);
+  const reason = stripHtml(rawReason ?? '').trim().slice(0, 300);
+  await WallRestriction.updateOne(
+    { userId: oid(userId) },
+    { $set: { until, reason, createdBy: oid(viewerId), createdAt: new Date() } },
+    { upsert: true, timestamps: false },
+  );
+  notifyWallRestricted({ recipientId: userId, until, reason }).catch(() => {});
+  await logAdminAction({
+    adminId: viewerId, adminName: viewer.accountName, action: 'wall_restrict', targetId: userId, targetName: target.accountName ?? null,
+    details: `${until ? `Until ${until.toISOString()}` : 'Until lifted'}${reason ? ` — ${reason}` : ''}`, ip,
+  }).catch(() => {});
+  return until?.toISOString() ?? 'forever';
+}
+
+/** Lifts `userId`'s commenting restriction. */
+export async function liftRestriction(viewerId: string, userId: string, ip?: string | null): Promise<boolean> {
+  const viewer = await requireRestrictor(viewerId);
+  if (!mongoose.isValidObjectId(userId)) throw new WallError('not_found');
+  const removed = await WallRestriction.deleteOne({ userId: oid(userId) });
+  if (removed.deletedCount) {
+    const target = await User.findById(userId).select('accountName').lean<LeanUser>();
+    await logAdminAction({
+      adminId: viewerId, adminName: viewer.accountName, action: 'wall_unrestrict', targetId: userId, targetName: target?.accountName ?? null, ip,
+    }).catch(() => {});
   }
   return true;
 }
@@ -723,7 +1284,10 @@ type WallEvent =
   | { type: 'edit'; commentId: string }
   | { type: 'delete'; commentId: string }
   | { type: 'like'; commentId: string; likeCount: number }
-  | { type: 'pin'; commentId: string | null };
+  | { type: 'pin'; commentId: string | null }
+  | { type: 'reaction'; commentId: string }
+  // Who may see what changed (approved, hidden, removed in bulk): watchers reload their page.
+  | { type: 'reload' };
 
 function emitWall(ownerId: string, event: WallEvent): void {
   try { getIO().to(`wall:${ownerId}`).emit('wall:event', event); } catch { /* socket not ready (tests, startup) */ }

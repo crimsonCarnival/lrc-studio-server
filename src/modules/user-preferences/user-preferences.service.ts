@@ -26,6 +26,9 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
     showXpProgress: prefs.showXpProgress === true,
     wallEnabled: prefs.wallEnabled !== false,
     allowTags: prefs.allowTags !== false,
+    wallWhoCanComment: prefs.wallWhoCanComment ?? 'everyone',
+    wallHoldFrom: prefs.wallHoldFrom ?? 'nobody',
+    wallMutedWords: prefs.wallMutedWords ?? [],
     country: prefs.country ?? null,
     notifications: {
       ...prefs.notifications,
@@ -39,6 +42,8 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
       star_milestone: prefs.notifications?.star_milestone !== false,
       new_device: prefs.notifications?.new_device !== false,
       appeal_result: prefs.notifications?.appeal_result !== false,
+      wall_report: prefs.notifications?.wall_report !== false,
+      wall_report_reviewed: prefs.notifications?.wall_report_reviewed !== false,
     },
   };
 }

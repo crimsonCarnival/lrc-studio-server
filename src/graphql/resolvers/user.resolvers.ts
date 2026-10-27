@@ -38,6 +38,7 @@ import type { IBadgeDefinition } from '../../modules/badges/badge-definition.mod
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import { socialGraph } from '../../lib/social-graph.js';
 import { getPreferences, updatePreferences } from '../../modules/user-preferences/user-preferences.service.js';
+import { WALL_COMMENT_POLICIES, WALL_HOLD_POLICIES, WALL_MUTED_WORDS_MAX, WALL_MUTED_WORD_MAX_LENGTH } from '../../modules/user-preferences/user-preferences.model.js';
 import { isCountryCode } from '../../utils/countries.js';
 import UserPreferences from '../../modules/user-preferences/user-preferences.model.js';
 import type { IUserPreferences } from '../../modules/user-preferences/user-preferences.model.js';
@@ -867,6 +868,21 @@ export const userResolvers = {
       // The user's own choice; null clears it. Never derived from their IP.
       if (input.country !== undefined && input.country !== null && !isCountryCode(input.country)) {
         throw new Error('Invalid country value');
+      }
+
+      if (input.wallWhoCanComment !== undefined && !(WALL_COMMENT_POLICIES as readonly unknown[]).includes(input.wallWhoCanComment)) {
+        throw new Error('Invalid wallWhoCanComment value');
+      }
+      if (input.wallHoldFrom !== undefined && !(WALL_HOLD_POLICIES as readonly unknown[]).includes(input.wallHoldFrom)) {
+        throw new Error('Invalid wallHoldFrom value');
+      }
+      if (input.wallMutedWords !== undefined) {
+        // Trimmed, lower-cased, de-duplicated; blanks dropped. Too many or too long is an error.
+        const words = [...new Set(((input.wallMutedWords as string[] | null) ?? []).map(w => String(w).trim().toLowerCase()).filter(Boolean))];
+        if (words.length > WALL_MUTED_WORDS_MAX || words.some(w => w.length > WALL_MUTED_WORD_MAX_LENGTH)) {
+          throw new Error('Invalid wallMutedWords value');
+        }
+        input.wallMutedWords = words;
       }
 
       if (Array.isArray(input.miniProfileBadgeIds) && (input.miniProfileBadgeIds as string[]).length > 3) {

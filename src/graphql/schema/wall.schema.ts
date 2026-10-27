@@ -49,6 +49,31 @@ export const wallSchema = `
     "For a reply at the deepest level: the sibling it answers (it is listed right after it)."
     replyToId: ID
     replies: [WallComment!]!
+    "visible, pending (waiting for the owner's approval) or hidden (by the owner or a moderator)."
+    status: String!
+    "For a pending comment: approval (the owner's setting) or muted_word."
+    heldReason: String
+    "The viewer may approve, hide and unhide it: the wall's owner, or a moderator."
+    canModerate: Boolean!
+    "How many times it was edited; see wallCommentHistory."
+    revisionCount: Int!
+    reactions: [WallReaction!]!
+    "For a top-level comment: the viewer muted replies in its thread."
+    mutedByMe: Boolean!
+  }
+
+  type WallReaction {
+    "A quick-reaction code or one emoji."
+    emoji: String!
+    count: Int!
+    mine: Boolean!
+  }
+
+  type WallCommentRevision {
+    body: String!
+    "When this version was written."
+    editedAt: String!
+    current: Boolean!
   }
 
   type WallLikers {
@@ -63,6 +88,7 @@ export const wallSchema = `
     projectRefs: [WallProjectRef!]!
     author: WallAuthor
     createdAt: String!
+    status: String!
   }
 
   type WallReport {
@@ -71,11 +97,35 @@ export const wallSchema = `
     note: String!
     status: String!
     createdAt: String!
+    "When a moderator settled it."
+    resolvedAt: String
     openCount: Int!
     reporter: WallAuthor
     wallAccountName: String!
     "Null once the comment is gone."
     comment: WallReportComment
+  }
+
+  "Every report on one comment, for moderators."
+  type WallReportGroup {
+    commentId: ID!
+    wallAccountName: String!
+    "Null once the comment is gone."
+    comment: WallReportComment
+    "The comment it answers, for context."
+    parent: WallReportComment
+    reports: [WallReport!]!
+    openCount: Int!
+    latestAt: String!
+    "The author's comments removed after reports in the last 30 days."
+    authorActionedCount: Int!
+    "ISO date, 'forever', or null when the author may comment."
+    authorRestrictedUntil: String
+  }
+
+  type MyWallReports {
+    reports: [WallReport!]!
+    total: Int!
   }
 
   type WallLikeResult {
@@ -95,5 +145,15 @@ export const wallSchema = `
     total: Int!
     "Whether the viewer is told about new comments on this wall."
     subscribed: Boolean!
+    "newest, oldest or top."
+    sort: String!
+    "The viewer may post: signed in, allowed by the owner's setting, not restricted."
+    canComment: Boolean!
+    "The owner's setting: everyone, following or nobody."
+    commentPolicy: String!
+    "The viewer's own commenting restriction: an ISO date, 'forever', or null."
+    restrictedUntil: String
+    "For the owner and moderators: comments waiting for approval."
+    pendingCount: Int!
   }
 `;
