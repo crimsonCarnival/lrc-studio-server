@@ -646,7 +646,7 @@ export interface WallReportView {
   openCount: number;
   reporter: WallAuthor | null;
   wallAccountName: string;
-  comment: { id: string; body: string; author: WallAuthor | null; createdAt: string } | null;
+  comment: { id: string; body: string; mentions: WallMention[]; projectRefs: WallProjectRef[]; author: WallAuthor | null; createdAt: string } | null;
 }
 
 async function requireModerator(viewerId: string): Promise<void> {
@@ -665,12 +665,13 @@ export async function listReports(viewerId: string, status: 'open' | 'dismissed'
     ...reports.map(r => r.wallUserId.toString()),
     ...comments.map(c => c.authorId.toString()),
   ])];
-  const [users, openCounts] = await Promise.all([
+  const [users, openCounts, resolved] = await Promise.all([
     User.find({ _id: { $in: userIds } }).select('accountName displayName avatarUrl role').lean<LeanUser[]>(),
     WallCommentReport.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
       { $match: { commentId: { $in: commentIds.map(oid) }, status: 'open' } },
       { $group: { _id: '$commentId', n: { $sum: 1 } } },
     ]),
+    resolveTags(comments.map(c => c.body), viewerId),
   ]);
   const userById = new Map(users.map(u => [u._id.toString(), u]));
   const commentById = new Map(comments.map(c => [c._id.toString(), c]));
@@ -687,7 +688,7 @@ export async function listReports(viewerId: string, status: 'open' | 'dismissed'
       openCount: openCountOf.get(r.commentId.toString()) ?? 0,
       reporter: view(r.reporterId.toString()),
       wallAccountName: userById.get(r.wallUserId.toString())?.accountName ?? '',
-      comment: c ? { id: c._id.toString(), body: c.body, author: view(c.authorId.toString()), createdAt: c.createdAt.toISOString() } : null,
+      comment: c ? { id: c._id.toString(), body: c.body, ...tagsOf(c.body, resolved), author: view(c.authorId.toString()), createdAt: c.createdAt.toISOString() } : null,
     };
   });
 }
