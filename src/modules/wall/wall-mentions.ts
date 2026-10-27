@@ -141,6 +141,20 @@ export async function resolveTags(bodies: string[], viewerId: string | null): Pr
   return resolved;
 }
 
+/**
+ * A comment body as plain text, with each tag shown as the name it resolves to (for places
+ * that can't render tags, such as a notification's label). Unresolved tags become '@…'.
+ */
+export function plainText(body: string, resolved: ResolvedTags): string {
+  return body.replace(TOKEN, (_, kind: string, id: string) => {
+    if (kind === 'u') {
+      const user = resolved.users.get(id);
+      return user ? `@${user.accountName}` : '@…';
+    }
+    return resolved.projects.get(id)?.title || '@…';
+  });
+}
+
 /** The resolved tags that appear in one comment's body. */
 export function tagsOf(body: string, resolved: ResolvedTags): { mentions: WallMention[]; projectRefs: WallProjectRef[] } {
   const tags = parseTags(body);

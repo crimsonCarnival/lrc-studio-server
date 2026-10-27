@@ -267,21 +267,34 @@ export async function notifyMention(params: {
   );
 }
 
-// ─── Wall reports ────────────────────────────────────────────────────────────
+// ─── Reports ─────────────────────────────────────────────────────────────────
+// The wall_report / wall_report_reviewed types are no longer sent; old rows still render.
+
+/** What a report notification says about its target. */
+export interface ReportTargetMeta {
+  targetType: 'wall_comment' | 'user' | 'project' | 'playlist';
+  /** A short human label: the account name, project title, playlist name, or comment excerpt. */
+  targetLabel: string;
+  /** For a wall comment: the account name of the wall it is on. */
+  wall?: string;
+}
 
 /**
- * Someone reported a wall comment: every moderator (users.ban) hears it. Unread ones fold
- * into one notification per moderator ("ann and 2 others reported wall comments").
+ * Someone reported something: every moderator (users.ban) but the reporter hears it. Unread
+ * ones fold into one notification per moderator ("ann and 2 others reported …"); its meta
+ * describes the latest report.
  */
-export async function notifyWallReport(params: { moderatorIds: string[]; actor: Actor; wallOwnerAccountName: string; commentId: string }): Promise<void> {
-  const { moderatorIds, actor, wallOwnerAccountName, commentId } = params;
+export async function notifyReport(params: { moderatorIds: string[]; actor: Actor; target: ReportTargetMeta }): Promise<void> {
+  const { moderatorIds, actor, target } = params;
+  const meta = { targetType: target.targetType, targetLabel: target.targetLabel, ...(target.wall !== undefined ? { wall: target.wall } : {}) };
   await Promise.all(moderatorIds.filter(id => id !== actor.userId).map(id => deliver(
     id,
-    'wall_report',
-    { type: 'wall_report' },
+    'report',
+    { type: 'report' },
     {
       $setOnInsert: { sticky: false, body: null },
-      $set: { read: false, 'meta.wall': wallOwnerAccountName, 'meta.commentId': commentId },
+      // The whole meta is replaced, so a folded notification never mixes two targets' fields.
+      $set: { read: false, meta },
       $addToSet: { actors: actorDoc(actor) },
       $inc: { actorCount: 1 },
     },
@@ -289,16 +302,27 @@ export async function notifyWallReport(params: { moderatorIds: string[]; actor: 
   ).catch(() => false)));
 }
 
-/** A moderator settled `recipientId`'s report: the comment was removed, or the report dismissed. */
-export async function notifyWallReportReviewed(params: { recipientId: string; reportId: string; outcome: 'dismissed' | 'actioned'; wallOwnerAccountName: string }): Promise<void> {
-  const { recipientId, reportId, outcome, wallOwnerAccountName } = params;
+/** A moderator settled `recipientId`'s report: they acted on the target, or dismissed it. */
+export async function notifyReportReviewed(params: {
+  recipientId: string;
+  reportId: string;
+  outcome: 'dismissed' | 'actioned';
+  target: ReportTargetMeta;
+}): Promise<void> {
+  const { recipientId, reportId, outcome, target } = params;
   await deliver(
     recipientId,
-    'wall_report_reviewed',
-    { type: 'wall_report_reviewed', 'meta.reportId': reportId },
+    'report_reviewed',
+    { type: 'report_reviewed', 'meta.reportId': reportId },
     {
       $setOnInsert: { sticky: false, body: null, actors: [], actorCount: 0 },
-      $set: { read: false, 'meta.outcome': outcome, 'meta.wall': wallOwnerAccountName },
+      $set: {
+        read: false,
+        'meta.outcome': outcome,
+        'meta.targetType': target.targetType,
+        'meta.targetLabel': target.targetLabel,
+        ...(target.wall !== undefined ? { 'meta.wall': target.wall } : {}),
+      },
     },
   );
 }

@@ -2,17 +2,21 @@ import mercurius from 'mercurius';
 import { Context } from './context.js';
 import {
   getWall, getReplies, getComment, getLikers, addComment, editComment, deleteComment, setLike, setPin,
-  setSubscription, reportComment, listReports, resolveReport, WallError,
-  listReportGroups, openReportCount, listMyReports, getCommentHistory, moderateComment, purgeAuthorComments,
+  setSubscription, WallError, getCommentHistory, moderateComment, purgeAuthorComments,
   blockCommenter, setThreadMute, setReaction, restrictCommenter, liftRestriction,
 } from '../../modules/wall/wall.service.js';
+import { ReportError } from '../../modules/reports/reports.service.js';
+// The wall-only report fields, kept for the client released before generic reports.
+import {
+  reportWallComment, listWallReports, listWallReportGroups, wallOpenReportCount, listMyWallReports, resolveWallReport,
+} from '../../modules/reports/reports.legacy.js';
 
-// The client switches on `extensions.code`, so a WallError keeps its code.
+// The client switches on `extensions.code`, so a WallError (or ReportError) keeps its code.
 async function guarded<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (err) {
-    if (err instanceof WallError) throw new mercurius.ErrorWithProps(err.code, { code: err.code.toUpperCase() });
+    if (err instanceof WallError || err instanceof ReportError) throw new mercurius.ErrorWithProps(err.code, { code: err.code.toUpperCase() });
     throw err;
   }
 }
@@ -34,13 +38,13 @@ export const wallResolvers = {
     wallCommentLikers: (_: unknown, args: { id: string; limit?: number | null }, ctx: Context) =>
       guarded(() => getLikers(ctx.userId ?? null, args.id, args.limit ?? 20)),
     wallReports: (_: unknown, args: { status?: 'open' | 'dismissed' | 'actioned' | null }, ctx: Context) =>
-      guarded(() => listReports(requireUser(ctx), args.status ?? 'open')),
+      guarded(() => listWallReports(requireUser(ctx), args.status ?? 'open')),
     wallReportGroups: (_: unknown, args: { status?: 'open' | 'dismissed' | 'actioned' | null; limit?: number | null }, ctx: Context) =>
-      guarded(() => listReportGroups(requireUser(ctx), args.status ?? 'open', args.limit ?? 30)),
+      guarded(() => listWallReportGroups(requireUser(ctx), args.status ?? 'open', args.limit ?? 30)),
     wallOpenReportCount: async (_: unknown, __: unknown, ctx: Context) =>
-      guarded(async () => { await listReportGroups(requireUser(ctx), 'open', 1); return openReportCount(); }),
+      guarded(() => wallOpenReportCount(requireUser(ctx))),
     myWallReports: (_: unknown, args: { limit?: number | null; offset?: number | null }, ctx: Context) =>
-      guarded(() => listMyReports(requireUser(ctx), args.limit ?? 50, args.offset ?? 0)),
+      guarded(() => listMyWallReports(requireUser(ctx), args.limit ?? 50, args.offset ?? 0)),
     wallCommentHistory: (_: unknown, args: { id: string }, ctx: Context) =>
       guarded(() => getCommentHistory(ctx.userId ?? null, args.id)),
   },
@@ -56,9 +60,9 @@ export const wallResolvers = {
     setWallCommentPin: (_: unknown, args: { id: string; pinned: boolean }, ctx: Context) =>
       guarded(() => setPin(requireUser(ctx), args.id, args.pinned)),
     reportWallComment: (_: unknown, args: { id: string; reason: string; note?: string | null }, ctx: Context) =>
-      guarded(() => reportComment(requireUser(ctx), args.id, args.reason, args.note)),
+      guarded(() => reportWallComment(requireUser(ctx), args.id, args.reason, args.note)),
     resolveWallReport: (_: unknown, args: { id: string; action: 'dismiss' | 'delete' }, ctx: Context) =>
-      guarded(() => resolveReport(requireUser(ctx), args.id, args.action, ctx.ip)),
+      guarded(() => resolveWallReport(requireUser(ctx), args.id, args.action, ctx.ip)),
     setWallSubscription: (_: unknown, args: { accountName: string; subscribed: boolean }, ctx: Context) =>
       guarded(() => setSubscription(requireUser(ctx), args.accountName, args.subscribed)),
     moderateWallComment: (_: unknown, args: { id: string; action: string }, ctx: Context) =>
