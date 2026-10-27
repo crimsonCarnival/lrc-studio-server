@@ -6,7 +6,7 @@
 export const RESERVED_USERNAMES = new Set([
   'admin', 'api', 'assets', 'auth', 'change-password', 'explore', 'feed', 'guide',
   'home', 'leaderboard', 'library', 'lists', 'login', 'notifications', 'og',
-  'profile', 'project', 'projects', 'register', 'reset-password', 'search',
+  'profile', 'project', 'projects', 'register', 'reports', 'reset-password', 'search',
   'settings', 'share', 'static', 'u', 'uploads', 'verify-email',
 ]);
 
