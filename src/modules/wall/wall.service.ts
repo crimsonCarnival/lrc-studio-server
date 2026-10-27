@@ -283,7 +283,7 @@ export async function addComment(
     .select('userId')
     .lean<{ userId: mongoose.Types.ObjectId }[]>()).map((s) => s.userId.toString());
 
-  announce({ owner, author, authorId, answered, subscriberIds, mentionedIds: tags.userIds }).catch(() => {});
+  announce({ owner, author, authorId, answered, subscriberIds, mentionedIds: tags.userIds, commentId: created._id.toString() }).catch(() => {});
 
   return {
     id: created._id.toString(),
@@ -300,13 +300,14 @@ export async function addComment(
   };
 }
 
-async function announce({ owner, author, authorId, answered, subscriberIds, mentionedIds }: {
+async function announce({ owner, author, authorId, answered, subscriberIds, mentionedIds, commentId }: {
   owner: LeanUser;
   author: LeanUser;
   authorId: string;
   answered: LeanComment | null;
   subscriberIds: string[];
   mentionedIds: string[];
+  commentId: string;
 }): Promise<void> {
   const ownerId = owner._id.toString();
   const actor = { userId: authorId, accountName: author.accountName ?? '', avatarUrl: author.avatarUrl ?? null };
@@ -321,23 +322,23 @@ async function announce({ owner, author, authorId, answered, subscriberIds, ment
   for (const id of mentionedIds) {
     if (told.has(id)) continue;
     if (id !== ownerId && await isBlockedEitherWay(id, ownerId)) { told.add(id); continue; }
-    if (await notifyMention({ recipientId: id, actor, wallOwnerAccountName: wall }).catch(() => false)) told.add(id);
+    if (await notifyMention({ recipientId: id, actor, wallOwnerAccountName: wall, commentId }).catch(() => false)) told.add(id);
   }
 
   // Whoever wrote the comment being answered hears it as a reply.
   if (answered && !told.has(answered.authorId.toString())) {
     told.add(answered.authorId.toString());
-    await notifyWallComment({ recipientId: answered.authorId.toString(), actor, wallOwnerAccountName: wall, reply: true }).catch(() => {});
+    await notifyWallComment({ recipientId: answered.authorId.toString(), actor, wallOwnerAccountName: wall, reply: true, commentId }).catch(() => {});
   }
   // The wall's owner, then everyone subscribed to it.
   if (!told.has(ownerId)) {
     told.add(ownerId);
-    await notifyWallComment({ recipientId: ownerId, actor, wallOwnerAccountName: wall, reply: false }).catch(() => {});
+    await notifyWallComment({ recipientId: ownerId, actor, wallOwnerAccountName: wall, reply: false, commentId }).catch(() => {});
   }
   await Promise.all(subscriberIds.map(async (id) => {
     if (told.has(id)) return;
     told.add(id);
-    await notifyWallComment({ recipientId: id, actor, wallOwnerAccountName: wall, reply: false }).catch(() => {});
+    await notifyWallComment({ recipientId: id, actor, wallOwnerAccountName: wall, reply: false, commentId }).catch(() => {});
   }));
 }
 

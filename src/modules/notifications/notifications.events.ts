@@ -197,8 +197,10 @@ export async function notifyWallComment(params: {
   actor: Actor;
   wallOwnerAccountName: string;
   reply: boolean;
+  /** The newest comment folded in; the notification links straight to it. */
+  commentId?: string;
 }): Promise<void> {
-  const { recipientId, actor, wallOwnerAccountName, reply } = params;
+  const { recipientId, actor, wallOwnerAccountName, reply, commentId } = params;
   if (recipientId === actor.userId || await blocked(recipientId, actor.userId)) return;
   await deliver(
     recipientId,
@@ -206,7 +208,7 @@ export async function notifyWallComment(params: {
     { type: 'wall_comment', 'meta.wall': wallOwnerAccountName, 'meta.reply': reply },
     {
       $setOnInsert: { sticky: false, body: null },
-      $set: { read: false },
+      $set: { read: false, ...(commentId ? { 'meta.commentId': commentId } : {}) },
       $addToSet: { actors: actorDoc(actor) },
       $inc: { actorCount: 1 },
     },
@@ -222,8 +224,10 @@ export async function notifyMention(params: {
   recipientId: string;
   actor: Actor;
   wallOwnerAccountName: string;
+  /** The comment the tag is in; the notification links straight to it. */
+  commentId?: string;
 }): Promise<boolean> {
-  const { recipientId, actor, wallOwnerAccountName } = params;
+  const { recipientId, actor, wallOwnerAccountName, commentId } = params;
   if (recipientId === actor.userId || await blocked(recipientId, actor.userId)) return false;
   return deliver(
     recipientId,
@@ -231,7 +235,7 @@ export async function notifyMention(params: {
     { type: 'mention', 'meta.wall': wallOwnerAccountName },
     {
       $setOnInsert: { sticky: false, body: null },
-      $set: { read: false },
+      $set: { read: false, ...(commentId ? { 'meta.commentId': commentId } : {}) },
       $addToSet: { actors: actorDoc(actor) },
       $inc: { actorCount: 1 },
     },

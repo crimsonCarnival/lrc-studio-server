@@ -59,6 +59,14 @@ describe('wall comments and replies', () => {
     expect(wall.comments[0].replies[0].replies.map(r => r.id)).toEqual([nested.id, answer.id, later.id]);
   });
 
+  it('links the notification to the newest comment', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann');
+    await addComment(a, 'sam', 'first');
+    const second = await addComment(a, 'sam', 'second');
+    await new Promise(r => setTimeout(r, 50));
+    expect(await Notification.findOne({ userId: owner, type: 'wall_comment' }).lean()).toMatchObject({ meta: { commentId: second.id } });
+  });
+
   it('tells the author of the deepest-level comment that it was answered', async () => {
     await mkUser('sam');
     const a = await mkUser('ann'), b = await mkUser('bob');

@@ -237,10 +237,14 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     io.on('connection', (socket) => {
       fastify.log.info({ socketId: socket.id }, 'socket connected');
 
-      socket.on('join:user', async () => {
+      socket.on('join:user', async (ack?: unknown) => {
         // Identity comes only from the verified JWT in the handshake, never from
         // a client-supplied argument — prevents impersonation.
         const userId = socket.data.userId as string | undefined;
+        // Tell the client whether it got in: a socket that connected before sign-in (or
+        // with an expired token) is anonymous, and only reconnecting re-reads the cookie.
+        // Without this answer it would sit outside its user room, missing every push.
+        if (typeof ack === 'function') (ack as (ok: boolean) => void)(!!userId);
         if (!userId) return;
         socket.join(`user:${userId}`);
         await loadHeap(userId);
