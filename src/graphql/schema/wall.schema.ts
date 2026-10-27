@@ -59,6 +59,8 @@ export const wallSchema = `
   type WallReportComment {
     id: ID!
     body: String!
+    mentions: [WallMention!]!
+    projectRefs: [WallProjectRef!]!
     author: WallAuthor
     createdAt: String!
   }

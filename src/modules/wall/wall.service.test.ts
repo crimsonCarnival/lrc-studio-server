@@ -371,4 +371,14 @@ describe('reports', () => {
     expect(await listReports(mod)).toHaveLength(0);
     expect(await listReports(mod, 'actioned')).toHaveLength(1);
   });
+
+  it('resolves the tags in a reported comment', async () => {
+    const owner = await mkUser('sam');
+    const a = await mkUser('ann'), b = await mkUser('bob'), mod = await mkUser('mia', ['users.ban']);
+    const c = await addComment(a, 'sam', `hey @[u:${owner}]`);
+    await reportComment(b, c.id, 'spam', null);
+    const [report] = await listReports(mod);
+    expect(report.comment?.mentions.map(m => m.accountName)).toEqual(['sam']);
+    expect(report.comment?.projectRefs).toEqual([]);
+  });
 });
