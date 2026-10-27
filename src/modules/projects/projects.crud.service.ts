@@ -953,6 +953,31 @@ export async function deleteProject(
     return { error: 'Not authorized to delete this project', status: 403 } as ServiceResult;
   }
 
+  await removeProject(project, userId);
+  return {};
+}
+
+/**
+ * A moderator deletes someone else's project (after a report), with the same cascade as the
+ * owner's delete. `id` is the project's _id or its publicId. The caller checks the moderator's
+ * permission, sudo grant and rank; this only skips the ownership check. False when it's gone.
+ */
+export async function deleteProjectAsModerator(id: string, moderatorId: string): Promise<boolean> {
+  const project = mongoose.isValidObjectId(id)
+    ? await Project.findById(id)
+    : await Project.findOne({ publicId: id });
+  if (!project) return false;
+  await removeProject(project, moderatorId, { asModerator: true });
+  return true;
+}
+
+async function removeProject(
+  project: NonNullable<Awaited<ReturnType<typeof Project.findOne>>>,
+  /** Who deletes it: the owner, or the moderator acting on a report. */
+  userId: string,
+  { asModerator = false }: { asModerator?: boolean } = {},
+): Promise<void> {
+  const publicId = project.publicId;
   await withTransaction(async (session) => {
     // 1. Fork bookkeeping: this project IS a fork of another project. Decrement the
     // source's forkCount (no-op if the source is already gone or already at 0) and
@@ -1008,8 +1033,6 @@ export async function deleteProject(
     entityId: project._id.toString(),
     ip: 'unknown',
     deviceId: 'unknown',
-    metadata: { publicId },
+    metadata: asModerator ? { publicId, asModerator: true, ownerId: project.userId?.toString() ?? null } : { publicId },
   });
-
-  return {};
 }
