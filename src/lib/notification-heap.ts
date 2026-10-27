@@ -5,13 +5,13 @@ import type { INotification } from '../modules/notifications/notification.model.
 // Lower number = higher priority (min-heap surfaces these first).
 const PRIORITY: Record<string, number> = {
   system: 0, ban: 0, unban: 0, role_changed: 0, admin_granted: 0,
-  request_reviewed: 1, request_submitted: 1,
+  request_reviewed: 1, request_submitted: 1, report: 1,
   badge_awarded: 2, xp_changed: 2, streak_warning: 2,
   follow: 3, reaction: 3,
   star: 4, fork: 4,
   new_device: 0, appeal_result: 0,
   level_up: 2,
-  followed_project: 3, wall_comment: 3, mention: 3, comment_like: 4,
+  followed_project: 3, wall_comment: 3, mention: 3, comment_like: 4, report_reviewed: 3,
   playlist_saved: 4, star_milestone: 4,
   admin: 4, verify_email: 4, set_password: 4, password_changed: 4,
 }

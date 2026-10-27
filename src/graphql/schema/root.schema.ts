@@ -185,6 +185,10 @@ export const rootSchema = `
     wall_report: Boolean!
     "A moderator reviewed one of your reports."
     wall_report_reviewed: Boolean!
+    "Staff with users.ban: a comment, an account, a project or a playlist was reported."
+    report: Boolean!
+    "A moderator reviewed one of your reports (any kind)."
+    report_reviewed: Boolean!
   }
 
   type UserPreferences {
@@ -228,6 +232,8 @@ export const rootSchema = `
     appeal_result: Boolean
     wall_report: Boolean
     wall_report_reviewed: Boolean
+    report: Boolean
+    report_reviewed: Boolean
   }
 
   input UpdatePreferencesInput {
