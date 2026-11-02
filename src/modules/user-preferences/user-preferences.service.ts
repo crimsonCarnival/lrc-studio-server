@@ -36,6 +36,7 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
       followed_project: prefs.notifications?.followed_project !== false,
       wall_comment: prefs.notifications?.wall_comment !== false,
       mention: prefs.notifications?.mention !== false,
+      project_mention: prefs.notifications?.project_mention !== false,
       comment_like: prefs.notifications?.comment_like !== false,
       level_up: prefs.notifications?.level_up !== false,
       playlist_saved: prefs.notifications?.playlist_saved !== false,

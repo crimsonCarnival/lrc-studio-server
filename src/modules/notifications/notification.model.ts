@@ -15,6 +15,7 @@ const NOTIFICATION_TYPES = [
   'followed_project',
   'wall_comment',
   'mention',
+  'project_mention',
   'comment_like',
   'level_up',
   'playlist_saved',

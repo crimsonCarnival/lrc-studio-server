@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import User from '../users/user.model.js';
+import Project from '../projects/project.model.js';
 import type { IUser } from '../users/user.model.js';
 import {
   WallComment, WallCommentLike, WallCommentReaction, WallRestriction, WallSubscription, WallThreadMute,
@@ -16,7 +17,7 @@ import { getBlockedSet, isBlockedEitherWay } from '../blocks/block.service.js';
 import { hasPermission, rankOf } from '../../shared/permissions.js';
 import { stripHtml } from '../../utils/sanitize.js';
 import {
-  notifyWallComment, notifyMention, notifyCommentLike, notifyWallRestricted,
+  notifyWallComment, notifyMention, notifyProjectMention, notifyCommentLike, notifyWallRestricted,
 } from '../notifications/notifications.events.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { settleReports } from '../reports/reports.service.js';
@@ -593,7 +594,7 @@ export async function addComment(
       commentId: created._id.toString(),
     }).catch(() => {});
   } else {
-    announce({ owner, author, authorId, answered, subscriberIds, mentionedIds: tags.userIds, commentId: created._id.toString() }).catch(() => {});
+    announce({ owner, author, authorId, answered, subscriberIds, mentionedIds: tags.userIds, projectIds: tags.projectIds, commentId: created._id.toString() }).catch(() => {});
   }
   // Everyone watching the wall fetches it as they may see it.
   emitWall(ownerId, { type: 'comment', commentId: created._id.toString(), parentId: parent?._id.toString() ?? null });
@@ -602,13 +603,15 @@ export async function addComment(
   return view;
 }
 
-async function announce({ owner, author, authorId, answered, subscriberIds, mentionedIds, commentId, skip = [] }: {
+async function announce({ owner, author, authorId, answered, subscriberIds, mentionedIds, projectIds = [], commentId, skip = [] }: {
   owner: LeanUser;
   author: LeanUser;
   authorId: string;
   answered: LeanComment | null;
   subscriberIds: string[];
   mentionedIds: string[];
+  /** Tagged projects: their owners hear about the tag. */
+  projectIds?: string[];
   commentId: string;
   /** Already told (the owner, when a held comment is approved). */
   skip?: string[];
@@ -655,6 +658,38 @@ async function announce({ owner, author, authorId, answered, subscriberIds, ment
   }));
 }
 
+/**
+ * Tells the owners of tagged projects, one notification per project. Only public projects
+ * count (a private one can only be tagged by its owner, who needs no news of it), the
+ * author is never told about their own project, and an owner in a block relationship with
+ * the wall's owner can't open the wall, so is not told. Returns who was told.
+ */
+async function notifyProjectOwners(
+  projectIds: string[],
+  actor: { userId: string; accountName: string; avatarUrl: string | null },
+  owner: LeanUser,
+  commentId: string,
+  skip: Set<string>,
+): Promise<string[]> {
+  if (projectIds.length === 0) return [];
+  const projects = await Project.find({ publicId: { $in: projectIds }, public: true, userId: { $ne: null } })
+    .select('publicId title metadata userId')
+    .lean<{ publicId: string; title?: string; metadata?: { songName?: string }; userId: mongoose.Types.ObjectId }[]>();
+  const wallOwnerId = owner._id.toString();
+  const told: string[] = [];
+  for (const p of projects) {
+    const recipientId = p.userId.toString();
+    if (recipientId === actor.userId || skip.has(recipientId)) continue;
+    if (recipientId !== wallOwnerId && await isBlockedEitherWay(recipientId, wallOwnerId)) continue;
+    const delivered = await notifyProjectMention({
+      recipientId, actor, wallOwnerAccountName: owner.accountName ?? '',
+      publicId: p.publicId, projectTitle: p.title || p.metadata?.songName || '', commentId,
+    }).catch(() => false);
+    if (delivered) told.push(recipientId);
+  }
+  return told;
+}
+
 /** Deletes a comment and everything under it. Its author, the wall's owner and moderators may. */
 export async function deleteComment(viewerId: string, commentId: string): Promise<boolean> {
   if (!mongoose.isValidObjectId(commentId)) return false;
@@ -699,6 +734,8 @@ export async function setLike(viewerId: string, commentId: string, liked: boolea
   for (const otherId of new Set([comment.wallUserId.toString(), comment.authorId.toString()])) {
     if (otherId !== viewerId && await isBlockedEitherWay(viewerId, otherId)) throw new WallError('forbidden');
   }
+  // A tagged project is the next most specific news, for its owner.
+  for (const id of await notifyProjectOwners(projectIds, actor, owner, commentId, told)) told.add(id);
 
   const key = { commentId: comment._id, userId: oid(viewerId) };
   let newLike = false;
@@ -788,6 +825,13 @@ export async function editComment(viewerId: string, commentId: string, rawBody: 
       notifyMention({ recipientId: id, actor, wallOwnerAccountName: owner.accountName ?? '', commentId }).catch(() => {});
     }
   }
+  const projectsBefore = new Set(parseTags(comment.body).projectIds);
+  const addedProjects = tags.projectIds.filter(id => !projectsBefore.has(id));
+  if (addedProjects.length) {
+    const author = await User.findById(viewerId).select('accountName avatarUrl').lean<LeanUser>();
+    const actor = { userId: viewerId, accountName: author?.accountName ?? '', avatarUrl: author?.avatarUrl ?? null };
+    notifyProjectOwners(addedProjects, actor, owner, commentId, new Set(added)).catch(() => {});
+  }
   emitWall(owner._id.toString(), { type: 'edit', commentId });
 
   const revisions = [...(comment.revisions ?? []), { body: comment.body, editedAt: comment.editedAt ?? comment.createdAt }];
@@ -833,7 +877,7 @@ export async function moderateComment(viewerId: string, commentId: string, actio
       announce({
         owner, author, authorId: comment.authorId.toString(), answered,
         subscriberIds: subscribers.map(x => x.userId.toString()),
-        mentionedIds: parseTags(comment.body).userIds, commentId, skip: [ownerId],
+        mentionedIds: parseTags(comment.body).userIds, projectIds: parseTags(comment.body).projectIds, commentId, skip: [ownerId],
       }).catch(() => {});
     }
   } else {

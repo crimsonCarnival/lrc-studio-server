@@ -267,6 +267,33 @@ export async function notifyMention(params: {
   );
 }
 
+/**
+ * Someone tagged one of the recipient's projects in a wall comment. Unread ones fold per
+ * project and wall ("ann and 2 others mentioned Song on sam's wall").
+ */
+export async function notifyProjectMention(params: {
+  recipientId: string;
+  actor: Actor;
+  wallOwnerAccountName: string;
+  publicId: string;
+  projectTitle: string;
+  commentId?: string;
+}): Promise<boolean> {
+  const { recipientId, actor, wallOwnerAccountName, publicId, projectTitle, commentId } = params;
+  if (recipientId === actor.userId || await blocked(recipientId, actor.userId)) return false;
+  return deliver(
+    recipientId,
+    'project_mention',
+    { type: 'project_mention', publicId, 'meta.wall': wallOwnerAccountName },
+    {
+      $setOnInsert: { sticky: false, body: null },
+      $set: { read: false, projectTitle, ...(commentId ? { 'meta.commentId': commentId } : {}) },
+      $addToSet: { actors: actorDoc(actor) },
+      $inc: { actorCount: 1 },
+    },
+  );
+}
+
 // ─── Reports ─────────────────────────────────────────────────────────────────
 // The wall_report / wall_report_reviewed types are no longer sent; old rows still render.
 

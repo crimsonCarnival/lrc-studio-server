@@ -19,6 +19,8 @@ export interface INotificationPrefs {
   followed_project: boolean;
   wall_comment: boolean;
   mention: boolean;
+  /** Someone tagged one of your projects in a wall comment. */
+  project_mention: boolean;
   comment_like: boolean;
   level_up: boolean;
   playlist_saved: boolean;
@@ -72,6 +74,7 @@ const notifPrefsSchema = new mongoose.Schema<INotificationPrefs>({
   followed_project: { type: Boolean, default: true },
   wall_comment: { type: Boolean, default: true },
   mention: { type: Boolean, default: true },
+  project_mention: { type: Boolean, default: true },
   comment_like: { type: Boolean, default: true },
   level_up: { type: Boolean, default: true },
   playlist_saved: { type: Boolean, default: true },

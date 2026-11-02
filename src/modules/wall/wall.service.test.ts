@@ -236,6 +236,36 @@ describe('tags', () => {
     expect(await Notification.countDocuments({ userId: owner, type: 'wall_comment' })).toBe(1);
   });
 
+  it('tells a tagged project\'s owner, once per project, unless they turned project mentions off', async () => {
+    await mkUser('sam');
+    const a = await mkUser('ann'), maker = await mkUser('max'), quiet = await mkUser('quinn');
+    await Project.collection.insertMany([
+      { publicId: 'song1', title: 'Song', slug: 'song', public: true, userId: new mongoose.Types.ObjectId(maker) },
+      { publicId: 'song2', title: 'Other', slug: 'other', public: true, userId: new mongoose.Types.ObjectId(quiet) },
+      { publicId: 'mine', title: 'Mine', slug: 'mine', public: true, userId: new mongoose.Types.ObjectId(a) },
+    ]);
+    await updatePreferences(quiet, { notifications: { project_mention: false } } as never);
+
+    await addComment(a, 'sam', 'listen @[p:song1] @[p:song2] @[p:mine]');
+    await settle();
+
+    expect(await Notification.findOne({ userId: maker, type: 'project_mention' }).lean())
+      .toMatchObject({ publicId: 'song1', projectTitle: 'Song', meta: { wall: 'sam' } });
+    expect(await Notification.countDocuments({ userId: quiet, type: 'project_mention' })).toBe(0);
+    // The author tagging their own project is not news to them.
+    expect(await Notification.countDocuments({ userId: a })).toBe(0);
+  });
+
+  it('tells a project\'s owner when an edit adds a tag of it', async () => {
+    await mkUser('sam');
+    const a = await mkUser('ann'), maker = await mkUser('max');
+    await Project.collection.insertOne({ publicId: 'song1', title: 'Song', slug: 'song', public: true, userId: new mongoose.Types.ObjectId(maker) });
+    const c = await addComment(a, 'sam', 'hello');
+    await editComment(a, c.id, 'hello @[p:song1]');
+    await settle();
+    expect(await Notification.countDocuments({ userId: maker, type: 'project_mention' })).toBe(1);
+  });
+
   it('refuses to tag someone who switched tags off, but still lets them tag others and themselves', async () => {
     const owner = await mkUser('sam'), a = await mkUser('ann');
     await updatePreferences(owner, { allowTags: false });

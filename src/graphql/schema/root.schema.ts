@@ -180,6 +180,7 @@ export const rootSchema = `
     followed_project: Boolean!
     wall_comment: Boolean!
     mention: Boolean!
+    project_mention: Boolean!
     comment_like: Boolean!
     level_up: Boolean!
     playlist_saved: Boolean!
@@ -229,6 +230,7 @@ export const rootSchema = `
     followed_project: Boolean
     wall_comment: Boolean
     mention: Boolean
+    project_mention: Boolean
     comment_like: Boolean
     level_up: Boolean
     playlist_saved: Boolean
