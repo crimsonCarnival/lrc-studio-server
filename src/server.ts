@@ -76,6 +76,11 @@ async function build() {
     bodyLimit: 5 * 1024 * 1024,
   });
 
+  app.addHook('onSend', async (_request, reply, payload) => {
+  reply.removeHeader('X-Powered-By');
+  return payload;
+});
+
   await app.register(fastifyCookie, {
     secret: process.env.COOKIE_SECRET,
   });
@@ -87,6 +92,8 @@ async function build() {
   await app.register(mongoose);
   await app.register(cron);
   await app.register(auth);
+  
+  
 
   await app.register(mercurius, {
     schema,
