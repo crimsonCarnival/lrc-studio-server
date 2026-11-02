@@ -242,7 +242,9 @@ export const projectResolvers = {
     deleteProject: async (_root: unknown, { id }: { id: string }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await deleteProjectService(id, context.userId);
-      return !('error' in result);
+      // Throw rather than answer `false`: callers treat a resolved mutation as done.
+      if ('error' in result) throw Object.assign(new Error(result.error ?? 'Delete failed'), { status: result.status });
+      return true;
     },
 
     cloneProject: async (_root: unknown, { id }: { id: string }, context: Context) => {

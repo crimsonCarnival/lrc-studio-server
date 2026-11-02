@@ -32,6 +32,7 @@ import rootRoutes from './modules/root/root.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
 import ogRoutes from './modules/og/og.routes.js';
 import asrRoutes from './modules/asr/asr.routes.js';
+import { deriveErrorCode } from './graphql/error-code.js';
 
 const envToLogger: Record<string, Record<string, unknown>> = {
   development: {
@@ -125,12 +126,27 @@ async function build() {
       const formatted = mercurius.defaultErrorFormatter(result, ctx);
       if (formatted.response.errors) {
         const originals = result.errors ?? [];
-        formatted.response.errors = formatted.response.errors.map((err, i) => ({
-          ...err,
-          message: isInternalError(originals[i]?.originalError)
-            ? 'internal_error'
-            : err.message.replace(/\s*Did you mean.*?\?/gi, ''),
-        }));
+        // A banned caller has no userId in context (optionalAuth sets bannedUserId instead), so
+        // auth guards answer "Unauthorized". Telling the client its session expired would send it
+        // into refresh/logout and away from the ban screen; mark those errors `banned` instead.
+        const banned = Boolean(
+          (ctx as { bannedUserId?: string }).bannedUserId
+          ?? (ctx.reply?.request as { bannedUserId?: string } | undefined)?.bannedUserId,
+        );
+        // Index pairing with result.errors assumes no original error carries a nested `errors`
+        // array (defaultErrorFormatter flattens those); only validation errors do, and they have no code.
+        formatted.response.errors = formatted.response.errors.map((err, i) => {
+          const original = originals[i]?.originalError;
+          const code = deriveErrorCode(original, { banned });
+          return {
+            ...err,
+            message: isInternalError(original)
+              ? 'internal_error'
+              : err.message.replace(/\s*Did you mean.*?\?/gi, ''),
+            // Resolver errors travel as HTTP 200, so the client branches on this code, not a status.
+            ...(code ? { extensions: { ...err.extensions, code } } : {}),
+          };
+        });
       }
       return formatted;
     },
