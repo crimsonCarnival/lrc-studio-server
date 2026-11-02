@@ -30,6 +30,8 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
 
   // Read-only — gated by the matching view permission.
   fastify.get('/users', { preHandler: perm('users.view'), schema: { querystring: listUsersSchema.querystring } }, adminController.getUsers);
+  // Reviewing an appeal needs users.ban (not users.view), so its list is gated the same way.
+  fastify.get('/appeals', { preHandler: perm('users.ban') }, adminController.getPendingAppeals);
   fastify.get('/stats', { preHandler: perm('stats.view') }, adminController.getStats);
   fastify.get('/job-logs', { preHandler: perm('stats.view'), schema: { querystring: listJobLogsSchema.querystring } }, adminController.getJobLogs);
   fastify.get('/audit-logs', { preHandler: perm('audit.view'), schema: { querystring: listLogsSchema.querystring } }, adminController.getAuditLogs);
