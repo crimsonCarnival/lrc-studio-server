@@ -6,6 +6,7 @@ export const settingsSchema = `
     interface: InterfaceSettings
     shortcuts: ShortcutsSettings
     advanced: AdvancedSettings
+    autoStamp: AutoStampSettings
   }
 
   type PlaybackSettings {
@@ -38,7 +39,12 @@ export const settingsSchema = `
     showShiftAll: Boolean
     shiftAllAmount: Float
     showLineNumbers: Boolean
+    preserveEmptyLines: Boolean
+    playerPosition: String
     timestampPrecision: String
+    syncFlashDuration: String
+    lyricsSearchSpeed: String
+    overlapThreshold: Float
     srt: SrtSettings
     history: HistorySettings
     display: DisplaySettings
@@ -104,7 +110,9 @@ export const settingsSchema = `
     fontSize: String
     fontWeight: String
     spacing: String
+    theme: String
     previewAlignment: String
+    focusContrast: String
     focusMode: String
     layoutSwap: Boolean
     playerTop: Boolean
@@ -146,6 +154,7 @@ export const settingsSchema = `
 
   type AdvancedSettings {
     autoSave: AutoSaveSettings
+    autoSaveIndicator: String
     confirmDestructive: Boolean
     timezone: String
   }
@@ -155,6 +164,18 @@ export const settingsSchema = `
     timeInterval: Float
   }
 
+  type AutoStampSettings {
+    confidenceThreshold: Float
+    fuzzyTolerance: Float
+    applyMode: String
+  }
+
+  input AutoStampSettingsInput {
+    confidenceThreshold: Float
+    fuzzyTolerance: Float
+    applyMode: String
+  }
+
   input UpdateSettingsInput {
     playback: PlaybackSettingsInput
     editor: EditorSettingsInput
@@ -162,6 +183,7 @@ export const settingsSchema = `
     interface: InterfaceSettingsInput
     shortcuts: ShortcutsSettingsInput
     advanced: AdvancedSettingsInput
+    autoStamp: AutoStampSettingsInput
   }
 
   input AutoRewindSettingsInput {
@@ -234,7 +256,12 @@ export const settingsSchema = `
     showShiftAll: Boolean
     shiftAllAmount: Float
     showLineNumbers: Boolean
+    preserveEmptyLines: Boolean
+    playerPosition: String
     timestampPrecision: String
+    syncFlashDuration: String
+    lyricsSearchSpeed: String
+    overlapThreshold: Float
     srt: SrtSettingsInput
     history: HistorySettingsInput
     display: DisplaySettingsInput
@@ -260,7 +287,9 @@ export const settingsSchema = `
     fontSize: String
     fontWeight: String
     spacing: String
+    theme: String
     previewAlignment: String
+    focusContrast: String
     focusMode: String
     layoutSwap: Boolean
     playerTop: Boolean
@@ -307,6 +336,7 @@ export const settingsSchema = `
 
   input AdvancedSettingsInput {
     autoSave: AutoSaveSettingsInput
+    autoSaveIndicator: String
     confirmDestructive: Boolean
     timezone: String
   }

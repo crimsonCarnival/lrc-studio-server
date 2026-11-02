@@ -48,6 +48,8 @@ export const resolvers = {
     ...reportResolvers.Mutation,
   },
   User:     userResolvers.User,
+  UserBan: userResolvers.UserBan,
+  UserAppeal: userResolvers.UserAppeal,
   PublicUser: publicUserResolvers,
   FollowUser: followUserResolvers,
   Project:  projectResolvers.Project,

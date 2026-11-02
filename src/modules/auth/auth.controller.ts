@@ -2,7 +2,6 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CookieSerializeOptions } from '@fastify/cookie';
 import * as authService from './auth.service.js';
 import { consumeOtt } from './ott.service.js';
-import type { UpdateProfileData } from './auth.service.js';
 import { requestPasswordReset, validateResetToken, resetPassword, changePassword as changePasswordService, PasswordResetError } from '../password-reset/password-reset.service.js';
 import { verifyEmailToken, VerificationError } from '../email-verification/email-verification.service.js';
 import { verifyRecaptcha } from './auth.service.js';
@@ -212,23 +211,6 @@ export async function logout(req: FastifyRequest, reply: FastifyReply): Promise<
   
   clearAuthCookies(reply);
   return reply.send({ success: true });
-}
-
-export async function me(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const deviceId = req.headers['x-device-id'];
-  const result = await authService.getProfile(req.userId!, req.ip, deviceId as string | undefined);
-  if (result.error) {
-    return reply.code(result.status || 500).send({ error: result.error, code: result.code });
-  }
-  return reply.send(result);
-}
-
-export async function updateProfile(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await authService.updateProfile(req.userId!, req.body as UpdateProfileData, req.log);
-  if (result.error) {
-    return reply.code(result.status || 500).send({ error: result.error, code: result.code });
-  }
-  return reply.send(result);
 }
 
 export async function submitAppeal(req: FastifyRequest, reply: FastifyReply): Promise<void> {

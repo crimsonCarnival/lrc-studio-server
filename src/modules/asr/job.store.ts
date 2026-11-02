@@ -13,9 +13,6 @@ export type AsrJob = {
   abort: AbortController;
   createdAt: number;
   finishedAt?: number;
-  /** Cached audio buffer for waveform display after job completes (YouTube only). */
-  audioBuffer?: Buffer;
-  audioFormat?: string;
 };
 
 const TERMINAL: ReadonlySet<AsrJobPhase> = new Set(['completed', 'failed', 'cancelled']);
@@ -68,17 +65,4 @@ export function sweepJobs(now: number = Date.now()): void {
   for (const [id, job] of jobs) {
     if (isTerminal(job.phase) && job.finishedAt && now - job.finishedAt > JOB_TTL_MS) jobs.delete(id);
   }
-}
-
-/** Cache the extracted audio buffer so the client can fetch it for waveform display. */
-export function setAudio(id: string, buffer: Buffer, format: string): void {
-  const job = jobs.get(id);
-  if (job) { job.audioBuffer = buffer; job.audioFormat = format; }
-}
-
-/** Return the cached audio buffer, or null if not available. */
-export function getAudio(id: string): { buffer: Buffer; format: string } | null {
-  const job = jobs.get(id);
-  if (!job?.audioBuffer || !job.audioFormat) return null;
-  return { buffer: job.audioBuffer, format: job.audioFormat };
 }

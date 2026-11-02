@@ -622,7 +622,7 @@ export async function patchProject(
 
   if (!result.ok) {
     return result.reason === 'version_conflict'
-      ? ({ error: 'Version conflict — reload and retry', status: 409 } as ServiceResult)
+      ? ({ error: 'Version conflict — reload and retry', status: 409, code: 'version_conflict' } as ServiceResult)
       : ({ error: 'Project not found', status: 404 } as ServiceResult);
   }
   const { updatedProject, updatedLyrics } = result;

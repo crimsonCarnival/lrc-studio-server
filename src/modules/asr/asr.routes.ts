@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import fastifyMultipart from '@fastify/multipart';
-import { stampFromUpload, stampFromFile, getJobStatus, cancelJobHandler, getJobAudio } from './asr.controller.js';
+import { stampFromUpload, stampFromFile, getJobStatus, cancelJobHandler } from './asr.controller.js';
 import { stampJsonSchema } from './asr.schema.js';
 
 export default async function asrRoutes(fastify: FastifyInstance): Promise<void> {
@@ -12,6 +12,5 @@ export default async function asrRoutes(fastify: FastifyInstance): Promise<void>
   fastify.post('/stamp', { preHandler: [fastify.requireAuth], schema: stampJsonSchema, config: { rateLimit } }, stampFromUpload);
   fastify.post('/stamp/upload', { preHandler: [fastify.requireAuth], config: { rateLimit } }, stampFromFile);
   fastify.get('/jobs/:id', { preHandler: [fastify.requireAuth] }, getJobStatus);
-  fastify.get('/jobs/:id/audio', { preHandler: [fastify.requireAuth] }, getJobAudio);
   fastify.post('/jobs/:id/cancel', { preHandler: [fastify.requireAuth] }, cancelJobHandler);
 }

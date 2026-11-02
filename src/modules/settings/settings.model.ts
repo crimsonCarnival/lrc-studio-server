@@ -69,6 +69,7 @@ const scrollSchema = sub({
 const editorSchema = sub({
   autoPauseOnMark: Boolean,
   preserveEmptyLines: Boolean,
+  playerPosition: { type: String, enum: ['top', 'bottom'] },
   nudge: { type: nudgeSchema },
   autoAdvance: { type: autoAdvanceSchema },
   showShiftAll: Boolean,
@@ -99,6 +100,7 @@ const exportSchema = sub({
 
 const interfaceSchema = sub({
   defaultLanguage: { type: String, maxlength: 10, match: /^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$/ },
+  theme: { type: String, enum: ['dark', 'light'] },
   fontSize: { type: String, enum: ['small', 'normal', 'large', 'xlarge'] },
   fontWeight: { type: String, enum: ['thinnest', 'lighter', 'light', 'normal', 'bold', 'bolder'] },
   spacing: { type: String, enum: ['compact', 'normal', 'relaxed'] },
@@ -157,6 +159,12 @@ const advancedSchema = sub({
   timezone: { type: String, maxlength: 50, match: /^(auto|[A-Za-z_]+\/[A-Za-z_/]+)$/ },
 });
 
+const autoStampSchema = sub({
+  confidenceThreshold: { type: Number, min: 0, max: 1 },
+  fuzzyTolerance: { type: Number, min: 0.5, max: 1 },
+  applyMode: { type: String, enum: ['all', 'empty-only'] },
+});
+
 const settingsSchema = new Schema(
   {
     userId: {
@@ -172,6 +180,7 @@ const settingsSchema = new Schema(
     interface: { type: interfaceSchema, default: () => ({}) },
     shortcuts: { type: shortcutsSchema, default: () => ({}) },
     advanced: { type: advancedSchema, default: () => ({}) },
+    autoStamp: { type: autoStampSchema, default: () => ({}) },
   },
   { timestamps: true, minimize: false, collection: 'settings' }
 );

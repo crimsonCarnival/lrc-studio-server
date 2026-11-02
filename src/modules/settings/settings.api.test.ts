@@ -60,3 +60,29 @@ describe('export.includeFeaturedInTitle', () => {
     expect(resolveField(await read(b))).toBe(false);
   });
 });
+
+describe('newly persisted client settings', () => {
+  it('stores theme, playerPosition and the autoStamp section without touching siblings', async () => {
+    const u = uid();
+    await update(u, { interface: { fontSize: 'large' } });
+    await update(u, {
+      interface: { theme: 'light', focusContrast: 'high' },
+      editor: { playerPosition: 'top', overlapThreshold: 0.1 },
+      advanced: { autoSaveIndicator: 'long' },
+      autoStamp: { confidenceThreshold: 0.9, fuzzyTolerance: 0.6, applyMode: 'all' },
+    });
+    const doc = (await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>;
+    expect(doc.interface).toMatchObject({ fontSize: 'large', theme: 'light', focusContrast: 'high' });
+    expect(doc.editor).toMatchObject({ playerPosition: 'top', overlapThreshold: 0.1 });
+    expect(doc.advanced).toMatchObject({ autoSaveIndicator: 'long' });
+    expect(doc.autoStamp).toMatchObject({ confidenceThreshold: 0.9, fuzzyTolerance: 0.6, applyMode: 'all' });
+  });
+
+  it('a document written before these fields existed reads them back as undefined (GraphQL null), not an error', async () => {
+    const u = uid();
+    await Settings.collection.insertOne({ userId: new mongoose.Types.ObjectId(u), interface: { fontSize: 'small' } });
+    const doc = (await settingsResolvers.Query.settings({}, {}, ctx(u))) as unknown as { interface: Record<string, unknown>; autoStamp?: Record<string, unknown> };
+    expect(doc.interface.theme).toBeUndefined();
+    expect(doc.autoStamp?.applyMode).toBeUndefined();
+  });
+});

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { isReservedAccountName } from './auth.validation.js';
-import { registerSchema, loginSchema } from './auth.schema.js';
+import { registerSchema, loginSchema, appealSchema } from './auth.schema.js';
+import { handleFastifyError } from '../../shared/error-handler.js';
 
 describe('reserved names', () => {
   it('covers every top-level client route segment', () => {
@@ -79,5 +80,42 @@ describe('login accepts either identifier', () => {
     } finally {
       await f.close();
     }
+  });
+});
+
+describe('validation errors through the shared handler', () => {
+  async function handled(): Promise<FastifyInstance> {
+    const f = Fastify();
+    f.setErrorHandler(handleFastifyError);
+    f.post('/register', { schema: registerSchema }, async () => ({ ok: true }));
+    f.post('/appeal', { schema: appealSchema }, async () => ({ ok: true }));
+    await f.ready();
+    return f;
+  }
+
+  it('names a missing header as a header', async () => {
+    const f = await handled();
+    try {
+      const res = await f.inject({ method: 'POST', url: '/register', payload: { accountName: 'alice', password: 'hunter2hunter2' } });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'Missing required header: x-device-id' });
+    } finally { await f.close(); }
+  });
+
+  it('reports a missing body field as validation_error with the field, not as a header', async () => {
+    const f = await handled();
+    try {
+      const res = await f.inject({ method: 'POST', url: '/appeal', payload: {} });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'validation_error', field: 'appealText' });
+    } finally { await f.close(); }
+  });
+
+  it('bounds the appeal to the stored 1000 characters', async () => {
+    const f = await handled();
+    try {
+      const res = await f.inject({ method: 'POST', url: '/appeal', payload: { appealText: 'x'.repeat(1001) } });
+      expect(res.statusCode).toBe(400);
+    } finally { await f.close(); }
   });
 });

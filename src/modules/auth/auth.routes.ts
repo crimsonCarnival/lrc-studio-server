@@ -6,7 +6,14 @@ import {
   loginSchema,
   checkIdentifierSchema,
   refreshSchema,
-  updateProfileSchema,
+  forgotPasswordSchema,
+  validateResetTokenSchema,
+  resetPasswordSchema,
+  changePasswordSchema,
+  setPasswordSchema,
+  verifyEmailSchema,
+  appealSchema,
+  logoutAllSchema,
 } from './auth.schema.js';
 
 export default async function authRoutes(fastify: FastifyInstance): Promise<void> {
@@ -25,18 +32,17 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
   fastify.post('/check-identifier', { schema: checkIdentifierSchema, ...authRateLimit }, authController.checkIdentifier);
   fastify.post('/refresh', { schema: refreshSchema }, authController.refresh);
   fastify.post('/logout', { preHandler: [fastify.optionalAuth] }, authController.logout);
-  fastify.get('/me', { preHandler: [fastify.requireAuth] }, authController.me);
-  fastify.patch('/profile', { schema: updateProfileSchema, preHandler: [fastify.requireAuth] }, authController.updateProfile);
-  fastify.post('/appeal', { preHandler: [fastify.requireAuthForAppeal] }, authController.submitAppeal);
-  fastify.post('/forgot-password', { ...authRateLimit }, authController.forgotPassword);
-  fastify.get('/reset-password/validate', { ...authRateLimit }, authController.validateResetPasswordToken);
-  fastify.post('/reset-password', { ...authRateLimit }, authController.resetPasswordEndpoint);
-  fastify.post('/change-password', { preHandler: [fastify.requireAuth] }, authController.changePassword);
-  fastify.post('/set-password', { preHandler: [fastify.requireAuth] }, authController.setPassword);
-  fastify.post('/verify-email', { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } }, authController.verifyEmailHandler);
+  // `me` and profile updates are GraphQL-only (`me`, `updateProfile`); their REST twins had no caller.
+  fastify.post('/appeal', { schema: appealSchema, preHandler: [fastify.requireAuthForAppeal] }, authController.submitAppeal);
+  fastify.post('/forgot-password', { schema: forgotPasswordSchema, ...authRateLimit }, authController.forgotPassword);
+  fastify.get('/reset-password/validate', { schema: validateResetTokenSchema, ...authRateLimit }, authController.validateResetPasswordToken);
+  fastify.post('/reset-password', { schema: resetPasswordSchema, ...authRateLimit }, authController.resetPasswordEndpoint);
+  fastify.post('/change-password', { schema: changePasswordSchema, preHandler: [fastify.requireAuth] }, authController.changePassword);
+  fastify.post('/set-password', { schema: setPasswordSchema, preHandler: [fastify.requireAuth] }, authController.setPassword);
+  fastify.post('/verify-email', { schema: verifyEmailSchema, config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: ipOnlyKey } } }, authController.verifyEmailHandler);
   fastify.get('/sessions', { preHandler: [fastify.requireAuth] }, authController.getSessions);
   fastify.delete('/sessions/:id', { preHandler: [fastify.requireAuth] }, authController.revokeSession);
-  fastify.post('/logout-all', { preHandler: [fastify.requireAuth] }, authController.logoutAll);
+  fastify.post('/logout-all', { schema: logoutAllSchema, preHandler: [fastify.requireAuth] }, authController.logoutAll);
 
   // Passkey / WebAuthn Routes
   fastify.get('/passkey/register/options', { preHandler: [fastify.requireAuth] }, authController.generateRegistrationOptionsHandler);

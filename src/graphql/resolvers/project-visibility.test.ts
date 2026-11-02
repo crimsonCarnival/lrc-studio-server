@@ -158,3 +158,18 @@ describe('Project.lyrics', () => {
     expect(await projectField.lyrics(parent, {}, ctx(owner))).toEqual({ sections: [] });
   });
 });
+
+describe('deleteProject', () => {
+  it('rejects a non-owner with a coded error instead of resolving false, and keeps the project', async () => {
+    const owner = await mkUser();
+    const other = await mkUser();
+    await mkProject(owner, 'del00000001', true);
+    await expect(m.deleteProject({}, { id: 'del00000001' }, ctx(other))).rejects.toMatchObject({ status: 403 });
+    expect(await Project.exists({ publicId: 'del00000001' })).toBeTruthy();
+  });
+
+  it('rejects a missing project with status 404', async () => {
+    const owner = await mkUser();
+    await expect(m.deleteProject({}, { id: 'nope0000001' }, ctx(owner))).rejects.toMatchObject({ status: 404 });
+  });
+});
