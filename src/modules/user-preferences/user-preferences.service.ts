@@ -47,6 +47,7 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
       wall_report_reviewed: prefs.notifications?.wall_report_reviewed !== false,
       report: prefs.notifications?.report !== false,
       report_reviewed: prefs.notifications?.report_reviewed !== false,
+      report_message: prefs.notifications?.report_message !== false,
     },
   };
 }

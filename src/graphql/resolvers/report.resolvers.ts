@@ -3,6 +3,7 @@ import { Context } from './context.js';
 import {
   ReportError, fileReport, listReportGroups, listMyReports, openReportCount, requireModerator, resolveReportGroup,
 } from '../../modules/reports/reports.service.js';
+import { addReportMessage, listReportMessages } from '../../modules/reports/report-thread.service.js';
 
 // The client switches on `extensions.code`, so a ReportError keeps its code.
 async function guarded<T>(run: () => Promise<T>): Promise<T> {
@@ -27,6 +28,8 @@ export const reportResolvers = {
       guarded(async () => { await requireModerator(requireUser(ctx)); return openReportCount(); }),
     myReports: (_: unknown, args: { limit?: number | null; offset?: number | null }, ctx: Context) =>
       guarded(() => listMyReports(requireUser(ctx), args.limit ?? 50, args.offset ?? 0)),
+    reportMessages: (_: unknown, args: { reportId: string }, ctx: Context) =>
+      guarded(() => listReportMessages(requireUser(ctx), args.reportId)),
   },
   Mutation: {
     fileReport: (
@@ -36,5 +39,7 @@ export const reportResolvers = {
     ) => guarded(() => fileReport(requireUser(ctx), args)),
     resolveReportGroup: (_: unknown, args: { targetType: string; targetId: string; action: string }, ctx: Context) =>
       guarded(() => resolveReportGroup(requireUser(ctx), args, { hasSudo: ctx.hasSudo === true, ip: ctx.ip ?? null })),
+    addReportMessage: (_: unknown, args: { reportId: string; body: string; parentId?: string | null }, ctx: Context) =>
+      guarded(() => addReportMessage(requireUser(ctx), args.reportId, args.body, args.parentId)),
   },
 };

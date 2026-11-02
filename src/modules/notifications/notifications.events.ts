@@ -354,6 +354,33 @@ export async function notifyReportReviewed(params: {
   );
 }
 
+/**
+ * A new message in a report's conversation. Unread ones fold per report. `actor` is null
+ * when a moderator wrote to the reporter: the reporter is told "a moderator", never who.
+ */
+export async function notifyReportMessage(params: {
+  recipientId: string;
+  reportId: string;
+  messageId: string;
+  actor: Actor | null;
+  /** The recipient is the reporter (their link opens their reports, not the queue). */
+  toReporter: boolean;
+}): Promise<boolean> {
+  const { recipientId, reportId, messageId, actor, toReporter } = params;
+  if (actor && await blocked(recipientId, actor.userId)) return false;
+  return deliver(
+    recipientId,
+    'report_message',
+    { type: 'report_message', 'meta.reportId': reportId },
+    {
+      $setOnInsert: { sticky: false, body: null },
+      $set: { read: false, 'meta.messageId': messageId, 'meta.toReporter': toReporter, 'meta.fromModerator': !actor },
+      ...(actor ? { $addToSet: { actors: actorDoc(actor) } } : {}),
+      $inc: { actorCount: 1 },
+    },
+  );
+}
+
 /** A moderator stopped `recipientId` from commenting on walls, until `until` (null: until lifted). */
 export async function notifyWallRestricted(params: { recipientId: string; until: Date | null; reason: string }): Promise<void> {
   const { recipientId, until, reason } = params;

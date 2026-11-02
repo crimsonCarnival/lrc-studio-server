@@ -59,6 +59,22 @@ export const reportSchema = `
     createdAt: String!
     resolvedAt: String
     reporter: ReportUser
+    "Messages in this report's conversation."
+    messageCount: Int!
+  }
+
+  "A message in a report's conversation between its reporter and the moderators."
+  type ReportMessage {
+    id: ID!
+    body: String!
+    createdAt: String!
+    "Null when the viewer may not see who wrote it (a moderator, seen by the reporter)."
+    author: ReportUser
+    fromReporter: Boolean!
+    "The viewer wrote it."
+    mine: Boolean!
+    "Replies to it, oldest first; replies don't nest further."
+    replies: [ReportMessage!]!
   }
 
   "Every report on one target, for moderators. The preview field matching targetType is set; all are null once the target is gone."
@@ -99,6 +115,8 @@ export const reportSchema = `
     status: String!
     createdAt: String!
     resolvedAt: String
+    "Messages in this report's conversation."
+    messageCount: Int!
   }
 
   type MyReports {
@@ -113,6 +131,8 @@ export const reportSchema = `
     openReportCount: Int!
     "The viewer's own reports and what became of them, newest first."
     myReports(limit: Int, offset: Int): MyReports!
+    "A report's conversation, for its reporter and moderators (users.ban)."
+    reportMessages(reportId: ID!): [ReportMessage!]!
   }
 
   extend type Mutation {
@@ -120,5 +140,7 @@ export const reportSchema = `
     fileReport(targetType: String!, targetId: ID!, reason: String!, note: String, alsoBlock: Boolean): Boolean!
     "Moderators only. action: dismiss or action. Acting on a project or playlist deletes it and needs sudo."
     resolveReportGroup(targetType: String!, targetId: ID!, action: String!): Boolean!
+    "Write in a report's conversation (its reporter or a moderator). parentId answers a message."
+    addReportMessage(reportId: ID!, body: String!, parentId: ID): ReportMessage!
   }
 `;

@@ -23,7 +23,7 @@ const NOTIFICATION_TYPES = [
   'new_device',
   'appeal_result',
   'wall_report', 'wall_report_reviewed', 'wall_restricted',
-  'report', 'report_reviewed',
+  'report', 'report_reviewed', 'report_message',
 ] as const;
 
 export type NotificationType = typeof NOTIFICATION_TYPES[number];

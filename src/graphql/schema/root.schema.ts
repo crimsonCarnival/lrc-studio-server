@@ -195,6 +195,7 @@ export const rootSchema = `
     report: Boolean!
     "A moderator reviewed one of your reports (any kind)."
     report_reviewed: Boolean!
+    report_message: Boolean!
   }
 
   type UserPreferences {
@@ -241,6 +242,7 @@ export const rootSchema = `
     wall_report_reviewed: Boolean
     report: Boolean
     report_reviewed: Boolean
+    report_message: Boolean
   }
 
   input UpdatePreferencesInput {

@@ -5,6 +5,7 @@ import Upload from '../modules/uploads/upload.model.js';
 import Lyrics from '../modules/lyrics/lyrics.model.js';
 import ProjectStar from '../modules/projects/project-star.model.js';
 import ProfileShare from '../modules/projects/profile-share.model.js';
+import { messageCounts } from '../modules/reports/report-thread.service.js';
 import Follow from '../modules/users/follow.model.js';
 import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
@@ -100,7 +101,15 @@ async function isSharedToProfileByMeLoader(
   return queries.map(({ obj }) => sharedSet.has(obj.publicId as string));
 }
 
+// One aggregation per list for the conversation badges on report lists.
+async function reportMessageCountLoader(queries: Array<{ obj: LoaderObj }>): Promise<number[]> {
+  const counts = await messageCounts(queries.map(({ obj }) => String(obj.id)));
+  return queries.map(({ obj }) => counts.get(String(obj.id)) ?? 0);
+}
+
 export const loaders: MercuriusLoaders = {
+  ReportEntry: { messageCount: { loader: reportMessageCountLoader } },
+  MyReport: { messageCount: { loader: reportMessageCountLoader } },
   User: { staffRole: staffRoleLoader },
   PublicUser: { staffRole: staffRoleLoader },
   LeaderboardUser: { staffRole: staffRoleLoader },

@@ -31,6 +31,8 @@ export interface INotificationPrefs {
   wall_report_reviewed: boolean;
   report: boolean;
   report_reviewed: boolean;
+  /** A new message in the conversation on one of your reports (or one you took part in). */
+  report_message: boolean;
 }
 
 export interface IUserPreferences {
@@ -85,6 +87,7 @@ const notifPrefsSchema = new mongoose.Schema<INotificationPrefs>({
   wall_report_reviewed: { type: Boolean, default: true },
   report: { type: Boolean, default: true },
   report_reviewed: { type: Boolean, default: true },
+  report_message: { type: Boolean, default: true },
 }, { _id: false });
 
 const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
