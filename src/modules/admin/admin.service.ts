@@ -121,6 +121,40 @@ export async function listUsers(query: Record<string, unknown> = {}): Promise<Re
   return { users, nextCursor, hasMore, total };
 }
 
+/** A pending ban appeal, shaped for the moderators' appeals list. */
+export type PendingAppeal = {
+  id: string;
+  accountName: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  email: string | null;
+  ban: { active: true; reason: string | null; until: Date | null };
+  appeal: { text: string | null; status: string; submittedAt: Date | null };
+};
+
+/** Users whose ban appeal is waiting on a decision, oldest first so none is left to age. */
+export async function listPendingAppeals(limit = 100): Promise<{ appeals: PendingAppeal[]; total: number }> {
+  const filter = { 'appeal.status': 'pending' as const, 'ban.active': true };
+  const [rows, total] = await Promise.all([
+    User.find(filter)
+      .select('accountName displayName avatarUrl email ban.reason ban.until appeal.text appeal.status appeal.submittedAt')
+      .sort({ 'appeal.submittedAt': 1 })
+      .limit(limit)
+      .lean<(Omit<PendingAppeal, 'id'> & { _id: mongoose.Types.ObjectId })[]>(),
+    User.countDocuments(filter),
+  ]);
+  const appeals = rows.map(({ _id, ...u }) => ({
+    id: _id.toString(),
+    accountName: u.accountName ?? null,
+    displayName: u.displayName ?? null,
+    avatarUrl: u.avatarUrl ?? null,
+    email: u.email ?? null,
+    ban: { active: true as const, reason: u.ban?.reason ?? null, until: u.ban?.until ?? null },
+    appeal: { text: u.appeal?.text ?? null, status: u.appeal?.status ?? 'pending', submittedAt: u.appeal?.submittedAt ?? null },
+  }));
+  return { appeals, total };
+}
+
 const ACTIVE_USER_NAME_LIMIT = 25;
 
 export async function getStats(): Promise<Record<string, unknown>> {

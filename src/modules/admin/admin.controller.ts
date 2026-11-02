@@ -76,6 +76,10 @@ export async function getUsers(req: FastifyRequest, reply: FastifyReply): Promis
   return reply.send(result);
 }
 
+export async function getPendingAppeals(_req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  return reply.send(await adminService.listPendingAppeals());
+}
+
 export async function banUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { reason, bannedUntil, banIp, banDevice } = req.body as Record<string, unknown>;
   const result = await adminService.toggleBan(
