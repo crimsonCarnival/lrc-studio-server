@@ -398,6 +398,15 @@ describe('edits', () => {
     expect(await Notification.countDocuments({ userId: owner, type: 'mention' })).toBe(0);
   });
 
+  it('does not mark an edit that leaves the text unchanged', async () => {
+    await mkUser('sam');
+    const a = await mkUser('ann');
+    const c = await addComment(a, 'sam', 'hi');
+    const same = await editComment(a, c.id, 'hi');
+    expect(same.editedAt).toBeNull();
+    expect((await WallComment.findById(c.id).lean())?.revisions ?? []).toHaveLength(0);
+  });
+
   it('refuses once the window has passed', async () => {
     await mkUser('sam');
     const a = await mkUser('ann');
