@@ -27,6 +27,11 @@ export interface IWallComment {
   heldReason?: 'approval' | 'muted_word' | null;
   /** Earlier bodies, oldest first: one entry per edit. */
   revisions?: { body: string; editedAt: Date }[];
+  /**
+   * Its author deleted it while it had replies: it stays as a placeholder so the replies
+   * keep their place, with its body and history wiped.
+   */
+  deletedAt?: Date | null;
 }
 
 export const WALL_COMMENT_STATUSES = ['visible', 'pending', 'hidden'] as const;
@@ -39,12 +44,14 @@ const wallCommentSchema = new mongoose.Schema<IWallComment>(
     parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', default: null },
     replyToId: { type: mongoose.Schema.Types.ObjectId, ref: 'WallComment', default: null },
     depth: { type: Number, required: true, min: 0, max: WALL_MAX_DEPTH, default: 0 },
-    body: { type: String, required: true, trim: true, maxlength: WALL_MAX_LENGTH },
+    // A deleted placeholder keeps no text.
+    body: { type: String, required: function (this: IWallComment) { return !this.deletedAt; }, trim: true, maxlength: WALL_MAX_LENGTH, default: '' },
     editedAt: { type: Date, default: null },
     pinnedAt: { type: Date, default: null },
     status: { type: String, enum: WALL_COMMENT_STATUSES, default: 'visible' },
     heldReason: { type: String, enum: ['approval', 'muted_word', null], default: null },
     revisions: { type: [{ _id: false, body: String, editedAt: Date }], default: [] },
+    deletedAt: { type: Date, default: null },
   },
   { timestamps: { createdAt: true, updatedAt: false }, collection: 'wall_comments' },
 );

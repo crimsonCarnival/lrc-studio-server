@@ -90,6 +90,8 @@ export interface WallCommentView {
   reactions: WallReactionCount[];
   /** For a top-level comment: the viewer stopped hearing about replies in its thread. */
   mutedByMe: boolean;
+  /** Its author deleted it; it stays only so its replies keep their place. No text, no author. */
+  deleted: boolean;
 }
 
 export interface WallReactionCount {
@@ -330,6 +332,38 @@ async function buildViews(
     }
     const isAuthor = viewerId === c.authorId.toString();
     const replyToId = c.replyToId?.toString() ?? null;
+    if (c.deletedAt) {
+      // Nothing left to hold a place for (every reply gone, or hidden from this viewer).
+      if (built.length === 0) return null;
+      return {
+        id: c._id.toString(),
+        body: '',
+        mentions: [],
+        projectRefs: [],
+        createdAt: c.createdAt.toISOString(),
+        editedAt: null,
+        depth: c.depth,
+        // Who wrote a deleted comment is not shown, nor sent.
+        author: { id: '', accountName: '', displayName: null, avatarUrl: null, staffRole: null, allowsTags: false },
+        canDelete: false,
+        canEdit: false,
+        pinned: false,
+        likeCount: 0,
+        likedByMe: false,
+        replyToId,
+        replyToMissing: !!replyToId && !shownSiblings.has(replyToId),
+        replyCount: built.length,
+        descendantCount: built.reduce((n, r) => n + 1 + r.descendantCount, 0),
+        replies: expand.has(c._id.toString()) ? built : built.slice(0, REPLY_PREVIEW),
+        status: 'visible',
+        heldReason: null,
+        canModerate: false,
+        revisionCount: 0,
+        reactions: [],
+        mutedByMe: mutedRoots.has(c._id.toString()),
+        deleted: true,
+      };
+    }
     return {
       id: c._id.toString(),
       body: c.body,
@@ -354,6 +388,7 @@ async function buildViews(
       revisionCount: c.revisions?.length ?? 0,
       reactions: reactionsOf.get(c._id.toString()) ?? [],
       mutedByMe: mutedRoots.has(c._id.toString()),
+      deleted: false,
     };
   };
 
@@ -542,7 +577,8 @@ export async function addComment(
   if (parentId) {
     if (!mongoose.isValidObjectId(parentId)) throw new WallError('not_found');
     answered = await WallComment.findOne({ _id: parentId, wallUserId: owner._id }).lean<LeanComment>();
-    if (!answered) throw new WallError('not_found');
+    // A deleted comment can't be answered; its replies still can.
+    if (!answered || answered.deletedAt) throw new WallError('not_found');
     parent = answered;
     if (answered.depth >= WALL_MAX_DEPTH) {
       parent = answered.parentId ? await WallComment.findById(answered.parentId).lean<LeanComment>() : null;
@@ -640,6 +676,8 @@ async function announce({ owner, author, authorId, answered, subscriberIds, ment
     if (id !== ownerId && await isBlockedEitherWay(id, ownerId)) { told.add(id); continue; }
     if (await notifyMention({ recipientId: id, actor, wallOwnerAccountName: wall, commentId }).catch(() => false)) told.add(id);
   }
+  // A tagged project is the next most specific news, for its owner.
+  for (const id of await notifyProjectOwners(projectIds, actor, owner, commentId, told)) told.add(id);
 
   // Whoever wrote the comment being answered hears it as a reply.
   if (answered && !told.has(answered.authorId.toString())) {
@@ -701,6 +739,25 @@ export async function deleteComment(viewerId: string, commentId: string): Promis
     || comment.wallUserId.toString() === viewerId
     || (!!viewer && hasPermission(viewer.permissions, 'users.ban'));
   if (!allowed) throw new WallError('forbidden');
+  if (comment.deletedAt) return true;
+
+  // The author taking back their own words leaves the conversation under them standing:
+  // a comment with replies becomes a placeholder. Removal by the owner or a moderator is
+  // moderation, and takes the thread with it, as before.
+  if (comment.authorId.toString() === viewerId
+    // Only nested replies need a placeholder: a deepest-level answer sits beside the comment
+    // (same parent), survives its removal anyway, and already says when what it answered is gone.
+    && await WallComment.exists({ parentId: comment._id })) {
+    await WallComment.updateOne(
+      { _id: comment._id },
+      { $set: { deletedAt: new Date(), body: '', revisions: [], editedAt: null, pinnedAt: null } },
+    );
+    await WallCommentLike.deleteMany({ commentId: comment._id });
+    await WallCommentReaction.deleteMany({ commentId: comment._id });
+    await settleReports('wall_comment', [comment._id], 'actioned', viewerId);
+    emitWall(comment.wallUserId.toString(), { type: 'edit', commentId });
+    return true;
+  }
 
   const doomed: mongoose.Types.ObjectId[] = [comment._id];
   let frontier = [comment._id];
@@ -715,6 +772,15 @@ export async function deleteComment(viewerId: string, commentId: string): Promis
   await WallThreadMute.deleteMany({ rootId: { $in: doomed } });
   // Reports on what was removed are settled by the removal; they stay as a record.
   await settleReports('wall_comment', doomed, 'actioned', viewerId);
+  // A placeholder above that was only kept for this reply has nothing left to hold.
+  let parentId = comment.parentId;
+  while (parentId) {
+    const parent = await WallComment.findById(parentId).select('deletedAt parentId').lean<LeanComment>();
+    if (!parent?.deletedAt || await WallComment.exists({ parentId: parent._id })) break;
+    await WallComment.deleteOne({ _id: parent._id });
+    await WallThreadMute.deleteMany({ rootId: parent._id });
+    parentId = parent.parentId;
+  }
   emitWall(comment.wallUserId.toString(), { type: 'delete', commentId });
   return true;
 }
@@ -727,15 +793,13 @@ export async function deleteComment(viewerId: string, commentId: string): Promis
 export async function setLike(viewerId: string, commentId: string, liked: boolean): Promise<{ liked: boolean; likeCount: number }> {
   if (!mongoose.isValidObjectId(commentId)) throw new WallError('not_found');
   const comment = await WallComment.findById(commentId).lean<LeanComment>();
-  if (!comment) throw new WallError('not_found');
+  if (!comment || comment.deletedAt) throw new WallError('not_found');
   const owner = await User.findById(comment.wallUserId).select('isDeleted ban').lean<LeanUser>();
   if (!owner || owner.isDeleted || owner.ban?.active) throw new WallError('not_found');
   if ((await getPreferences(comment.wallUserId.toString())).wallEnabled === false) throw new WallError('wall_disabled');
   for (const otherId of new Set([comment.wallUserId.toString(), comment.authorId.toString()])) {
     if (otherId !== viewerId && await isBlockedEitherWay(viewerId, otherId)) throw new WallError('forbidden');
   }
-  // A tagged project is the next most specific news, for its owner.
-  for (const id of await notifyProjectOwners(projectIds, actor, owner, commentId, told)) told.add(id);
 
   const key = { commentId: comment._id, userId: oid(viewerId) };
   let newLike = false;
@@ -793,6 +857,7 @@ export async function editComment(viewerId: string, commentId: string, rawBody: 
   const comment = mongoose.isValidObjectId(commentId) ? await WallComment.findById(commentId).lean<LeanComment>() : null;
   if (!comment) throw new WallError('not_found');
   if (comment.authorId.toString() !== viewerId) throw new WallError('forbidden');
+  if (comment.deletedAt) throw new WallError('not_found');
   if (Date.now() - comment.createdAt.getTime() >= EDIT_WINDOW_MS) throw new WallError('edit_window_closed');
   const owner = await User.findById(comment.wallUserId).lean<LeanUser>();
   if (!owner || owner.isDeleted || owner.ban?.active || !(await visibleWall(viewerId, owner))) throw new WallError('not_found');
@@ -958,7 +1023,7 @@ export async function setThreadMute(viewerId: string, commentId: string, muted: 
 export async function setReaction(viewerId: string, commentId: string, emoji: string, on: boolean): Promise<WallReactionCount[]> {
   if (!isValidReaction(emoji)) throw new WallError('invalid_body');
   const comment = mongoose.isValidObjectId(commentId) ? await WallComment.findById(commentId).lean<LeanComment>() : null;
-  if (!comment || !(await getComment(viewerId, commentId))) throw new WallError('not_found');
+  if (!comment || comment.deletedAt || !(await getComment(viewerId, commentId))) throw new WallError('not_found');
   if ((await getPreferences(comment.wallUserId.toString())).wallEnabled === false) throw new WallError('wall_disabled');
   for (const otherId of new Set([comment.wallUserId.toString(), comment.authorId.toString()])) {
     if (otherId !== viewerId && await isBlockedEitherWay(viewerId, otherId)) throw new WallError('forbidden');

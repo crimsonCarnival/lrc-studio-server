@@ -49,6 +49,8 @@ export const wallSchema = `
     "For a reply at the deepest level: the sibling it answers (it is listed right after it)."
     replyToId: ID
     replies: [WallComment!]!
+    "Its author deleted it; kept, without text or author, so its replies keep their place."
+    deleted: Boolean!
     "visible, pending (waiting for the owner's approval) or hidden (by the owner or a moderator)."
     status: String!
     "For a pending comment: approval (the owner's setting) or muted_word."

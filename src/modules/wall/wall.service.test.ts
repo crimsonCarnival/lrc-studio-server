@@ -236,6 +236,44 @@ describe('tags', () => {
     expect(await Notification.countDocuments({ userId: owner, type: 'wall_comment' })).toBe(1);
   });
 
+  it('leaves a placeholder when the author deletes a comment that has replies, and keeps the replies', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
+    const top = await addComment(a, 'sam', 'secret words');
+    await addComment(b, 'sam', 'a reply', top.id);
+    await setLike(b, top.id, true);
+
+    await deleteComment(a, top.id);
+
+    const [shown] = (await getWall(owner, 'sam')).comments;
+    expect(shown).toMatchObject({ id: top.id, deleted: true, body: '', likeCount: 0, canDelete: false });
+    expect(shown.author.accountName).toBe('');
+    expect(shown.replies.map(r => r.body)).toEqual(['a reply']);
+    expect(await codeOf(() => setLike(b, top.id, true))).toBe('not_found');
+    expect((await WallComment.findById(top.id).lean())?.body).toBe('');
+  });
+
+  it('removes the placeholder once its last reply is deleted, and removes a reply-less comment outright', async () => {
+    await mkUser('sam');
+    const a = await mkUser('ann'), b = await mkUser('bob');
+    const top = await addComment(a, 'sam', 'first');
+    const reply = await addComment(b, 'sam', 'a reply', top.id);
+    await deleteComment(a, top.id);
+    await deleteComment(b, reply.id);
+    expect(await WallComment.countDocuments({})).toBe(0);
+
+    const lone = await addComment(a, 'sam', 'alone');
+    await deleteComment(a, lone.id);
+    expect(await WallComment.findById(lone.id)).toBeNull();
+  });
+
+  it('still takes the whole thread when the wall\'s owner deletes someone else\'s comment', async () => {
+    const owner = await mkUser('sam'), a = await mkUser('ann'), b = await mkUser('bob');
+    const top = await addComment(a, 'sam', 'first');
+    await addComment(b, 'sam', 'a reply', top.id);
+    await deleteComment(owner, top.id);
+    expect(await WallComment.countDocuments({})).toBe(0);
+  });
+
   it('tells a tagged project\'s owner, once per project, unless they turned project mentions off', async () => {
     await mkUser('sam');
     const a = await mkUser('ann'), maker = await mkUser('max'), quiet = await mkUser('quinn');
