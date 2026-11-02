@@ -32,6 +32,8 @@ export const rootSchema = `
     settings: Settings
     getShare(id: ID!): Project
     publicProfile(accountName: String!, asVisitor: Boolean): PublicUser
+    "Projects a user shared to their profile, newest share first."
+    profileShares(accountName: String!, offset: Int, limit: Int): ProfileSharePage!
     followList(accountName: String!, type: FollowListType!, offset: Int): FollowListResult!
     blockedUsers: [BlockedUser!]!
     playlist(id: ID!): Playlist
@@ -132,7 +134,10 @@ export const rootSchema = `
     savePlaylist(playlistId: ID!): Boolean!
     unsavePlaylist(playlistId: ID!): Boolean!
     setForksEnabled(publicId: ID!, enabled: Boolean!): Project!
-    boostProject(publicId: ID!): Boolean!
+    "Put someone else's public project on your profile; your followers see it in their feed. On a project you already shared, edits the note instead."
+    shareToProfile(publicId: ID!, input: ProfileShareInput): Boolean!
+    "Take a share back, along with its feed entry. Idempotent."
+    unshareFromProfile(publicId: ID!): Boolean!
     # Null when no such project exists. A non-null result with counted: false
     # means the view was seen but deliberately not counted.
     registerProjectView(publicId: ID!): ProjectViewResult

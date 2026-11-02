@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Boost from '../modules/projects/boost.model.js';
+import ProfileShare from '../modules/projects/profile-share.model.js';
 import Follow from '../modules/users/follow.model.js';
 import User from '../modules/users/user.model.js';
 import { hasTimedWord, loaders } from './loaders.js';
@@ -23,14 +23,14 @@ let mongo: MongoMemoryServer;
 beforeAll(async () => {
   mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
-  await Promise.all([Boost.init(), Follow.init()]);
+  await Promise.all([ProfileShare.init(), Follow.init()]);
 }, 120_000);
 afterAll(async () => {
   await mongoose.disconnect();
   await mongo.stop();
 });
 beforeEach(async () => {
-  await Promise.all([Boost.deleteMany({}), Follow.deleteMany({}), User.deleteMany({})]);
+  await Promise.all([ProfileShare.deleteMany({}), Follow.deleteMany({}), User.deleteMany({})]);
 });
 
 describe('hasTimedWord', () => {
@@ -129,25 +129,39 @@ describe('Project.user', () => {
   });
 });
 
-describe('Project boost fields', () => {
-  it('counts boosts per project and returns 0 for a project with none', async () => {
-    await Boost.create([
+describe('Project.myProfileShare', () => {
+  it('returns the viewer\'s own note only', async () => {
+    const viewer = oid();
+    await ProfileShare.create([
+      { userId: viewer, publicId: 'a', description: 'mine', tags: ['x'] },
+      { userId: oid(), publicId: 'b', description: 'theirs' },
+    ]);
+
+    expect(await run('Project', 'myProfileShare', [{ publicId: 'a' }, { publicId: 'b' }], viewer))
+      .toEqual([{ description: 'mine', tags: ['x'] }, null]);
+    expect(await run('Project', 'myProfileShare', [{ publicId: 'a' }])).toEqual([null]);
+  });
+});
+
+describe('Project profile-share fields', () => {
+  it('counts shares per project and returns 0 for a project with none', async () => {
+    await ProfileShare.create([
       { userId: oid(), publicId: 'a' },
       { userId: oid(), publicId: 'a' },
       { userId: oid(), publicId: 'b' },
     ]);
 
-    expect(await run('Project', 'boostCount', [{ publicId: 'a' }, { publicId: 'b' }, { publicId: 'c' }])).toEqual([2, 1, 0]);
+    expect(await run('Project', 'profileShareCount', [{ publicId: 'a' }, { publicId: 'b' }, { publicId: 'c' }])).toEqual([2, 1, 0]);
   });
 
-  it('reports only the viewer\'s own boosts', async () => {
+  it('reports only the viewer\'s own shares', async () => {
     const viewer = oid();
-    await Boost.create([
+    await ProfileShare.create([
       { userId: viewer, publicId: 'a' },
       { userId: oid(), publicId: 'b' },
     ]);
 
-    expect(await run('Project', 'isBoostedByMe', [{ publicId: 'a' }, { publicId: 'b' }], viewer)).toEqual([true, false]);
-    expect(await run('Project', 'isBoostedByMe', [{ publicId: 'a' }])).toEqual([false]);
+    expect(await run('Project', 'isSharedToProfileByMe', [{ publicId: 'a' }, { publicId: 'b' }], viewer)).toEqual([true, false]);
+    expect(await run('Project', 'isSharedToProfileByMe', [{ publicId: 'a' }])).toEqual([false]);
   });
 });

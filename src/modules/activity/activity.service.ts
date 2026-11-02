@@ -16,10 +16,12 @@ export interface WriteActivityParams {
   projectTitle: string;
   coverImage: string;
   targetPath?: string;
+  description?: string;
+  tags?: string[];
 }
 
 export async function writeActivity(params: WriteActivityParams): Promise<void> {
-  const { actorId, type, publicId, projectTitle, coverImage, targetPath } = params;
+  const { actorId, type, publicId, projectTitle, coverImage, targetPath, description, tags } = params;
 
   const activity = await Activity.create({
     actorId: new mongoose.Types.ObjectId(actorId),
@@ -28,6 +30,8 @@ export async function writeActivity(params: WriteActivityParams): Promise<void> 
     projectTitle,
     coverImage,
     targetPath: targetPath ?? '',
+    ...(description ? { description } : {}),
+    ...(tags?.length ? { tags } : {}),
   });
 
   // Fan-out to followers — fire-and-forget via queue, never blocks the caller

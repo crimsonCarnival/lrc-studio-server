@@ -4,7 +4,7 @@ import User from '../modules/users/user.model.js';
 import Upload from '../modules/uploads/upload.model.js';
 import Lyrics from '../modules/lyrics/lyrics.model.js';
 import ProjectStar from '../modules/projects/project-star.model.js';
-import Boost from '../modules/projects/boost.model.js';
+import ProfileShare from '../modules/projects/profile-share.model.js';
 import Follow from '../modules/users/follow.model.js';
 import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
@@ -75,6 +75,30 @@ const staffRoleLoader = {
     });
   },
 };
+
+async function profileShareCountLoader(queries: Array<{ obj: LoaderObj }>): Promise<number[]> {
+  const publicIds = queries.map(({ obj }) => obj.publicId as string);
+  const counts = await ProfileShare.aggregate<{ _id: string; count: number }>([
+    { $match: { publicId: { $in: publicIds } } },
+    { $group: { _id: '$publicId', count: { $sum: 1 } } },
+  ]);
+  const map = new Map(counts.map((c) => [c._id, c.count]));
+  return queries.map(({ obj }) => map.get(obj.publicId as string) ?? 0);
+}
+
+async function isSharedToProfileByMeLoader(
+  queries: Array<{ obj: LoaderObj }>,
+  context: MercuriusContext & { userId?: string | null }
+): Promise<boolean[]> {
+  if (!context.userId) return queries.map(() => false);
+  const publicIds = queries.map(({ obj }) => obj.publicId as string);
+  const shares = await ProfileShare
+    .find({ userId: context.userId, publicId: { $in: publicIds } })
+    .select('publicId')
+    .lean<Array<{ publicId: string }>>();
+  const sharedSet = new Set(shares.map((s) => s.publicId));
+  return queries.map(({ obj }) => sharedSet.has(obj.publicId as string));
+}
 
 export const loaders: MercuriusLoaders = {
   User: { staffRole: staffRoleLoader },
@@ -195,32 +219,27 @@ export const loaders: MercuriusLoaders = {
       },
     },
 
-    // Boosts live in their own collection (no counter on Project), so the count is
-    // one grouped query per request rather than a countDocuments per project.
-    boostCount: {
-      loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
-        const publicIds = queries.map(({ obj }) => obj.publicId as string);
-        const counts = await Boost.aggregate<{ _id: string; count: number }>([
-          { $match: { publicId: { $in: publicIds } } },
-          { $group: { _id: '$publicId', count: { $sum: 1 } } },
-        ]);
-        const map = new Map(counts.map((c) => [c._id, c.count]));
-        return queries.map(({ obj }) => map.get(obj.publicId as string) ?? 0);
-      },
-    },
-
-    isBoostedByMe: {
+    // Profile shares live in their own collection (no counter on Project), so the count
+    // is one grouped query per request rather than a countDocuments per project.
+    profileShareCount: { loader: profileShareCountLoader },
+    isSharedToProfileByMe: { loader: isSharedToProfileByMeLoader },
+    // The viewer's own note, so the share composer can open on what they wrote.
+    myProfileShare: {
       loader: async (queries: Array<{ obj: LoaderObj }>, context: MercuriusContext & { userId?: string | null }) => {
-        if (!context.userId) return queries.map(() => false);
+        if (!context.userId) return queries.map(() => null);
         const publicIds = queries.map(({ obj }) => obj.publicId as string);
-        const boosts = await Boost
+        const shares = await ProfileShare
           .find({ userId: context.userId, publicId: { $in: publicIds } })
-          .select('publicId')
-          .lean<Array<{ publicId: string }>>();
-        const boostedSet = new Set(boosts.map((b) => b.publicId));
-        return queries.map(({ obj }) => boostedSet.has(obj.publicId as string));
+          .select('publicId description tags')
+          .lean<Array<{ publicId: string; description?: string; tags?: string[] }>>();
+        const map = new Map(shares.map((s) => [s.publicId, { description: s.description ?? '', tags: s.tags ?? [] }]));
+        return queries.map(({ obj }) => map.get(obj.publicId as string) ?? null);
       },
     },
+    // Deprecated Boost names, kept so a client loaded before the rename still gets
+    // its project page instead of a failed query. Drop once clients have rolled over.
+    boostCount: { loader: profileShareCountLoader },
+    isBoostedByMe: { loader: isSharedToProfileByMeLoader },
 
     // Projects only the word times, not the lyric text, so a list of results stays cheap.
     hasWordSync: {

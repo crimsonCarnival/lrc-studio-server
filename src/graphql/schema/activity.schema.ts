@@ -7,6 +7,9 @@ export const activitySchema = `
     projectTitle: String!
     coverImage: String
     targetPath: String
+    "PROJECT_SHARED only: the sharer's note and tags."
+    description: String
+    tags: [String!]
     createdAt: String!
   }
 
@@ -14,7 +17,7 @@ export const activitySchema = `
     PROJECT_PUBLISHED
     PROJECT_STARRED
     PROJECT_FORKED
-    PROJECT_BOOSTED
+    PROJECT_SHARED
     PLAYLIST_CREATED
     USER_FOLLOWED
   }

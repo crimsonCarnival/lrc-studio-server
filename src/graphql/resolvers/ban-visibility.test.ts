@@ -299,7 +299,7 @@ describe('block enforcement on engagement', () => {
    * A block must stop engagement, not just discovery. starProject refuses a
    * project whose owner is in a block relationship with the caller (same guard
    * as followUser) and leaves no star, counter bump or notification behind.
-   * cloneProject, boostProject and reactToProject share the guard.
+   * cloneProject, shareToProfile and reactToProject share the guard.
    */
   it('rejects starring a project owned by someone who blocked you, with no side effects', async () => {
     const owner = await mkUser();

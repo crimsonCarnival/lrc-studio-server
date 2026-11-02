@@ -4,7 +4,7 @@ export type ActivityType =
   | 'project_published'
   | 'project_starred'
   | 'project_forked'
-  | 'project_boosted'
+  | 'project_shared'
   | 'playlist_created'
   | 'user_followed';
 
@@ -15,6 +15,9 @@ export interface IActivity {
   projectTitle: string;
   coverImage: string;
   targetPath: string;
+  /** project_shared only: a copy of the share's note, so the feed needs no join. */
+  description?: string;
+  tags?: string[];
   createdAt: Date;
 }
 
@@ -25,7 +28,7 @@ const activitySchema = new mongoose.Schema<IActivity>(
       type: String,
       enum: [
         'project_published', 'project_starred', 'project_forked',
-        'project_boosted', 'playlist_created', 'user_followed',
+        'project_shared', 'playlist_created', 'user_followed',
       ],
       required: true,
     },
@@ -33,6 +36,8 @@ const activitySchema = new mongoose.Schema<IActivity>(
     projectTitle: { type: String, default: '' },
     coverImage:   { type: String, default: '' },
     targetPath:   { type: String, default: '' },
+    description:  { type: String },
+    tags:         { type: [String], default: undefined },
   },
   { timestamps: { createdAt: true, updatedAt: false }, collection: 'activities' }
 );

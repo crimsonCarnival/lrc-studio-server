@@ -12,6 +12,7 @@ import { seedBuiltinBadges, runSyncStatsRefresh, SYNC_STATS_REFRESH_JOB } from '
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { syncSuperadminEmailGrant } from '../modules/auth/superadmin-env.service.js';
 import { dropSupersededIndexes } from '../db/superseded-indexes.js';
+import { migrateBoostsToProfileShares } from '../modules/projects/boost-to-profile-share.migration.js';
 import { startJobQueue, runJobQueue, stopJobQueue, defineRecurring, defineOnce } from '../lib/job-queue.js';
 
 /**
@@ -37,6 +38,9 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
       syncSuperadminEmailGrant()
         .then(() => fastify.log.info('[startup] SUPERADMIN_EMAIL sync checked'))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to sync SUPERADMIN_EMAIL grant')),
+      migrateBoostsToProfileShares()
+        .then((r) => { if (r.inserted > 0 || r.activitiesRenamed > 0) fastify.log.info({ result: r }, '[startup] Boosts migrated to profile shares'); })
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to migrate boosts to profile shares')),
       dropSupersededIndexes()
         .then((dropped) => { if (dropped.length > 0) fastify.log.info(`[startup] Superseded indexes dropped: ${dropped.join(', ')}`); })
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to drop superseded indexes')),

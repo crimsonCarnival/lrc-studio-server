@@ -34,12 +34,43 @@ export const projectSchema = `
     shareCount: Int
     isStarredByMe: Boolean
     isForkedByMe: Boolean
-    boostCount: Int
-    isBoostedByMe: Boolean
+    # How many users shared this project to their profile. Not shareCount, which
+    # counts link shares.
+    profileShareCount: Int
+    isSharedToProfileByMe: Boolean
+    "The viewer's own share of this project, null when they have not shared it."
+    myProfileShare: ProfileShareNote
+    boostCount: Int @deprecated(reason: "Boost became Share to profile; use profileShareCount.")
+    isBoostedByMe: Boolean @deprecated(reason: "Use isSharedToProfileByMe.")
     # True when at least one word carries a timestamp (karaoke-style sync).
     hasWordSync: Boolean
     forksEnabled: Boolean
     trendingScore: Float
+  }
+
+  type ProfileShareItem {
+    sharedAt: String!
+    description: String!
+    tags: [String!]!
+    project: Project!
+  }
+
+  type ProfileShareNote {
+    description: String!
+    tags: [String!]!
+  }
+
+  "description: up to 500 chars. tags: up to 10, each one word of up to 30 chars; a leading # is dropped."
+  input ProfileShareInput {
+    description: String
+    tags: [String!]
+    "On a project already shared: post it again (new date, new feed entry) instead of editing the note."
+    reshare: Boolean
+  }
+
+  type ProfileSharePage {
+    items: [ProfileShareItem!]!
+    hasMore: Boolean!
   }
 
   type ForkedFrom {

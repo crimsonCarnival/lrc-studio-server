@@ -2,7 +2,12 @@ import mongoose from 'mongoose';
 import Project from '../../modules/projects/project.model.js';
 import { notifyStarMilestone } from '../../modules/notifications/notifications.events.js';
 import type { IProject } from '../../modules/projects/project.model.js';
-import Boost from '../../modules/projects/boost.model.js';
+import ProfileShare from '../../modules/projects/profile-share.model.js';
+import Activity from '../../modules/activity/activity.model.js';
+import {
+  listProfileShares, normalizeShareNote, ShareNoteError, type ShareNote,
+} from '../../modules/projects/profile-share.service.js';
+import mercurius from 'mercurius';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import Upload from '../../modules/uploads/upload.model.js';
 import ProjectStar from '../../modules/projects/project-star.model.js';
@@ -60,6 +65,15 @@ function libraryArtist(meta: Pick<LibraryMeta, 'artists' | 'songArtist'> | undef
  * that registration requires one — leaves the field unset rather than failing
  * the mutation that triggered the activity.
  */
+/** Pushes the new share count to everyone on the project page. Best effort. */
+function emitProfileShareCount(publicId: string): void {
+  ProfileShare.countDocuments({ publicId })
+    .then((profileShareCount) => {
+      getIO().to(`project:${publicId}`).emit('profile-share:update', { publicId, profileShareCount });
+    })
+    .catch(() => {});
+}
+
 async function activityTargetPath(project: Pick<IProject, 'publicId' | 'slug' | 'title' | 'metadata' | 'userId'> | null | undefined): Promise<string | undefined> {
   if (!project?.publicId || !project.userId) return undefined;
   const owner = await User.findById(project.userId.toString()).select('accountName').lean<IUser>();
@@ -130,6 +144,12 @@ export const projectResolvers = {
       if (context.userId && project.userId?.toString() === context.userId) return project;
       return null;
     },
+
+    profileShares: async (
+      _root: unknown,
+      { accountName, offset = 0, limit = 20 }: { accountName: string; offset?: number; limit?: number },
+      context: Context
+    ) => listProfileShares(accountName, context.userId ?? null, offset, limit),
 
     searchProjects: async (
       _root: unknown,
@@ -370,40 +390,80 @@ export const projectResolvers = {
       return project;
     },
 
-    boostProject: async (_: unknown, { publicId }: { publicId: string }, ctx: Context) => {
+    shareToProfile: async (
+      _: unknown,
+      { publicId, input }: { publicId: string; input?: { description?: string | null; tags?: string[] | null; reshare?: boolean | null } | null },
+      ctx: Context
+    ) => {
       if (!ctx.userId) throw new Error('Unauthorized');
-
-      // ownerActive: boosting feeds the trending score, so content from a
-      // deactivated or banned owner must not be boostable.
-      const project = await Project.findOne({ publicId, public: true, ownerActive: { $ne: false } }).lean<IProject>();
-      if (!project || await isHiddenByBlock(ctx.userId, ownerIdOf(project))) throw new Error('Project not found');
-      if (project.userId?.toString() === ctx.userId) throw new Error('Cannot boost your own project');
-
+      let note: ShareNote;
       try {
-        await Boost.create({ userId: new mongoose.Types.ObjectId(ctx.userId), publicId });
-      } catch (err: unknown) {
-        if ((err as { code?: number }).code === 11000) return true;
+        note = normalizeShareNote(input);
+      } catch (err) {
+        if (err instanceof ShareNoteError) throw new mercurius.ErrorWithProps(err.code, { code: err.code.toUpperCase() });
         throw err;
       }
 
-      const boostCount = await Boost.countDocuments({ publicId });
+      // ownerActive: a share puts the project in followers' feeds, so content from
+      // a deactivated or banned owner must not be shareable.
+      const project = await Project.findOne({ publicId, public: true, ownerActive: { $ne: false } }).lean<IProject>();
+      if (!project || await isHiddenByBlock(ctx.userId, ownerIdOf(project))) throw new Error('Project not found');
+
+      const userId = new mongoose.Types.ObjectId(ctx.userId);
+      let created = true;
       try {
-        getIO().to(`project:${publicId}`).emit('boost:update', { publicId, boostCount });
-      } catch {}
+        await ProfileShare.create({ userId, publicId, ...note });
+      } catch (err: unknown) {
+        if ((err as { code?: number }).code !== 11000) throw err;
+        created = false;
+        if (!input?.reshare) {
+          // Already shared: this call edits the note. The feed row carries a copy of
+          // it, so that is updated too, but no second feed entry is written.
+          await ProfileShare.updateOne({ userId, publicId }, { $set: note });
+          await Activity.updateMany(
+            { actorId: userId, type: 'project_shared', publicId },
+            { $set: { description: note.description, tags: note.tags } }
+          );
+          return true;
+        }
+        // A re-share posts it again: back to the top of the profile tab (createdAt is
+        // the share date there, so it is written through the driver, past Mongoose's
+        // immutable timestamp) and a fresh feed entry in place of the old one.
+        await ProfileShare.collection.updateOne({ userId, publicId }, { $set: { ...note, createdAt: new Date() } });
+        await Activity.deleteMany({ actorId: userId, type: 'project_shared', publicId });
+      }
+
+      if (created) emitProfileShareCount(publicId);
 
       const actor = await User.findById(ctx.userId).select('accountName').lean<IUser>();
       if (actor) {
         const targetPath = await activityTargetPath(project);
         writeActivity({
           actorId: ctx.userId,
-          type: 'project_boosted',
+          type: 'project_shared',
           publicId,
           projectTitle: project.title || (project.metadata as Record<string, unknown> | undefined)?.['songName'] as string || '',
           coverImage: project.coverImage ?? '',
           targetPath,
+          ...note,
         }).catch(() => {});
       }
 
+      return true;
+    },
+
+    unshareFromProfile: async (_: unknown, { publicId }: { publicId: string }, ctx: Context) => {
+      if (!ctx.userId) throw new Error('Unauthorized');
+      const userId = new mongoose.Types.ObjectId(ctx.userId);
+      // deleteOne is atomic, so concurrent unshares remove the feed entry once.
+      const { deletedCount } = await ProfileShare.deleteOne({ userId, publicId });
+      if (deletedCount > 0) {
+        // The feed reads activities on demand, so deleting the row is what takes the
+        // share out of followers' feeds. A card already pushed live over the socket
+        // stays on screen until that follower reloads.
+        await Activity.deleteMany({ actorId: userId, type: 'project_shared', publicId });
+        emitProfileShareCount(publicId);
+      }
       return true;
     },
 

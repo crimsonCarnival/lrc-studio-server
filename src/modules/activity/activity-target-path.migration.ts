@@ -18,14 +18,14 @@ export interface BackfillResult {
 }
 
 /** The activity types that address a project; the rest set their own path at write time. */
-const PROJECT_TYPES = ['project_published', 'project_starred', 'project_forked', 'project_boosted'] as const;
+const PROJECT_TYPES = ['project_published', 'project_starred', 'project_forked', 'project_shared'] as const;
 
 /**
  * Fills `Activity.targetPath` for project activities written before the resolvers
  * started setting it.
  *
  * The feed needs this because it cannot derive the path itself: for starred,
- * forked and boosted rows the actor is *not* the project's owner, and an Activity
+ * forked and shared rows the actor is *not* the project's owner, and an Activity
  * carries no owner account name or slug — so without a stored path those cards
  * render unlinked.
  *
