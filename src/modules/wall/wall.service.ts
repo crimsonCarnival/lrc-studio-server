@@ -869,6 +869,12 @@ export async function editComment(viewerId: string, commentId: string, rawBody: 
   if (tagCheck === 'invalid') throw new WallError('invalid_body');
   if (tagCheck === 'not_allowed') throw new WallError('tag_not_allowed');
 
+  // Saving the same text is not an edit: no "edited" mark, no revision, no notifications.
+  if (body === comment.body) {
+    const [view] = await buildViews(viewerId, owner, [comment]);
+    return view;
+  }
+
   const editedAt = new Date();
   // An edit that brings in a muted word sends a visible comment back for approval.
   const held = (comment.status ?? 'visible') === 'visible' && await holdReason(viewerId, owner._id.toString(), body) === 'muted_word';
