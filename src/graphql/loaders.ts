@@ -91,7 +91,11 @@ export const loaders: MercuriusLoaders = {
           const userId = obj.userId as LoaderObj | unknown;
           if (user && (user.id || user._id)) {
             results[i] = user;
-          } else if (userId && typeof userId === 'object' && ((userId as LoaderObj)._id || (userId as LoaderObj).id)) {
+          } else if (userId && typeof userId === 'object' && !(userId instanceof mongoose.Types.ObjectId)
+            && ((userId as LoaderObj)._id || (userId as LoaderObj).id)) {
+            // The ObjectId guard matters: Mongoose gives ObjectId an `_id` getter returning
+            // itself (and bson an `id` one), so a raw id from a `.lean()` find passed this
+            // check and resolved Project.user to the id, with every user field null.
             // `.populate('userId', ...)` (explore/sharing services) replaces userId with the
             // full user doc. Use it directly — passing it to the $in fetch below as if it
             // were a raw id matches nothing, silently nulling Project.user for every row.

@@ -113,6 +113,22 @@ describe('staffRole', () => {
   });
 });
 
+describe('Project.user', () => {
+  it('fetches the owner for a raw ObjectId userId, as a lean find returns it', async () => {
+    const id = new mongoose.Types.ObjectId();
+    await User.collection.insertOne({ _id: id, accountName: 'owner', displayName: 'Owner' });
+
+    const [user] = await run('Project', 'user', [{ userId: id }]) as Array<{ accountName?: string } | null>;
+
+    expect(user?.accountName).toBe('owner');
+  });
+
+  it('uses a populated owner doc as-is', async () => {
+    const populated = { _id: new mongoose.Types.ObjectId(), accountName: 'populated' };
+    expect(await run('Project', 'user', [{ userId: populated }])).toEqual([populated]);
+  });
+});
+
 describe('Project boost fields', () => {
   it('counts boosts per project and returns 0 for a project with none', async () => {
     await Boost.create([
