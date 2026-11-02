@@ -1,7 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 type HandledError = Error & {
-  validation?: { keyword: string; params?: { missingProperty?: string } }[];
+  validation?: { keyword: string; instancePath?: string; params?: { missingProperty?: string } }[];
+  /** Which part of the request failed: 'body' | 'headers' | 'querystring' | 'params'. */
+  validationContext?: string;
   statusCode?: number;
   name?: string;
 };
@@ -40,14 +42,16 @@ const STATUS_MESSAGES: Record<number, string> = {
  */
 export function handleFastifyError(error: HandledError, request: FastifyRequest, reply: FastifyReply): void {
   if (error.validation) {
-    const missingHeaders = error.validation.filter(
-      (v) => v.keyword === 'required' && v.params?.missingProperty
-    );
-    if (missingHeaders.length > 0) {
-      reply.code(400).send({ error: 'Missing required header: ' + missingHeaders[0].params?.missingProperty });
+    const missing = error.validation.find((v) => v.keyword === 'required' && v.params?.missingProperty)
+      ?.params?.missingProperty;
+    if (missing && error.validationContext === 'headers') {
+      reply.code(400).send({ error: 'Missing required header: ' + missing });
       return;
     }
-    reply.code(400).send({ error: 'validation_error' });
+    // A missing body/query field used to be reported as a missing "header" too. `field` names
+    // the offending field (a missing one, or the path of the first invalid one, e.g. `lines`).
+    const field = missing ?? error.validation[0]?.instancePath?.replace(/^\//, '').split('/')[0];
+    reply.code(400).send(field ? { error: 'validation_error', field } : { error: 'validation_error' });
     return;
   }
   if (error.name === 'ValidationError') {

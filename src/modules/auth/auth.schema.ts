@@ -14,6 +14,7 @@ export const registerSchema = {
     type: 'object',
     properties: {
       accountName: { type: 'string', minLength: 3, maxLength: 30, pattern: '^[a-z0-9_.:-]+$' },
+      displayName: { type: 'string', maxLength: 50 },
       email: { type: 'string', format: 'email', maxLength: 254 },
       password: { type: 'string', minLength: 8, maxLength: 128 },
       recaptchaToken: { type: 'string', minLength: 1, maxLength: 8192 },
@@ -95,16 +96,80 @@ export const refreshSchema = {
   },
 };
 
-export const updateProfileSchema = {
+
+// Bodies below were read by hand in the controllers with no route schema. These bound
+// types and sizes only: missing-field and password-policy checks stay in the
+// controllers/services so the specific error codes the client maps keep working.
+const passwordField = { type: 'string', maxLength: 128 };
+
+export const forgotPasswordSchema = {
   body: {
     type: 'object',
     properties: {
-      avatarUrl: { type: ['string', 'null'], maxLength: 500 },
-      avatarPublicId: { type: ['string', 'null'], maxLength: 500 },
-      accountName: { type: 'string', minLength: 3, maxLength: 30, pattern: '^[a-z0-9_.:-]+$' },
-      email: { type: 'string', format: 'email', maxLength: 254 },
-      bio: { type: 'string', maxLength: 160 },
+      email: { type: 'string', maxLength: 254 },
+      recaptchaToken: { type: 'string', maxLength: 8192 },
     },
-    additionalProperties: false,
+  },
+};
+
+export const validateResetTokenSchema = {
+  querystring: {
+    type: 'object',
+    properties: { token: { type: 'string', maxLength: 512 } },
+  },
+};
+
+export const resetPasswordSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      token: { type: 'string', maxLength: 512 },
+      newPassword: passwordField,
+      confirmPassword: passwordField,
+    },
+  },
+};
+
+export const changePasswordSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      currentPassword: passwordField,
+      newPassword: passwordField,
+      confirmPassword: passwordField,
+    },
+  },
+};
+
+export const setPasswordSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      newPassword: passwordField,
+      confirmPassword: passwordField,
+    },
+  },
+};
+
+export const verifyEmailSchema = {
+  body: {
+    type: 'object',
+    properties: { token: { type: 'string', maxLength: 512 } },
+  },
+};
+
+export const appealSchema = {
+  body: {
+    type: 'object',
+    // Matches the 1000-char cap on User.appeal.text.
+    properties: { appealText: { type: 'string', minLength: 1, maxLength: 1000 } },
+    required: ['appealText'],
+  },
+};
+
+export const logoutAllSchema = {
+  body: {
+    type: ['object', 'null'],
+    properties: { keepCurrent: { type: 'boolean' } },
   },
 };

@@ -33,10 +33,6 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ error: 'Lyrics content is required' });
   }
 
-  if (content.length > 5 * 1024 * 1024) {
-    return reply.code(413).send({ error: 'Lyrics content too large (max 5MB)' });
-  }
-
   const normalizedName = ((filename as string) || 'lyrics.lrc').toLowerCase();
   if (!normalizedName.endsWith('.lrc') && !normalizedName.endsWith('.srt') && !normalizedName.endsWith('.txt')) {
     return reply.code(400).send({ error: 'Unsupported lyrics format' });

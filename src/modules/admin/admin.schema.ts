@@ -137,3 +137,17 @@ export const updateUserPermissionsSchema = {
   },
   params: userIdParam,
 };
+// Types and sizes only; the controller keeps its own messages for bad action/amount/target.
+export const adjustXpSchema = {
+  body: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', maxLength: 16 },
+      amount: { type: 'number' },
+      target: { type: 'string', maxLength: 16 },
+      userId: { type: 'string', maxLength: 24 },
+      userIds: { type: 'array', items: { type: 'string', maxLength: 24 }, maxItems: 1000 },
+    },
+    additionalProperties: false,
+  },
+};

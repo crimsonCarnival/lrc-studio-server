@@ -13,6 +13,7 @@ import {
   updateRolePresetSchema,
   listJobLogsSchema,
   updateUserPermissionsSchema,
+  adjustXpSchema,
 } from './admin.schema.js';
 
 export default async function adminRoutes(fastify: FastifyInstance): Promise<void> {
@@ -52,7 +53,7 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
   fastify.post('/banned-devices', { preHandler: [perm('network.block'), sudo], schema: blockDeviceSchema }, adminController.blockDevice);
   fastify.delete('/banned-devices/:id', { preHandler: [perm('network.block'), sudo], schema: { params: idParam } }, adminController.unblockDevice);
 
-  fastify.post('/xp', { preHandler: [perm('xp.adjust'), sudo] }, adminController.adjustXP);
+  fastify.post('/xp', { preHandler: [perm('xp.adjust'), sudo], schema: adjustXpSchema }, adminController.adjustXP);
 
   // Permissions management ("Manage permissions" page) — superadmin-only, not
   // gated by any permission string. Granting/revoking permissions is itself
