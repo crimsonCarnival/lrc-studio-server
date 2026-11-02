@@ -900,6 +900,16 @@ export const userResolvers = {
     },
   },
 
+  // `toPublic()` hands these over as Date objects; see the note on User.passwordChangedAt.
+  UserBan: {
+    until: (ban: { until?: Date | string | null }) => ban.until ? new Date(ban.until).toISOString() : null,
+  },
+
+  UserAppeal: {
+    submittedAt: (appeal: { submittedAt?: Date | string | null }) => appeal.submittedAt ? new Date(appeal.submittedAt).toISOString() : null,
+    resolvedAt: (appeal: { resolvedAt?: Date | string | null }) => appeal.resolvedAt ? new Date(appeal.resolvedAt).toISOString() : null,
+  },
+
   User: {
     id: (user: IUser) => user._id?.toString() ?? user.id,
     // Owner-only: a user's permission set is returned solely to themselves.
@@ -912,6 +922,10 @@ export const userResolvers = {
       return context?.userId && selfId === context.userId ? (user.permissions ?? []) : [];
     },
     createdAt: (user: IUser) => user.createdAt ? new Date(user.createdAt).toISOString() : null,
+    // The `String` scalar would serialize a Date as epoch-ms ("1793491200000"), which `new Date()` cannot parse.
+    passwordChangedAt: (user: IUser) => user.passwordChangedAt ? new Date(user.passwordChangedAt).toISOString() : null,
+    lastAccountNameChangedAt: (user: IUser) => user.lastAccountNameChangedAt ? new Date(user.lastAccountNameChangedAt).toISOString() : null,
+    lastLoginAt: (user: { lastLoginAt?: Date | string | null }) => user.lastLoginAt ? new Date(user.lastLoginAt).toISOString() : null,
     badges:          (user: IUser) => user.badges ?? [],
     showcasedBadges: (user: IUser) => user.showcasedBadges ?? [],
     stats:           (user: IUser) => ({ minutesSynced: user.stats?.minutesSynced ?? 0, wordsSynced: user.stats?.wordsSynced ?? 0, karaokeLines: user.stats?.karaokeLines ?? 0, syncedLines: user.stats?.syncedLines ?? 0, aiSyncedLines: user.stats?.aiSyncedLines ?? 0, aiWordsSynced: user.stats?.aiWordsSynced ?? 0 }),

@@ -496,6 +496,8 @@ export const projectResolvers = {
     slug: (project: IProject) => project.slug || projectSlug(project),
     createdAt: (project: IProject) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
     updatedAt: (project: IProject) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
+    contentUpdatedAt: (project: IProject) => project.contentUpdatedAt ? new Date(project.contentUpdatedAt).toISOString() : null,
+    expiresAt: (project: IProject & { expiresAt?: Date | string | null }) => project.expiresAt ? new Date(project.expiresAt).toISOString() : null,
     isStarredByMe: async (project: IProject, _args: Record<string, unknown>, ctx: Context) => {
       if (!ctx.userId || !project.publicId) return false;
       return !!(await ProjectStar.exists({ publicId: project.publicId, userId: ctx.userId }));
