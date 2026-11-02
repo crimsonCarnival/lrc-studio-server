@@ -33,12 +33,11 @@ async function rateLimitPlugin(fastify: FastifyInstance): Promise<void> {
       // rotating it otherwise defeats the counter and its only backstop at once.
       if (req.url.startsWith('/graphql')) return req.ip;
 
-      // Same reasoning as /graphql: the lyrics compute routes (parse, the
-      // /compile/* and /editor/* mark/bulk-shift/etc. handlers — both
-      // prefixes route to the same lyrics module) are CPU-bound and several
-      // are unauthenticated, so a client-rotatable key would let one caller
-      // mint an unlimited number of buckets against them.
-      if (req.url.startsWith('/lyrics') || req.url.startsWith('/editor')) return req.ip;
+      // Same reasoning as /graphql: the lyrics compute routes (parse, /compile/*,
+      // infer-end-times) are CPU-bound and several are unauthenticated, so a
+      // client-rotatable key would let one caller mint an unlimited number of
+      // buckets against them.
+      if (req.url.startsWith('/lyrics')) return req.ip;
 
       const deviceId = req.headers['x-device-id'];
       if (typeof deviceId === 'string' && deviceId) {

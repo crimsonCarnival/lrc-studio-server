@@ -11,9 +11,8 @@ import { registerAtomically, loginAtomically } from './auth.tx.service.js';
 import BannedIp from '../admin/banned-ip.model.js';
 import BannedDevice from '../admin/banned-device.model.js';
 import UserDevice from './user-device.model.js';
-import { v2 as cloudinary } from 'cloudinary';
 import type { ServiceResult, AuthResponse, UserPublic } from '../../types/index.js';
-import { isAccountNameInHistoryOfOther, recordAccountNameChange } from '../users/account-name.service.js';
+import { isAccountNameInHistoryOfOther } from '../users/account-name.service.js';
 import { sendVerification } from '../email-verification/email-verification.service.js';
 import { createOnce, resolveSticky } from '../notifications/notifications.service.js';
 import Passkey from './passkey.model.js';
@@ -30,7 +29,6 @@ import type {
 } from '@simplewebauthn/server';
 import { getEnv } from '../../config/env.js';
 import { isValidAccountName, isReservedAccountName } from './auth.validation.js';
-import { stripHtml } from '../../utils/sanitize.js';
 
 function getWebAuthnConfig() {
   const env = getEnv();
@@ -579,156 +577,6 @@ export async function logout(userId: string, familyId?: string): Promise<Service
   });
 
   return { success: true };
-}
-
-export async function getProfile(
-  userId: string,
-  ip: string,
-  deviceId?: string | null
-): Promise<ServiceResult<{ user: UserPublic }>> {
-  const user = await User.findById(userId);
-  if (!user || user.isDeleted) return err('user_not_found', 404);
-
-  await user.checkBanStatus();
-
-  const deviceCheck = await checkDevice(deviceId, user);
-  if (deviceCheck.error) return deviceCheck;
-
-  if (ip && user.lastIp !== ip) {
-    await User.updateOne({ _id: user._id }, { $set: { lastIp: ip } });
-    user.lastIp = ip;
-  }
-
-  // Fetch the latest session to expose privacy metrics to the owner
-  const latestSession = await Session.findOne({ userId: user._id })
-    .sort({ lastUsedAt: -1 })
-    .lean();
-
-  const publicProfile = user.toPublic() as unknown as UserPublic;
-  if (latestSession) {
-    publicProfile.lastIp = latestSession.ip;
-    publicProfile.lastDevice = latestSession.deviceName;
-    publicProfile.lastLoginAt = latestSession.lastUsedAt;
-  }
-
-  return { user: publicProfile };
-}
-
-export interface UpdateProfileData {
-  avatarUrl?: string | null;
-  avatarPublicId?: string | null;
-  accountName?: string;
-  displayName?: string | null;
-  email?: string;
-  bio?: string;
-}
-
-export async function updateProfile(
-  userId: string,
-  data: UpdateProfileData,
-  logger: FastifyLoggerInstance
-): Promise<ServiceResult<{ user: UserPublic }>> {
-  const { avatarUrl, avatarPublicId, accountName, displayName, email, bio } = data;
-  const user = await User.findById(userId);
-  if (!user) return { error: 'User not found', status: 404 };
-  if (user.isDeleted) return BAN_ERRORS.ACCOUNT_DELETED;
-
-  if (accountName && accountName.toLowerCase().trim() !== user.accountName) {
-    const ACCOUNT_NAME_COOLDOWN_DAYS = 7;
-    if (user.lastAccountNameChangedAt && user.role !== 'admin') {
-      const daysSince = (Date.now() - user.lastAccountNameChangedAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSince < ACCOUNT_NAME_COOLDOWN_DAYS) {
-        const daysLeft = Math.ceil(ACCOUNT_NAME_COOLDOWN_DAYS - daysSince);
-        return { error: 'accountName_change_cooldown', code: 'accountName_change_cooldown', status: 429, daysLeft };
-      }
-    }
-    const normalised = accountName.toLowerCase().trim();
-    if (!isValidAccountName(normalised)) {
-      return { error: 'accountName_invalid', code: 'accountName_invalid', status: 400 };
-    }
-    if (isReservedAccountName(normalised)) {
-      return { error: 'accountName_taken', code: 'accountName_taken', status: 409 };
-    }
-    const existing = await User.findOne({ accountName: normalised });
-    if (existing || await isAccountNameInHistoryOfOther(normalised, user._id)) {
-      return { error: 'accountName_taken', code: 'accountName_taken', status: 409 };
-    }
-    const previousAccountName = user.accountName;
-    user.accountName = normalised;
-    user.lastAccountNameChangedAt = new Date();
-    if (previousAccountName) await recordAccountNameChange(user._id, previousAccountName, normalised);
-  }
-
-  if (displayName !== undefined) {
-    // Match the GraphQL updateProfile path: strip HTML server-side so this field
-    // is sanitized regardless of which entry point wrote it (defense in depth).
-    user.displayName = displayName ? stripHtml(displayName.trim()).slice(0, 50) : null;
-  }
-
-  if (email && email.toLowerCase().trim() !== user.email && email.toLowerCase().trim() !== user.pendingEmail) {
-    const normalised = email.toLowerCase().trim();
-    const existing = await User.findOne({ $or: [{ email: normalised }, { pendingEmail: normalised }] });
-    if (existing) return { error: 'Email already in use', status: 409 };
-    user.pendingEmail = normalised;
-    // Fire-and-forget — don't fail the profile save if email sending fails
-    sendVerification(user._id.toString(), normalised, 'email_change').catch((e) => console.error('[email_change] sendVerification failed:', e));
-  }
-
-  if (bio !== undefined) {
-    user.bio = stripHtml(bio.trim()).slice(0, 160);
-  }
-
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const apiKey = process.env.CLOUDINARY_API_KEY;
-  const apiSecret = process.env.CLOUDINARY_API_SECRET;
-
-  if (avatarUrl !== undefined && avatarUrl !== null) {
-    // Validate against the parsed hostname/path, not substring matches. The old
-    // `includes('googleusercontent.com')` / `includes('cloudinary.com')` checks
-    // accepted hostile URLs like `https://evil.com/?x=googleusercontent.com`. (F13)
-    const INVALID_IMAGE = { error: 'Invalid image URL format. Only JPG, PNG, GIF, and WEBP are allowed.', status: 400 };
-    let host: string;
-    let pathname: string;
-    try {
-      const parsed = new URL(avatarUrl);
-      if (parsed.protocol !== 'https:') return INVALID_IMAGE;
-      host = parsed.hostname.toLowerCase();
-      pathname = parsed.pathname.toLowerCase();
-    } catch {
-      return INVALID_IMAGE;
-    }
-    const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-    const hasImageExt = ALLOWED_IMAGE_EXTENSIONS.some((ext: string) => pathname.endsWith(`.${ext}`));
-    const isCloudinary = (host === 'res.cloudinary.com' || host.endsWith('.cloudinary.com')) && pathname.includes('/image/upload/');
-    const isGoogle = host === 'googleusercontent.com' || host.endsWith('.googleusercontent.com');
-    if (!hasImageExt && !isCloudinary && !isGoogle) {
-      return INVALID_IMAGE;
-    }
-  }
-
-  if (avatarUrl !== undefined && user.avatarPublicId && cloudName && apiKey && apiSecret) {
-    try {
-      cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
-      await cloudinary.uploader.destroy(user.avatarPublicId, { resource_type: 'image' });
-      logger.info({ publicId: user.avatarPublicId }, 'Old avatar deleted from Cloudinary');
-    } catch (err) {
-      logger.warn({ err, publicId: user.avatarPublicId }, 'Failed to delete old avatar');
-    }
-  }
-
-  if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
-  if (avatarPublicId !== undefined) {
-    // The caller's own folder, not just the avatars root: the stored id is
-    // destroyed on the next avatar change, so a foreign id deleted someone
-    // else's image. Matches the folder generateAvatarSignature signs for.
-    if (avatarPublicId && !avatarPublicId.startsWith(`lyrics-syncer/avatars/${userId}/`)) {
-      return { error: 'Invalid Cloudinary public ID for avatar', status: 400 };
-    }
-    user.avatarPublicId = avatarPublicId;
-  }
-
-  await user.save();
-  return { user: user.toPublic() as unknown as UserPublic };
 }
 
 export async function submitAppeal(

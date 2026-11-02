@@ -14,15 +14,6 @@ import {
 import { compileSRT } from '../../utils/srt.js';
 import { parseArtists, formatArtistDisplay } from '../../utils/artists.js';
 
-import {
-  applyMark,
-  applyBulkShift,
-  applyGlobalOffset,
-  clearAllTimestamps,
-  clearLineTimestamp,
-  detectDuplicateTimestamps,
-} from './lyrics.service.js';
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Body = Record<string, any>;
 
@@ -114,41 +105,4 @@ export async function inferEnd(req: FastifyRequest, reply: FastifyReply) {
     await JobLog.create({ ...base(), status: 'failed', error: (error as Error).message || 'unknown_error' }).catch(() => {});
     return reply.code(500).send({ error: 'infer_failed' });
   }
-}
-
-export async function mark(req: FastifyRequest, reply: FastifyReply) {
-  const body = req.body as Body;
-  const { lines, activeLineIndex, time, editorMode, activeWordIndex = 0, stampTarget = 'main', awaitingEndMark = null, focusedTimestamp = null, settings } = body;
-  const result = applyMark({ lines, activeLineIndex, time, editorMode, activeWordIndex, stampTarget, awaitingEndMark, focusedTimestamp, settings });
-  return reply.send(result);
-}
-
-export async function bulkShift(req: FastifyRequest, reply: FastifyReply) {
-  const { lines, selectedIndices, delta } = req.body as Body;
-  const result = applyBulkShift(lines, selectedIndices, delta);
-  return reply.send({ lines: result });
-}
-
-export async function globalOffset(req: FastifyRequest, reply: FastifyReply) {
-  const { lines, delta } = req.body as Body;
-  const result = applyGlobalOffset(lines, delta);
-  return reply.send({ lines: result });
-}
-
-export async function clearAll(req: FastifyRequest, reply: FastifyReply) {
-  const { lines, isSrt = false, isWords = false } = req.body as Body;
-  const result = clearAllTimestamps(lines, isSrt, isWords);
-  return reply.send({ lines: result });
-}
-
-export async function clearLine(req: FastifyRequest, reply: FastifyReply) {
-  const { lines, index, isSrt = false, isWords = false } = req.body as Body;
-  const result = clearLineTimestamp(lines, index, isSrt, isWords);
-  return reply.send({ lines: result });
-}
-
-export async function detectDuplicates(req: FastifyRequest, reply: FastifyReply) {
-  const { lines, threshold = 0.05 } = req.body as Body;
-  const indices = detectDuplicateTimestamps(lines, threshold);
-  return reply.send({ overlappingIndices: indices });
 }

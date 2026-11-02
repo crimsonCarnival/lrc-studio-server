@@ -177,7 +177,6 @@ async function build() {
   await app.register(youtubeRoutes, { prefix: '/youtube' });
 
   await app.register(lyricsRoutes, { prefix: '/lyrics' });
-  await app.register(lyricsRoutes, { prefix: '/editor' });
   await app.register(geniusRoutes, { prefix: '/lyrics' });
 
   await app.register(rootRoutes);

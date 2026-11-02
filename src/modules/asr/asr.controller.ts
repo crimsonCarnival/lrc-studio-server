@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getIO } from '../../socket/socket.manager.js';
 import { startStampJob } from './asr.service.js';
-import { getJob, cancelJob, getAudio } from './job.store.js';
+import { getJob, cancelJob } from './job.store.js';
 import type { LineInput } from './align.service.js';
 
 const ALLOWED_FORMATS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'webm', 'mp4'];
@@ -95,25 +95,4 @@ export async function cancelJobHandler(request: FastifyRequest, reply: FastifyRe
     getIO().to(`user:${userId}`).emit('asr:progress', { jobId: id, phase: 'cancelled' });
   } catch { /* socket not ready */ }
   return reply.code(204).send();
-}
-
-/**
- * Stream back the cached audio buffer from a completed YouTube ASR job.
- * Used by the client to render a waveform without re-downloading the audio.
- */
-export async function getJobAudio(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { id } = request.params as { id: string };
-  const job = getJob(id);
-  if (!job || job.userId !== (request.userId as string)) return reply.code(404).send({ error: 'asr_job_not_found' });
-  const audio = getAudio(id);
-  if (!audio) return reply.code(404).send({ error: 'asr_audio_not_available' });
-  const mimeType = audio.format === 'webm' ? 'audio/webm' : 'audio/mp4';
-  return reply
-    .code(200)
-    .header('Content-Type', mimeType)
-    .header('Content-Length', audio.buffer.byteLength)
-    // Not truly cacheable (job IDs are ephemeral), but tell the browser it's immutable
-    // for the duration of the session so it doesn't re-fetch on waveform re-init.
-    .header('Cache-Control', 'private, max-age=600, immutable')
-    .send(audio.buffer);
 }
