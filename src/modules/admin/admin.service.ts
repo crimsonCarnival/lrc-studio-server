@@ -227,9 +227,23 @@ export async function listJobLogs(query: Record<string, unknown>): Promise<Recor
   const projects = publicIds.length
     ? await Project.find({ publicId: { $in: publicIds } }).select('publicId title userId').lean<{ publicId: string; title?: string; userId?: mongoose.Types.ObjectId }[]>()
     : [];
+  // The most recent session on each device gives both its label ("Chrome on Windows",
+  // as in the moderation tab) and, for rows logged without a user, who it belongs to.
+  const deviceIds = [...new Set(rows.map((r) => r.deviceId).filter((id): id is string => !!id))];
+  const sessions = deviceIds.length
+    ? await Session.find({ deviceId: { $in: deviceIds } }).sort({ createdAt: -1 }).select('deviceId deviceName userId').lean<{ deviceId: string; deviceName?: string; userId?: mongoose.Types.ObjectId }[]>()
+    : [];
+  const deviceNameById = new Map<string, string>();
+  const deviceUserById = new Map<string, string>();
+  for (const s of sessions) {
+    if (s.deviceName && !deviceNameById.has(s.deviceId)) deviceNameById.set(s.deviceId, s.deviceName);
+    if (s.userId && !deviceUserById.has(s.deviceId)) deviceUserById.set(s.deviceId, s.userId.toString());
+  }
+  const rowUserId = (r: (typeof rows)[number]) => r.userId?.toString() ?? (r.deviceId ? deviceUserById.get(r.deviceId) : undefined);
+
   const userIds = [
     ...new Set([
-      ...rows.map((r) => r.userId?.toString()),
+      ...rows.map(rowUserId),
       ...projects.map((p) => p.userId?.toString()),
     ].filter((id): id is string => !!id)),
   ];
@@ -240,7 +254,8 @@ export async function listJobLogs(query: Record<string, unknown>): Promise<Recor
   const projectById = new Map(projects.map((p) => [p.publicId, p]));
 
   const logs = rows.map((r) => {
-    const user = r.userId ? userById.get(r.userId.toString()) : undefined;
+    const resolvedId = rowUserId(r);
+    const user = resolvedId ? userById.get(resolvedId) : undefined;
     const project = r.publicId ? projectById.get(r.publicId) : undefined;
     const owner = project?.userId ? userById.get(project.userId.toString()) : undefined;
     return {
@@ -256,7 +271,9 @@ export async function listJobLogs(query: Record<string, unknown>): Promise<Recor
       query: r.query ?? null,
       ip: r.ip ?? null,
       deviceId: r.deviceId ?? null,
+      deviceName: r.deviceId ? deviceNameById.get(r.deviceId) ?? null : null,
       user: user ? { id: user._id.toString(), accountName: user.accountName ?? '', displayName: user.displayName ?? null, avatarUrl: user.avatarUrl ?? null } : null,
+      userSource: user ? (r.userId ? 'logged' : 'device') : null,
       project: r.publicId
         ? { publicId: r.publicId, title: project?.title ?? null, ownerAccountName: owner?.accountName ?? null }
         : null,

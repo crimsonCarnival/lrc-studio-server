@@ -5,6 +5,7 @@ import { getLyricsFromLyricFind } from './lyricfind.service.js';
 import { getLyricsFromLyricsOvh } from './lyricsovh.service.js';
 import type { LyricsResult, LyricsSearchHit } from './lyrics-provider.types.js';
 import JobLog from '../../db/job-log.model.js';
+import { auditActorId } from '../../plugins/auth.js';
 
 /**
  * Search uses Genius when configured — it has cover art and the best fuzzy
@@ -100,10 +101,11 @@ export async function extract(request: FastifyRequest, reply: FastifyReply): Pro
   }
 
   const startedAt = Date.now();
+  const actorId = await auditActorId(request);
   // What every task record carries, whether the lookup worked or not.
   const base = () => ({
     jobType: 'extract_lyrics' as const,
-    userId: request.userId || null,
+    userId: actorId,
     query: { track, artist, album },
     publicId: typeof params.publicId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(params.publicId) ? params.publicId : null,
     durationMs: Date.now() - startedAt,

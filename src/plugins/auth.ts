@@ -152,6 +152,31 @@ export async function verifyLiveAccessToken(token: string): Promise<JwtPayload> 
   return decoded;
 }
 
+/**
+ * Who an audit record belongs to. optionalAuth treats an expired access token as
+ * anonymous, so a signed-in user whose token lapsed mid-session (background tabs
+ * throttle the refresh timer) would be logged as signed out. For attribution only,
+ * a signature-valid expired token on a still-live session still names its owner.
+ * Never use this to authorize anything.
+ */
+export async function auditActorId(request: FastifyRequest): Promise<string | null> {
+  if (request.userId) return request.userId;
+  const token = request.cookies.accessToken;
+  if (!token || !(request as FastifyRequest & { tokenExpired?: boolean }).tokenExpired) return null;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      algorithms: ['HS256'],
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+      ignoreExpiration: true,
+    }) as JwtPayload;
+    if (tokenKind(decoded) !== 'access' || !(await isSessionLive(decoded))) return null;
+    return decoded.sub ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Only the fields needed for auth checks — avoids loading passwordHash, etc.
 const AUTH_USER_SELECT = 'ban appeal isDeleted deletedAt role permissions accountName lastIp';
 

@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { LineEntry } from '../../types/index.js';
 import JobLog from '../../db/job-log.model.js';
 import Settings from '../settings/settings.model.js';
+import { auditActorId } from '../../plugins/auth.js';
 
 import {
   parseLrcSrtFile,
@@ -100,9 +101,10 @@ export async function inferEnd(req: FastifyRequest, reply: FastifyReply) {
   const publicId = typeof (body as { publicId?: unknown }).publicId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test((body as { publicId: string }).publicId)
     ? (body as { publicId: string }).publicId
     : null;
+  const actorId = await auditActorId(req);
   const base = () => ({
     jobType: 'infer_end_times' as const,
-    userId: req.userId || null,
+    userId: actorId,
     publicId,
     lineCount: Array.isArray(lines) ? lines.length : null,
     durationMs: Date.now() - startedAt,
