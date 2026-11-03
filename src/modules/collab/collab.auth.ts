@@ -3,10 +3,9 @@ import jwt from 'jsonwebtoken'
 import type { JwtPayload } from 'jsonwebtoken'
 import { parseCookie } from 'cookie'
 import { getEnv } from '../../config/env.js'
-import { verifyLiveAccessToken } from '../../plugins/auth.js'
+import { checkDeviceBan, checkIpBan, verifyLiveAccessToken } from '../../plugins/auth.js'
 import { isValidPublicId } from '../../socket/project-viewers.js'
 import User from '../users/user.model.js'
-import type { IUser } from '../users/user.model.js'
 import CollabSession from './collab-session.model.js'
 import type { CollabRole } from './collab.types.js'
 
@@ -53,19 +52,43 @@ export function verifyGuestToken(token: string): GuestClaims | null {
   }
 }
 
-/** The signed-in user behind the accessToken cookie, or null. Same gates as the Socket.IO handshake. */
-async function signedInUser(token: string | undefined): Promise<{ id: string; name: string } | null> {
+type SignedInUser = { id: string; name: string; role: string }
+
+/**
+ * The signed-in user behind the accessToken cookie, or null when there is no
+ * usable token. A banned account throws instead of returning null: it must be
+ * refused outright, never downgraded to the guest path. Same account gates as
+ * requireAuth (plugins/auth.ts), including expiring a timed-out ban.
+ */
+async function signedInUser(token: string | undefined): Promise<SignedInUser | null> {
   if (!token) return null
+  let sub: string | undefined
   try {
-    const decoded = await verifyLiveAccessToken(token)
-    if (!decoded.sub) return null
-    const user = await User.findById(decoded.sub).select('isDeleted ban accountName displayName').lean<IUser>()
-    if (!user || user.isDeleted || user.ban?.active) return null
-    const name = (user.displayName || user.accountName || 'User').slice(0, MAX_NAME)
-    return { id: decoded.sub, name }
+    sub = (await verifyLiveAccessToken(token)).sub
   } catch {
     return null
   }
+  if (!sub) return null
+  const user = await User.findById(sub).select('isDeleted deletedAt ban appeal role accountName displayName')
+  if (!user || user.isDeleted || user.deletedAt) return null
+  await user.checkBanStatus()
+  if (user.ban?.active) throw new CollabAuthError('forbidden')
+  const name = (user.displayName || user.accountName || 'User').slice(0, MAX_NAME)
+  return { id: sub, name, role: user.role ?? 'user' }
+}
+
+/**
+ * Device and IP bans, as requireAuth applies them (networkBanMessage in
+ * plugins/auth.ts) — but to guests too, since a guest connection is otherwise a
+ * free pass around a network ban. Superadmins stay exempt, as they are there.
+ */
+async function assertNoNetworkBan(user: SignedInUser | null, ip: string | undefined, deviceId: string | undefined): Promise<void> {
+  if (user?.role === 'superadmin') return
+  const [deviceBanned, ipBanned] = await Promise.all([
+    deviceId ? checkDeviceBan(deviceId) : null,
+    ip ? checkIpBan(ip) : null,
+  ])
+  if (deviceBanned || ipBanned) throw new CollabAuthError('forbidden')
 }
 
 /** Lowest colour 1–8 not taken by an existing member; wraps once all eight are used. */
@@ -82,7 +105,14 @@ type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name
  * `session_ended` when the project's only sessions have ended, `unauthorized`
  * when no usable credential was presented, `forbidden` otherwise.
  */
-export async function resolvePrincipal(input: { cookieHeader: string; docName: string }): Promise<CollabPrincipal> {
+export async function resolvePrincipal(input: {
+  cookieHeader: string
+  docName: string
+  /** Client IP as request.ip would derive it (trustProxy-aware). */
+  ip?: string
+  /** Client-supplied device id (X-Device-Id equivalent), for device bans. */
+  deviceId?: string
+}): Promise<CollabPrincipal> {
   const match = /^project:(.+)$/.exec(input.docName)
   if (!match || !isValidPublicId(match[1])) throw new CollabAuthError('forbidden')
   const publicId = match[1]
@@ -97,6 +127,11 @@ export async function resolvePrincipal(input: { cookieHeader: string; docName: s
 
   const cookies = parseCookie(input.cookieHeader ?? '')
   const user = await signedInUser(cookies.accessToken)
+  await assertNoNetworkBan(user, input.ip, input.deviceId)
+  // A kicked account must not walk back in through a guest cookie it still holds.
+  if (user && session.ownerId.toString() !== user.id && session.kicked.includes(`user:${user.id}`)) {
+    throw new CollabAuthError('forbidden')
+  }
 
   let subject: string
   let name: string

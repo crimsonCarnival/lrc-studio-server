@@ -6,6 +6,8 @@ import { jwtTools, verifyLiveAccessToken } from '../../plugins/auth.js'
 import Session from '../auth/session.model.js'
 import User from '../users/user.model.js'
 import CollabSession from './collab-session.model.js'
+import BannedIp from '../admin/banned-ip.model.js'
+import BannedDevice from '../admin/banned-device.model.js'
 import { resolvePrincipal, signGuestToken, verifyGuestToken } from './collab.auth.js'
 
 let mongo: MongoMemoryServer
@@ -21,7 +23,7 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  await Promise.all([User.deleteMany({}), Session.deleteMany({}), CollabSession.deleteMany({})])
+  await Promise.all([User.deleteMany({}), Session.deleteMany({}), CollabSession.deleteMany({}), BannedIp.deleteMany({}), BannedDevice.deleteMany({})])
 })
 
 let n = 0
@@ -150,7 +152,39 @@ describe('resolvePrincipal', () => {
     const ownerId = await mkUser({ banned: true })
     await mkSession({ ownerId })
     await expect(resolvePrincipal({ cookieHeader: await accessCookie(ownerId), docName: DOC }))
-      .rejects.toMatchObject({ code: 'unauthorized' })
+      .rejects.toMatchObject({ code: 'forbidden' })
+  })
+
+  it('a banned user is refused outright, not downgraded to their guest cookie', async () => {
+    const banned = await mkUser({ banned: true })
+    const { session, editorInvite } = await mkSession()
+    const cookieHeader = `${await accessCookie(banned)}; ${guestCookie({ guestId: 'g1', name: 'Ana', sessionId: session.id, inviteId: editorInvite })}`
+    await expect(resolvePrincipal({ cookieHeader, docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+  })
+
+  it('a kicked user cannot rejoin through a guest cookie', async () => {
+    const kickedUser = await mkUser()
+    const { session, editorInvite } = await mkSession({ kicked: [`user:${kickedUser}`] })
+    const cookieHeader = `${await accessCookie(kickedUser)}; ${guestCookie({ guestId: 'g1', name: 'Ana', sessionId: session.id, inviteId: editorInvite })}`
+    await expect(resolvePrincipal({ cookieHeader, docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+  })
+
+  it('IP and device bans refuse guests and users; superadmins are exempt', async () => {
+    const { session, editorInvite, ownerId } = await mkSession()
+    await BannedIp.create({ ip: '203.0.113.7' })
+    await BannedDevice.create({ deviceId: 'dev-bad' })
+    const guestHeader = guestCookie({ guestId: 'g1', name: 'Ana', sessionId: session.id, inviteId: editorInvite })
+    await expect(resolvePrincipal({ cookieHeader: guestHeader, docName: DOC, ip: '203.0.113.7' }))
+      .rejects.toMatchObject({ code: 'forbidden' })
+    await expect(resolvePrincipal({ cookieHeader: guestHeader, docName: DOC, deviceId: 'dev-bad' }))
+      .rejects.toMatchObject({ code: 'forbidden' })
+    await expect(resolvePrincipal({ cookieHeader: await accessCookie(ownerId), docName: DOC, ip: '203.0.113.7' }))
+      .rejects.toMatchObject({ code: 'forbidden' })
+    await expect(resolvePrincipal({ cookieHeader: guestHeader, docName: DOC, ip: '198.51.100.1', deviceId: 'dev-ok' }))
+      .resolves.toMatchObject({ role: 'editor' })
+    await User.updateOne({ _id: ownerId }, { $set: { role: 'superadmin' } })
+    await expect(resolvePrincipal({ cookieHeader: await accessCookie(ownerId), docName: DOC, ip: '203.0.113.7' }))
+      .resolves.toMatchObject({ role: 'owner' })
   })
 
   it('colours are distinct for the first 8 members', async () => {
