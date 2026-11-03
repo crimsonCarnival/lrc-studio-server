@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import mongoose from 'mongoose'
 import { nanoid } from 'nanoid'
-import Project, { MAX_REMOVED_COLLABORATORS } from '../projects/project.model.js'
+import Project from '../projects/project.model.js'
 import User from '../users/user.model.js'
 import { isValidPublicId } from '../../socket/project-viewers.js'
 import CollabSession from './collab-session.model.js'
@@ -211,15 +211,17 @@ export async function setGuestAccess(publicId: string, allowGuests: boolean, use
 export async function removeProjectCollaborator(publicId: string, id: string, userId: string | null | undefined): Promise<true> {
   await requireOwner(publicId, userId)
   if (!SUBJECT_RE.test(id)) throw notFound()
+  // Only a currently credited subject matches, so the removed list grows with real contributors only.
   const res = await Project.updateOne(
-    {
-      publicId,
-      $or: [{ removedCollaborators: id }, { [`removedCollaborators.${MAX_REMOVED_COLLABORATORS - 1}`]: { $exists: false } }],
-    },
+    { publicId, 'collaborators.subject': id },
     { $addToSet: { removedCollaborators: id }, $pull: { collaborators: { subject: id } } },
     { timestamps: false },
   )
-  if (res.matchedCount === 0) throw new CollabError('collab_removal_limit', 409)
+  if (res.matchedCount === 0) {
+    // Already removed is success (idempotent); never credited, or the project is gone, is not_found.
+    const removed = await Project.exists({ publicId, removedCollaborators: id })
+    if (!removed) throw notFound()
+  }
   markHandled(docNameOf(publicId), id)
   return true
 }

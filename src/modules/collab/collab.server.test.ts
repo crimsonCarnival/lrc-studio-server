@@ -836,7 +836,8 @@ describe('collab credits', () => {
     const ed = await connectSynced(guest('ed', editorInvite))
     const later = await connectSynced(guest('later', editorInvite))
     edit(ed, 'l1', 'a')
-    await waitFor(async () => (await credits()).length === 1)
+    edit(later, 'l2', 'z')
+    await waitFor(async () => (await credits()).length === 2)
 
     await removeProjectCollaborator(PUBLIC_ID, 'guest:ed', ownerId)
     await removeProjectCollaborator(PUBLIC_ID, 'guest:later', ownerId)
@@ -852,5 +853,17 @@ describe('collab credits', () => {
     expect((await credits()).map((c) => c.subject)).toEqual(['guest:other'])
     const project = await Project.findOne({ publicId: PUBLIC_ID }).lean()
     expect([...project!.removedCollaborators].sort()).toEqual(['guest:ed', 'guest:later'])
+  })
+
+  it('does not credit an editor whose connection is read-only (doc frozen at the size cap)', async () => {
+    const big = await connectSynced(guest('big', editorInvite))
+    edit(big, 'l1', 'y'.repeat(150_000))
+    await waitFor(() => big.provider.authorizedScope === 'readonly')
+    const late = await connectSynced(guest('late', editorInvite))
+    expect(late.provider.authorizedScope).toBe('readonly')
+    edit(late, 'l2', 'nope')
+    await settle()
+    expect((await credits()).map((c) => c.subject)).not.toContain('guest:late')
+    await getCollabServer().endSession(DOC)
   })
 })

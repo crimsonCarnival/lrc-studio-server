@@ -62,7 +62,6 @@ export type ProjectCollaboratorCredit = {
 };
 
 export const MAX_PROJECT_COLLABORATORS = 50;
-export const MAX_REMOVED_COLLABORATORS = 200;
 
 const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
 
@@ -236,7 +235,6 @@ const projectSchema = new mongoose.Schema(
     removedCollaborators: {
       type: [{ type: String, maxlength: 80 }],
       default: [],
-      validate: (v: unknown[]) => v.length <= MAX_REMOVED_COLLABORATORS,
     },
 
     forkCount: { type: Number, default: 0 },

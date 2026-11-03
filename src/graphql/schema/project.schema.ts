@@ -3,7 +3,7 @@ export const projectSchema = `
   type ProjectCollaborator {
     "The credit's subject (user:<id> or guest:<id>); pass it to removeProjectCollaborator."
     id: ID!
-    "The signed-in collaborator; null for guests."
+    "The signed-in collaborator; null for guests. Only id, accountName, displayName and avatarUrl are guaranteed populated; do not select anything else."
     user: User
     "Current display name for users, the typed name for guests."
     name: String!
