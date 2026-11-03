@@ -5,6 +5,7 @@ import mongoose from './plugins/mongoose.js';
 import cron from './plugins/cron.js';
 import cors from './plugins/cors.js';
 import socket from './plugins/socket.js';
+import collab from './plugins/collab.js';
 import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rate-limit.js';
 import csrf from './plugins/csrf.js';
@@ -93,6 +94,9 @@ async function build() {
   await app.register(mongoose);
   await app.register(cron);
   await app.register(auth);
+  // After socket (destroyUpgrade: false) and mongoose: collab owns non-Socket.IO
+  // upgrades, and its onClose must flush pending stores before Mongo closes.
+  await app.register(collab);
   
   
 

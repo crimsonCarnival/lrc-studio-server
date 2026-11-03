@@ -125,6 +125,7 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     // more than it saves.
     perMessageDeflate: { threshold: 1024 },
     // Leave non-Socket.IO upgrades (the /collab Hocuspocus endpoint) alive instead of destroying them after 1s.
+    // plugins/collab.ts owns every other upgrade path and destroys stray ones itself.
     destroyUpgrade: false,
   });
 

@@ -95,6 +95,12 @@ export interface Env {
    * deployment running today qualifies.
    */
   SOCKET_IO_ADAPTER?: 'mongo';
+  /**
+   * Signing key for collab guest tokens (the `collabGuest` cookie). Unset
+   * derives one from JWT_SECRET with HMAC domain separation, exactly like the
+   * admin sudo key, so a guest token can never verify as an access token.
+   */
+  COLLAB_GUEST_SECRET?: string;
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -157,6 +163,7 @@ export function loadEnv(): Env {
     OG_API_ORIGIN: process.env.OG_API_ORIGIN?.trim() || undefined,
     CLIENT_ORIGIN: process.env.CLIENT_ORIGIN?.trim() || undefined,
     SOCKET_IO_ADAPTER: process.env.SOCKET_IO_ADAPTER?.trim() === 'mongo' ? 'mongo' : undefined,
+    COLLAB_GUEST_SECRET: process.env.COLLAB_GUEST_SECRET?.trim() || undefined,
   };
 }
 
