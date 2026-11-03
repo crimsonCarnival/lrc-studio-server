@@ -9,7 +9,7 @@ describe('reserved names', () => {
     for (const n of [
       'admin', 'auth', 'explore', 'feed', 'guide', 'home', 'leaderboard', 'library', 'login',
       'notifications', 'profile', 'project', 'projects', 'register', 'reset-password',
-      'change-password', 'search', 'settings', 'share', 'u', 'uploads', 'verify-email', 'og', 'api',
+      'change-password', 'search', 'settings', 'share', 'u', 'uploads', 'verify-email', 'og', 'api', 'session', 'join',
     ]) {
       expect(isReservedAccountName(n), n).toBe(true);
     }
