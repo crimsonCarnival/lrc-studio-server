@@ -15,10 +15,12 @@ import Project from '../projects/project.model.js'
 import Lyrics from '../lyrics/lyrics.model.js'
 import CollabSession from './collab-session.model.js'
 import CollabDoc from './collab-doc.model.js'
-import { signGuestToken } from './collab.auth.js'
+import { resolvePrincipal, signGuestToken } from './collab.auth.js'
+import Upload from '../uploads/upload.model.js'
+import { loadEnv } from '../../config/env.js'
 import { getCollabServer } from './collab.server.js'
 import {
-  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, removeProjectCollaborator, startSession,
+  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, startSession,
 } from './collab.service.js'
 import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
@@ -1499,5 +1501,99 @@ describe('collab expiry', () => {
     } finally {
       clock.mockRestore()
     }
+  })
+})
+
+describe('collab minors', () => {
+  it('guest names are cleaned at join with the same cleaner credits use', async () => {
+    const token = await createInvite(PUBLIC_ID, 'editor', ownerId)
+    await joinSession({ token, name: '<b>Ana</b>\u202E\u0007', userId: null })
+    const s = await CollabSession.findById(sessionId).lean()
+    expect(s!.members.at(-1)!.name).toBe('Ana')
+    for (const name of ['<b></b>', '\u202E\u0007', '   ']) {
+      await expect(joinSession({ token, name, userId: null })).rejects.toMatchObject({ code: 'collab_invalid_name' })
+    }
+  })
+
+  it('admission limits come from the environment, with the old values as defaults', () => {
+    const saved = { u: process.env.COLLAB_UPGRADES_PER_MINUTE, c: process.env.COLLAB_MAX_CONNECTIONS_PER_IP }
+    try {
+      delete process.env.COLLAB_UPGRADES_PER_MINUTE
+      delete process.env.COLLAB_MAX_CONNECTIONS_PER_IP
+      expect(loadEnv()).toMatchObject({ COLLAB_UPGRADES_PER_MINUTE: 30, COLLAB_MAX_CONNECTIONS_PER_IP: 20 })
+      process.env.COLLAB_UPGRADES_PER_MINUTE = '90'
+      process.env.COLLAB_MAX_CONNECTIONS_PER_IP = 'lots'
+      expect(loadEnv()).toMatchObject({ COLLAB_UPGRADES_PER_MINUTE: 90, COLLAB_MAX_CONNECTIONS_PER_IP: 20 })
+    } finally {
+      if (saved.u === undefined) delete process.env.COLLAB_UPGRADES_PER_MINUTE
+      else process.env.COLLAB_UPGRADES_PER_MINUTE = saved.u
+      if (saved.c === undefined) delete process.env.COLLAB_MAX_CONNECTIONS_PER_IP
+      else process.env.COLLAB_MAX_CONNECTIONS_PER_IP = saved.c
+    }
+  })
+
+  it('a full session refuses a new member at connect time, but never its owner', async () => {
+    const members = Array.from({ length: 50 }, (_, i) => ({ subject: `guest:m${i}`, role: 'viewer', colorIndex: 1, name: `m${i}` }))
+    await CollabSession.updateOne({ _id: sessionId }, { $set: { members } })
+    await expect(resolvePrincipal({ cookieHeader: guest('late', editorInvite), docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+    expect((await CollabSession.findById(sessionId).lean())!.members).toHaveLength(50)
+    await expect(resolvePrincipal({ cookieHeader: guest('m1', editorInvite), docName: DOC })).resolves.toMatchObject({ subject: 'guest:m1' })
+    await expect(resolvePrincipal({ cookieHeader: await ownerCookie(), docName: DOC })).resolves.toMatchObject({ role: 'owner' })
+  })
+
+  it('the kicked list is capped, and kicking someone already on it still works', async () => {
+    const kicked = Array.from({ length: 200 }, (_, i) => `guest:k${i}`)
+    await CollabSession.updateOne({ _id: sessionId }, { $set: { kicked } })
+    await expect(kick(PUBLIC_ID, 'guest:one-more', ownerId)).rejects.toMatchObject({ code: 'collab_kick_limit' })
+    await expect(kick(PUBLIC_ID, 'guest:k3', ownerId)).resolves.toBeTruthy()
+    expect((await CollabSession.findById(sessionId).lean())!.kicked).toHaveLength(200)
+  })
+
+  it('endSession: read-only first, then the final store, then the notice, then the close', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const owner = await connectSynced(await ownerCookie())
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'in time')
+    await waitFor(() => lineText(owner.doc, 'l1') === 'in time')
+
+    const real = Lyrics.findOneAndUpdate.bind(Lyrics) as (...args: unknown[]) => { select: (s: string) => { lean: () => Promise<unknown> } }
+    let release = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const spy = vi.spyOn(Lyrics, 'findOneAndUpdate').mockImplementationOnce(((...args: unknown[]) => ({
+      select: (s: string) => ({ lean: () => gate.then(() => real(...args).select(s).lean()) }),
+    })) as never)
+    const ending = endSession(PUBLIC_ID, ownerId)
+    await waitFor(() => spy.mock.calls.length > 0)
+    // The final store is running: nobody has been told yet, and a late edit lands nowhere.
+    expect(editor.stateless.some((m) => m.t === 'session-ended')).toBe(false)
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'too late')
+    await new Promise((r) => setTimeout(r, 150))
+    expect(lineText(owner.doc, 'l1')).toBe('in time')
+    release()
+    await ending
+    spy.mockRestore()
+    expect(owner.stateless.some((m) => m.t === 'session-ended')).toBe(true)
+    expect((await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text).toBe('in time')
+  })
+
+  it('meta.media follows the Project on a load, stored doc or fresh seed', async () => {
+    const first = await Upload.create({ userId: ownerId, source: 'youtube', uploadUrl: 'https://youtu.be/aaaaaaaaaaa', fileName: 'a', title: 'a' })
+    const second = await Upload.create({ userId: ownerId, source: 'youtube', uploadUrl: 'https://youtu.be/bbbbbbbbbbb', fileName: 'b', title: 'b' })
+    const mediaOf = (c: Client) => c.doc.getMap('meta').get('media') as { uploadId: string | null }
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { uploadId: first._id } })
+    const a = await connectSynced(await ownerCookie())
+    expect(mediaOf(a).uploadId).toBe(first.id)
+    close(a)
+    await new Promise((r) => setTimeout(r, 150))
+    // A stored doc left behind (a restart mid-session, say) with the Project moved on.
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { uploadId: second._id } })
+    const b = await connectSynced(await ownerCookie())
+    expect(mediaOf(b).uploadId).toBe(second.id)
+    expect(b.doc.getMap('lines').size).toBe(2)
+    await endSession(PUBLIC_ID, ownerId)
+    close(b)
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $unset: { uploadId: 1 } })
+    await startSession(PUBLIC_ID, ownerId)
+    const c = await connectSynced(await ownerCookie())
+    expect(mediaOf(c).uploadId).toBeNull()
   })
 })

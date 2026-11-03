@@ -7,11 +7,11 @@ import { isValidPublicId } from '../../socket/project-viewers.js'
 import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import {
-  assertNoNetworkBan, CollabAuthError, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
+  assertNoNetworkBan, CollabAuthError, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
 } from './collab.auth.js'
 import { getCollabServer, mountedCollabServer, withCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
-import { markHandled } from './collab-credits.service.js'
+import { cleanGuestName, markHandled } from './collab-credits.service.js'
 
 /** Expected failure with a client-facing code; GraphQL puts `code` in extensions, REST in the body. */
 export class CollabError extends Error {
@@ -21,12 +21,12 @@ export class CollabError extends Error {
 }
 
 /**
- * Upper bounds on a session document's arrays. Both grow from caller input
- * (invites from the owner, members from anyone holding a link), and the session
- * is one Mongo document, so they are capped atomically in the update filter.
+ * Upper bounds on a session document's arrays. They grow from caller input
+ * (invites and kicks from the owner, members from anyone holding a link), and the
+ * session is one Mongo document, so they are capped atomically in the update filter.
  */
 const MAX_INVITES = 50
-const MAX_MEMBERS = 50
+const MAX_KICKED = 200
 const MAX_NAME = 40
 const INVITE_ROLES = new Set(['editor', 'viewer'])
 /** How long an invite link works. A guest's cookie outlives it by at most its own 12 hours. */
@@ -252,7 +252,12 @@ export async function kick(publicId: string, subject: string, userId: string | n
   const s = await liveSession(publicId)
   const member = s.members.find((m) => m.subject === subject)
   const inviteId = subject.startsWith('guest:') ? (member?.inviteId ?? null) : null
-  await CollabSession.updateOne({ _id: s._id }, { $addToSet: { kicked: subject }, $pull: { members: { subject } } })
+  // At the cap a new subject is refused rather than dropped silently: the kick would not hold.
+  const res = await CollabSession.updateOne(
+    { _id: s._id, $or: [{ kicked: subject }, { [`kicked.${MAX_KICKED - 1}`]: { $exists: false } }] },
+    { $addToSet: { kicked: subject }, $pull: { members: { subject } } },
+  )
+  if (res.matchedCount === 0) throw new CollabError('collab_kick_limit', 409)
   getCollabServer().closeSubject(docNameOf(publicId), subject)
   if (inviteId) await revokeInviteIn(s, inviteId)
   return { revokedInviteId: inviteId }
@@ -349,8 +354,8 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
   }
 
   if (!s.allowGuests) throw new CollabError('collab_guests_disabled', 403)
-  const name = (input.name ?? '').trim()
-  if (name.length < 1 || name.length > MAX_NAME) throw new CollabError('collab_invalid_name', 400)
+  const name = cleanGuestName(input.name ?? '')
+  if (!name || name.length > MAX_NAME) throw new CollabError('collab_invalid_name', 400)
   try {
     await assertNoNetworkBan(null, input.ip, input.deviceId)
   } catch (err) {

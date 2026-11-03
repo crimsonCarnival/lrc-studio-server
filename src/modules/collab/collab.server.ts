@@ -202,17 +202,12 @@ async function fetchState(docName: string): Promise<Uint8Array | null> {
   }
 
   const project = await Project.findOne({ publicId }).select('title metadata uploadId').lean()
-  if (!project) throw new Error('collab: project not found')
-  const upload = project.uploadId
-    ? await Upload.findById(project.uploadId).select('source uploadUrl').lean()
-    : null
+  if (!project) return null
   const meta: CollabMeta = {
     editorMode: lyrics?.editorMode ?? 'lrc',
     // The model's ProjectMetadata type doesn't declare the song fields the schema stores.
     ...songMeta(project as unknown as SongSource),
-    media: upload
-      ? { source: upload.source, url: upload.uploadUrl ?? null, uploadId: String(upload._id) }
-      : { source: null, url: null, uploadId: null },
+    media: await mediaFor(project.uploadId),
   }
   const seed = new Y.Doc()
   seedDocFromProject(seed, lyricsSections, meta)
@@ -249,6 +244,13 @@ function docMatchesLyrics(state: Uint8Array, lyricsSections: unknown[], lyricsMo
   }
 }
 
+async function mediaFor(uploadId: unknown): Promise<CollabMeta['media']> {
+  const upload = uploadId ? await Upload.findById(uploadId).select('source uploadUrl').lean() : null
+  return upload
+    ? { source: upload.source, url: upload.uploadUrl ?? null, uploadId: String(upload._id) }
+    : { source: null, url: null, uploadId: null }
+}
+
 type SongSource = { title?: string | null; metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null }
 type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album'>
 
@@ -259,20 +261,20 @@ function songMeta(project: SongSource): SongMeta {
 }
 
 /**
- * A stored doc's song fields brought in line with the Project. While a session is
- * live the Project only changes through storeState's write-back (solo saves are
- * refused with collab_active), so a difference here means an edit made between
- * sessions, which must win over the stale doc instead of being written over by it.
+ * A stored doc's song fields and media brought in line with the Project. While a session
+ * is live the Project only changes through storeState's write-back (solo saves are refused
+ * with collab_active), so a difference here means an edit made between sessions, which
+ * must win over the stale doc instead of being written over by it.
  */
 async function syncMetaFromProject(docName: string, state: Uint8Array): Promise<Uint8Array> {
-  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata').lean<SongSource>()
+  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata uploadId').lean<SongSource & { uploadId?: unknown }>()
   if (!project) return state
-  const want = songMeta(project)
+  const want = { ...songMeta(project), media: await mediaFor(project.uploadId) }
   const doc = new Y.Doc()
   try {
     Y.applyUpdate(doc, state)
     const meta = doc.getMap<unknown>('meta')
-    const stale = (Object.keys(want) as Array<keyof SongMeta>).filter((k) => (meta.get(k) ?? null) !== want[k])
+    const stale = (Object.keys(want) as Array<keyof typeof want>).filter((k) => JSON.stringify(meta.get(k) ?? null) !== JSON.stringify(want[k]))
     if (stale.length === 0) return state
     doc.transact(() => {
       for (const k of stale) meta.set(k, want[k])
@@ -896,8 +898,11 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         const doc = await loadedDoc(docName)
         if (doc) {
           discardAfterStore.add(docName)
-          doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
+          // Read-only first, so the final store holds everything anyone will ever have sent,
+          // and "ended" is only said once it has been attempted.
+          for (const c of doc.getConnections()) c.readOnly = true
           await storeNow(doc)
+          doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
           await closeUntilUnloaded(docName, CLOSE.session_ended, 'session-ended')
         } else {
           await removeStoredDoc(docName, log).catch((err: unknown) => log.error({ err, docName }, 'collab: removing the stored doc failed'))

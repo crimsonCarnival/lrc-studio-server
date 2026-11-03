@@ -32,6 +32,8 @@ const GUEST_SCOPE = 'collab-guest'
 const GUEST_TTL = '12h'
 const MAX_NAME = 40
 const COLOURS = 8
+/** Members one session holds: it is one Mongo document, and these grow from anyone holding a link. */
+export const MAX_MEMBERS = 50
 
 // Domain-separated from JWT_SECRET exactly like the admin sudo key, so a guest
 // token can never verify as an access/refresh token (and vice versa).
@@ -185,14 +187,17 @@ export async function resolvePrincipal(input: {
   // First connection: claim a colour and record the member. The filter keeps a
   // racing second tab of the same subject from adding a duplicate entry.
   const colorIndex = nextColour(members)
+  // The owner is never kept out of their own session by the cap.
+  const notFull = role === 'owner' ? {} : { [`members.${MAX_MEMBERS - 1}`]: { $exists: false } }
   const res = await CollabSession.updateOne(
-    { _id: session._id, 'members.subject': { $ne: subject } },
+    { _id: session._id, 'members.subject': { $ne: subject }, ...notFull },
     { $push: { members: { subject, role, colorIndex, name, ...(inviteId ? { inviteId } : {}) } } },
   )
   if (res.modifiedCount === 0) {
     const fresh = await CollabSession.findById(session._id).select('members').lean()
     const raced = (fresh?.members as MemberEntry[] | undefined)?.find((m) => m.subject === subject)
     if (raced) return { ...identity, colorIndex: raced.colorIndex }
+    throw new CollabAuthError('forbidden')
   }
   return { ...identity, colorIndex }
 }
