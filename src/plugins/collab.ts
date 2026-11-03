@@ -23,6 +23,8 @@ export type CollabPluginOptions = {
   maxConnectionsPerIp?: number
   /** Encoded Y.Doc size cap, see collab.server.ts. */
   maxDocBytes?: number
+  storeRetryMs?: number
+  destroyTimeoutMs?: number
 }
 
 function refuse(socket: Duplex, status: 403 | 404 | 429): void {
@@ -98,8 +100,14 @@ function makeAdmission(perMinute: number, maxConcurrent: number) {
 async function collabPlugin(fastify: FastifyInstance, opts: CollabPluginOptions): Promise<void> {
   const origins = new Set(parseAllowedOrigins(process.env.CORS_ORIGIN))
   const clientIp = makeClientIp()
-  const admission = makeAdmission(opts.upgradesPerMinute ?? 30, opts.maxConnectionsPerIp ?? 20)
-  const collab = createCollabServer(fastify.log, { maxDocBytes: opts.maxDocBytes })
+  const env = getEnv()
+  const admission = makeAdmission(
+    opts.upgradesPerMinute ?? env.COLLAB_UPGRADES_PER_MINUTE,
+    opts.maxConnectionsPerIp ?? env.COLLAB_MAX_CONNECTIONS_PER_IP,
+  )
+  const collab = createCollabServer(fastify.log, {
+    maxDocBytes: opts.maxDocBytes, storeRetryMs: opts.storeRetryMs, destroyTimeoutMs: opts.destroyTimeoutMs,
+  })
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES })
 
   // Synchronous listener on a raw socket: anything thrown here is an uncaught

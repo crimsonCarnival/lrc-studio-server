@@ -10,6 +10,8 @@ import ProjectFork from './project-fork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import CollabSession from '../collab/collab-session.model.js';
+import { discardDeletedProject } from '../collab/collab.service.js';
+import { mountedCollabServer } from '../collab/collab.server.js';
 import User from '../users/user.model.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
@@ -414,7 +416,8 @@ const COLLAB_OWNED_FIELDS = ['lyrics', 'metadata', 'title'] as const;
 
 export async function collabSessionBlocks(publicId: string, data: UpdateProjectData): Promise<ServiceResult | null> {
   if (!COLLAB_OWNED_FIELDS.some((k) => data[k] !== undefined)) return null;
-  if (!(await CollabSession.exists({ publicId, endedAt: null }))) return null;
+  // An ended session whose final store is still retrying would write over the solo save when it lands.
+  if (!mountedCollabServer()?.isFlushingEnd(`project:${publicId}`) && !(await CollabSession.exists({ publicId, endedAt: null }))) return null;
   return { error: 'A live collaborative session is editing this project', status: 409, code: 'collab_active' } as ServiceResult;
 }
 
@@ -1028,6 +1031,8 @@ async function removeProject(
     // asset and clearing $unset uploadId on every project that pointed at it.
     await Project.deleteOne({ publicId }, { session });
     await Lyrics.deleteOne({ publicId }, { session });
+    // A reconnect must find no live session from the moment the delete commits.
+    await CollabSession.updateMany({ publicId, endedAt: null }, { $set: { endedAt: new Date() } }, { session });
 
     // 4. Denormalized leaderboard counter. In the transaction so it cannot
     // decrement for a delete that rolls back. The `$gt: 0` guard keeps it from
@@ -1041,6 +1046,8 @@ async function removeProject(
       );
     }
   }, { operation: 'deleteProject', publicId, userId });
+
+  await discardDeletedProject(publicId);
 
   logUserAction({
     userId,

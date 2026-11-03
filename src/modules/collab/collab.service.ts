@@ -4,12 +4,14 @@ import { nanoid } from 'nanoid'
 import Project from '../projects/project.model.js'
 import User from '../users/user.model.js'
 import { isValidPublicId } from '../../socket/project-viewers.js'
+import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import {
-  assertNoNetworkBan, CollabAuthError, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
+  assertNoNetworkBan, CollabAuthError, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
 } from './collab.auth.js'
-import { getCollabServer } from './collab.server.js'
+import { getCollabServer, mountedCollabServer, withCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
+import { cleanGuestName, markHandled } from './collab-credits.service.js'
 
 /** Expected failure with a client-facing code; GraphQL puts `code` in extensions, REST in the body. */
 export class CollabError extends Error {
@@ -19,14 +21,18 @@ export class CollabError extends Error {
 }
 
 /**
- * Upper bounds on a session document's arrays. Both grow from caller input
- * (invites from the owner, members from anyone holding a link), and the session
- * is one Mongo document, so they are capped atomically in the update filter.
+ * Upper bounds on a session document's arrays. They grow from caller input
+ * (invites and kicks from the owner, members from anyone holding a link), and the
+ * session is one Mongo document, so they are capped atomically in the update filter.
  */
 const MAX_INVITES = 50
-const MAX_MEMBERS = 50
+const MAX_KICKED = 200
 const MAX_NAME = 40
 const INVITE_ROLES = new Set(['editor', 'viewer'])
+/** How long an invite link works. A guest's cookie outlives it by at most its own 12 hours. */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** A session nobody has touched for this long ends, once nobody is connected either. */
+const SESSION_IDLE_MS = 24 * 60 * 60 * 1000
 const SUBJECT_RE = /^(user|guest):[A-Za-z0-9_-]{1,64}$/
 
 const notFound = () => new CollabError('not_found', 404)
@@ -55,6 +61,8 @@ export type CollabSessionView = {
   invites: CollabInviteView[]
 }
 
+const inviteExpired = (i: InviteEntry): boolean => Date.now() - new Date(i.createdAt).getTime() > INVITE_TTL_MS
+
 function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
   return {
     id: s._id.toString(),
@@ -66,7 +74,7 @@ function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
       inviteId: asOwner ? (m.inviteId ?? null) : null,
     })),
     invites: asOwner
-      ? s.invites.map((i) => ({ id: i._id.toString(), role: i.role, revoked: !!i.revokedAt, createdAt: i.createdAt.toISOString() }))
+      ? s.invites.map((i) => ({ id: i._id.toString(), role: i.role, revoked: !!i.revokedAt || inviteExpired(i), createdAt: i.createdAt.toISOString() }))
       : [],
   }
 }
@@ -133,6 +141,61 @@ export async function endSession(publicId: string, userId: string | null | undef
   return true
 }
 
+/**
+ * Ends sessions idle for a day with nobody connected, the normal way: edits reach Lyrics. Returns
+ * how many. Needs the mounted server, which is the only place live connections are known.
+ */
+export async function endIdleSessions(): Promise<number> {
+  const server = mountedCollabServer()
+  if (!server) return 0
+  const cutoff = new Date(Date.now() - SESSION_IDLE_MS)
+  const idle = await CollabSession.find({ endedAt: null, lastActivityAt: { $lt: cutoff } }).select('publicId').lean<Array<{ publicId: string }>>()
+  let ended = 0
+  for (const { publicId } of idle) {
+    if (server.hasConnections(docNameOf(publicId))) continue
+    // The filter repeats the cutoff: someone may have connected and left since the read.
+    const res = await CollabSession.updateOne({ publicId, endedAt: null, lastActivityAt: { $lt: cutoff } }, { $set: { endedAt: new Date() } })
+    if (res.modifiedCount === 0) continue
+    await server.endSession(docNameOf(publicId))
+    ended++
+  }
+  return ended
+}
+
+/**
+ * Second half of deleting a project; the caller already ended its session in the delete's
+ * transaction. Closes the live connections without storing and removes the stored doc, which
+ * would otherwise keep serving the content. Never throws: the project is gone either way.
+ */
+export async function discardDeletedProject(publicId: string): Promise<void> {
+  const docName = docNameOf(publicId)
+  try {
+    const server = mountedCollabServer()
+    if (server) await server.discardSession(docName)
+    else await CollabDoc.deleteOne({ name: docName })
+  } catch (err) {
+    console.error('[collab] discarding a deleted project failed', { publicId, err })
+  }
+}
+
+/**
+ * An account is going away: drop it from every session it is in, its own or anyone else's, and end
+ * the ones it owns. Its projects stay (a deactivated account can come back), so that is a normal end
+ * that keeps the edits, not a discard. Never throws: the account change has already happened.
+ */
+export async function disconnectDeletedAccount(userId: string): Promise<void> {
+  withCollabServer((server) => server.closeUserEverywhere(userId))
+  try {
+    const live = await CollabSession.find({ ownerId: userId, endedAt: null }).select('publicId').lean<Array<{ publicId: string }>>()
+    await Promise.all(live.map(async ({ publicId }) => {
+      await CollabSession.updateOne({ publicId, endedAt: null }, { $set: { endedAt: new Date() } })
+      await mountedCollabServer()?.endSession(docNameOf(publicId))
+    }))
+  } catch (err) {
+    console.error('[collab] ending a deleted account\'s sessions failed', { userId, err })
+  }
+}
+
 /** Returns the raw token; only its sha256 is stored, so this is the one time it exists. */
 export async function createInvite(publicId: string, role: string, userId: string | null | undefined): Promise<string> {
   await requireOwner(publicId, userId)
@@ -189,7 +252,12 @@ export async function kick(publicId: string, subject: string, userId: string | n
   const s = await liveSession(publicId)
   const member = s.members.find((m) => m.subject === subject)
   const inviteId = subject.startsWith('guest:') ? (member?.inviteId ?? null) : null
-  await CollabSession.updateOne({ _id: s._id }, { $addToSet: { kicked: subject }, $pull: { members: { subject } } })
+  // At the cap a new subject is refused rather than dropped silently: the kick would not hold.
+  const res = await CollabSession.updateOne(
+    { _id: s._id, $or: [{ kicked: subject }, { [`kicked.${MAX_KICKED - 1}`]: { $exists: false } }] },
+    { $addToSet: { kicked: subject }, $pull: { members: { subject } } },
+  )
+  if (res.matchedCount === 0) throw new CollabError('collab_kick_limit', 409)
   getCollabServer().closeSubject(docNameOf(publicId), subject)
   if (inviteId) await revokeInviteIn(s, inviteId)
   return { revokedInviteId: inviteId }
@@ -200,6 +268,28 @@ export async function setGuestAccess(publicId: string, allowGuests: boolean, use
   const s = await liveSession(publicId)
   await CollabSession.updateOne({ _id: s._id }, { $set: { allowGuests } })
   if (!allowGuests) reconnect(publicId, s.members.filter((m) => m.subject.startsWith('guest:')).map((m) => m.subject))
+  return true
+}
+
+/**
+ * Owner removes a collaborator credit. The subject is remembered so it is never credited again, and
+ * the live doc (if loaded) is told so the session does not re-add it. Both changes are one update.
+ */
+export async function removeProjectCollaborator(publicId: string, id: string, userId: string | null | undefined): Promise<true> {
+  await requireOwner(publicId, userId)
+  if (!SUBJECT_RE.test(id)) throw notFound()
+  // Only a currently credited subject matches, so the removed list grows with real contributors only.
+  const res = await Project.updateOne(
+    { publicId, 'collaborators.subject': id },
+    { $addToSet: { removedCollaborators: id }, $pull: { collaborators: { subject: id } } },
+    { timestamps: false },
+  )
+  if (res.matchedCount === 0) {
+    // Already removed is success (idempotent); never credited, or the project is gone, is not_found.
+    const removed = await Project.exists({ publicId, removedCollaborators: id })
+    if (!removed) throw notFound()
+  }
+  markHandled(docNameOf(publicId), id)
   return true
 }
 
@@ -249,7 +339,7 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
   if (!s) throw new CollabError('collab_link_invalid', 404)
   if (s.endedAt) throw new CollabError('collab_session_ended', 403)
   const invite = s.invites.find((i) => i.tokenHash === hashInviteToken(input.token))!
-  if (invite.revokedAt) throw new CollabError('collab_link_revoked', 403)
+  if (invite.revokedAt || inviteExpired(invite)) throw new CollabError('collab_link_revoked', 403)
   const sessionId = s._id.toString()
   const inviteId = invite._id.toString()
 
@@ -264,8 +354,8 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
   }
 
   if (!s.allowGuests) throw new CollabError('collab_guests_disabled', 403)
-  const name = (input.name ?? '').trim()
-  if (name.length < 1 || name.length > MAX_NAME) throw new CollabError('collab_invalid_name', 400)
+  const name = cleanGuestName(input.name ?? '')
+  if (!name || name.length > MAX_NAME) throw new CollabError('collab_invalid_name', 400)
   try {
     await assertNoNetworkBan(null, input.ip, input.deviceId)
   } catch (err) {

@@ -6,6 +6,7 @@ import Session from './session.model.js';
 import PasswordReset from '../password-reset/password-reset.model.js';
 import UserDevice from './user-device.model.js';
 import { withTransaction } from '../../db/transaction.js';
+import { withCollabServer } from '../collab/collab.server.js';
 import { grantSuperadminIfEnvMatch } from './superadmin-env.service.js';
 
 type JwtTools = {
@@ -168,7 +169,8 @@ export async function resetPasswordAtomically(
   tokenHash: string,
   passwordHash: string
 ): Promise<boolean> {
-  return withTransaction(async (session: ClientSession) => {
+  const evicted: string[] = [];
+  const reset = await withTransaction(async (session: ClientSession) => {
     const now = new Date();
     const consumed = await PasswordReset.findOneAndUpdate(
       { tokenHash, isUsed: false, expiresAt: { $gt: now } },
@@ -187,9 +189,15 @@ export async function resetPasswordAtomically(
     );
     // A reset is the recovery path for a compromised account, so it must
     // evict whoever else is signed in.
-    if (user) await Session.updateMany({ userId: user._id }, { $set: { isValid: false } }, { session });
+    if (user) {
+      await Session.updateMany({ userId: user._id }, { $set: { isValid: false } }, { session });
+      evicted.push(user._id.toString());
+    }
     return true;
   }, { operation: 'resetPasswordAtomically', email });
+  // After the commit: re-authenticating before it would still find the sessions valid.
+  for (const userId of new Set(evicted)) withCollabServer((server) => server.reauthUserEverywhere(userId));
+  return reset;
 }
 
 /** Revokes every session except `keepFamilyId` (the caller's own, when known). */
@@ -198,7 +206,7 @@ export async function changePasswordAtomically(
   passwordHash: string,
   keepFamilyId?: string
 ): Promise<void> {
-  return withTransaction(async (session: ClientSession) => {
+  await withTransaction(async (session: ClientSession) => {
     await User.updateOne(
       { _id: userId },
       { passwordHash, passwordChangedAt: new Date() },
@@ -208,4 +216,5 @@ export async function changePasswordAtomically(
     if (keepFamilyId) filter.familyId = { $ne: keepFamilyId };
     await Session.updateMany(filter, { $set: { isValid: false } }, { session });
   }, { operation: 'changePasswordAtomically', userId });
+  withCollabServer((server) => server.reauthUserEverywhere(userId));
 }

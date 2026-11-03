@@ -2,10 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-let mockSuperadminEmail: string | undefined;
-vi.mock('../../config/env.js', () => ({
-  getEnv: () => ({ SUPERADMIN_EMAIL: mockSuperadminEmail }),
-}));
+const envMock = vi.hoisted(() => ({ superadminEmail: undefined as string | undefined }));
+vi.mock('../../config/env.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../config/env.js')>();
+  return { ...actual, getEnv: () => ({ ...actual.getEnv(), SUPERADMIN_EMAIL: envMock.superadminEmail }) };
+});
 
 import User from '../users/user.model.js';
 import AdminLog from '../admin/admin-log.model.js';
@@ -22,7 +23,7 @@ afterAll(async () => {
   await mongo.stop();
 });
 beforeEach(async () => {
-  mockSuperadminEmail = undefined;
+  envMock.superadminEmail = undefined;
   await Promise.all([User.deleteMany({}), AdminLog.deleteMany({})]);
 });
 
@@ -46,7 +47,7 @@ describe('isSuperadminEmail', () => {
   });
 
   it('matches case-insensitively, exact only', () => {
-    mockSuperadminEmail = 'Admin@Example.com';
+    envMock.superadminEmail = 'Admin@Example.com';
     expect(isSuperadminEmail('admin@example.com')).toBe(true);
     expect(isSuperadminEmail('ADMIN@EXAMPLE.COM')).toBe(true);
     expect(isSuperadminEmail('other@example.com')).toBe(false);
@@ -54,12 +55,12 @@ describe('isSuperadminEmail', () => {
   });
 
   it('is false when the configured value is empty/whitespace', () => {
-    mockSuperadminEmail = '   ';
+    envMock.superadminEmail = '   ';
     expect(isSuperadminEmail('anyone@x.test')).toBe(false);
   });
 
   it('accepts a comma-separated list, matching any entry case-insensitively', () => {
-    mockSuperadminEmail = 'Admin@Example.com, second@x.test,  third@x.test ';
+    envMock.superadminEmail = 'Admin@Example.com, second@x.test,  third@x.test ';
     expect(isSuperadminEmail('admin@example.com')).toBe(true);
     expect(isSuperadminEmail('second@x.test')).toBe(true);
     expect(isSuperadminEmail('THIRD@X.TEST')).toBe(true);
@@ -67,7 +68,7 @@ describe('isSuperadminEmail', () => {
   });
 
   it('ignores empty entries from stray/trailing commas', () => {
-    mockSuperadminEmail = 'a@x.test,,  ,b@x.test,';
+    envMock.superadminEmail = 'a@x.test,,  ,b@x.test,';
     expect(isSuperadminEmail('a@x.test')).toBe(true);
     expect(isSuperadminEmail('b@x.test')).toBe(true);
     expect(isSuperadminEmail('')).toBe(false);
@@ -85,7 +86,7 @@ describe('grantSuperadminIfEnvMatch', () => {
   });
 
   it('grants superadmin and the full permission preset when the email matches', async () => {
-    mockSuperadminEmail = 'boss@x.test';
+    envMock.superadminEmail = 'boss@x.test';
     const { id } = await mkUser('user', 'boss@x.test');
     const doc = await User.findById(id);
     const granted = await grantSuperadminIfEnvMatch(doc!);
@@ -99,7 +100,7 @@ describe('grantSuperadminIfEnvMatch', () => {
   });
 
   it('writes exactly one system-attributed audit log entry on grant', async () => {
-    mockSuperadminEmail = 'boss@x.test';
+    envMock.superadminEmail = 'boss@x.test';
     const { id } = await mkUser('user', 'boss@x.test');
     const doc = await User.findById(id);
     await grantSuperadminIfEnvMatch(doc!);
@@ -112,7 +113,7 @@ describe('grantSuperadminIfEnvMatch', () => {
   });
 
   it('is idempotent: a second call on an already-granted user is a no-op and does not duplicate the log', async () => {
-    mockSuperadminEmail = 'boss@x.test';
+    envMock.superadminEmail = 'boss@x.test';
     const { id } = await mkUser('user', 'boss@x.test');
     const doc = await User.findById(id);
     await grantSuperadminIfEnvMatch(doc!);
@@ -123,7 +124,7 @@ describe('grantSuperadminIfEnvMatch', () => {
   });
 
   it('does not touch a user whose email does not match', async () => {
-    mockSuperadminEmail = 'boss@x.test';
+    envMock.superadminEmail = 'boss@x.test';
     const { id } = await mkUser('user', 'other@x.test');
     const doc = await User.findById(id);
     const granted = await grantSuperadminIfEnvMatch(doc!);
@@ -142,7 +143,7 @@ describe('syncSuperadminEmailGrant (startup job)', () => {
   });
 
   it('no-ops when no user matches the configured email — never grants to everybody', async () => {
-    mockSuperadminEmail = 'nobody@x.test';
+    envMock.superadminEmail = 'nobody@x.test';
     await mkUser('user', 'someone@x.test');
     await syncSuperadminEmailGrant();
     const updated = await User.findOne({ email: 'someone@x.test' }).lean();
@@ -150,7 +151,7 @@ describe('syncSuperadminEmailGrant (startup job)', () => {
   });
 
   it('promotes the matching existing user', async () => {
-    mockSuperadminEmail = 'boss@x.test';
+    envMock.superadminEmail = 'boss@x.test';
     await mkUser('user', 'boss@x.test');
     await syncSuperadminEmailGrant();
     const updated = await User.findOne({ email: 'boss@x.test' }).lean();
@@ -159,12 +160,12 @@ describe('syncSuperadminEmailGrant (startup job)', () => {
   });
 
   it('does not demote an existing superadmin when the env var later points at a different email', async () => {
-    mockSuperadminEmail = 'old-boss@x.test';
+    envMock.superadminEmail = 'old-boss@x.test';
     const oldBoss = await mkUser('superadmin', 'old-boss@x.test');
     await User.updateOne({ _id: oldBoss.id }, { $set: { permissions: [...ROLE_PRESETS.superadmin] } });
 
     // Env reconfigured to a different email — old superadmin must be left alone.
-    mockSuperadminEmail = 'new-boss@x.test';
+    envMock.superadminEmail = 'new-boss@x.test';
     await mkUser('user', 'new-boss@x.test');
     await syncSuperadminEmailGrant();
 
@@ -176,7 +177,7 @@ describe('syncSuperadminEmailGrant (startup job)', () => {
   });
 
   it('does not re-log when the matching user is already superadmin', async () => {
-    mockSuperadminEmail = 'boss@x.test';
+    envMock.superadminEmail = 'boss@x.test';
     const boss = await mkUser('superadmin', 'boss@x.test');
     await User.updateOne({ _id: boss.id }, { $set: { permissions: [...ROLE_PRESETS.superadmin] } });
 
@@ -185,7 +186,7 @@ describe('syncSuperadminEmailGrant (startup job)', () => {
   });
 
   it('promotes every existing user matching a comma-separated list, and none of the unmatched ones', async () => {
-    mockSuperadminEmail = 'first@x.test, second@x.test';
+    envMock.superadminEmail = 'first@x.test, second@x.test';
     await mkUser('user', 'first@x.test');
     await mkUser('user', 'second@x.test');
     await mkUser('user', 'third@x.test');

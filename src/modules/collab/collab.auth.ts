@@ -9,7 +9,15 @@ import User from '../users/user.model.js'
 import CollabSession from './collab-session.model.js'
 import type { CollabRole } from './collab.types.js'
 
-export type CollabPrincipal = { subject: string; name: string; role: CollabRole; colorIndex: number; sessionId: string }
+export type CollabPrincipal = {
+  subject: string
+  name: string
+  role: CollabRole
+  colorIndex: number
+  sessionId: string
+  /** The signed-in account behind this connection, even when it is connected as a guest. */
+  accountId?: string
+}
 export type CollabAuthCode = 'forbidden' | 'unauthorized' | 'session_ended'
 export type GuestClaims = { guestId: string; name: string; sessionId: string; inviteId: string }
 
@@ -24,6 +32,8 @@ const GUEST_SCOPE = 'collab-guest'
 const GUEST_TTL = '12h'
 const MAX_NAME = 40
 const COLOURS = 8
+/** Members one session holds: it is one Mongo document, and these grow from anyone holding a link. */
+export const MAX_MEMBERS = 50
 
 // Domain-separated from JWT_SECRET exactly like the admin sudo key, so a guest
 // token can never verify as an access/refresh token (and vice versa).
@@ -112,6 +122,8 @@ export async function resolvePrincipal(input: {
   ip?: string
   /** Client-supplied device id (X-Device-Id equivalent), for device bans. */
   deviceId?: string
+  /** The session a reconnecting client last connected to. Absent on a first connect. */
+  sessionId?: string
 }): Promise<CollabPrincipal> {
   const match = /^project:(.+)$/.exec(input.docName)
   if (!match || !isValidPublicId(match[1])) throw new CollabAuthError('forbidden')
@@ -164,21 +176,28 @@ export async function resolvePrincipal(input: {
   }
 
   if (role !== 'owner' && session.kicked.includes(subject)) throw new CollabAuthError('forbidden')
+  // A client from an earlier session holds Yjs items the re-seeded doc does not: merging them would
+  // duplicate every line. Checked after identity, so it tells a stranger nothing about the session.
+  if (input.sessionId && input.sessionId !== sessionId) throw new CollabAuthError('session_ended')
 
+  const identity = { subject, name, role, sessionId, ...(user ? { accountId: user.id } : {}) }
   const existing = members.find((m) => m.subject === subject)
-  if (existing) return { subject, name, role, colorIndex: existing.colorIndex, sessionId }
+  if (existing) return { ...identity, colorIndex: existing.colorIndex }
 
   // First connection: claim a colour and record the member. The filter keeps a
   // racing second tab of the same subject from adding a duplicate entry.
   const colorIndex = nextColour(members)
+  // The owner is never kept out of their own session by the cap.
+  const notFull = role === 'owner' ? {} : { [`members.${MAX_MEMBERS - 1}`]: { $exists: false } }
   const res = await CollabSession.updateOne(
-    { _id: session._id, 'members.subject': { $ne: subject } },
+    { _id: session._id, 'members.subject': { $ne: subject }, ...notFull },
     { $push: { members: { subject, role, colorIndex, name, ...(inviteId ? { inviteId } : {}) } } },
   )
   if (res.modifiedCount === 0) {
     const fresh = await CollabSession.findById(session._id).select('members').lean()
     const raced = (fresh?.members as MemberEntry[] | undefined)?.find((m) => m.subject === subject)
-    if (raced) return { subject, name, role, colorIndex: raced.colorIndex, sessionId }
+    if (raced) return { ...identity, colorIndex: raced.colorIndex }
+    throw new CollabAuthError('forbidden')
   }
-  return { subject, name, role, colorIndex, sessionId }
+  return { ...identity, colorIndex }
 }

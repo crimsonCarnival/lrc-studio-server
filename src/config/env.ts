@@ -101,6 +101,15 @@ export interface Env {
    * admin sudo key, so a guest token can never verify as an access token.
    */
   COLLAB_GUEST_SECRET?: string;
+  /** /collab upgrade attempts per IP per minute. */
+  COLLAB_UPGRADES_PER_MINUTE: number;
+  /** Concurrently open /collab sockets per IP. */
+  COLLAB_MAX_CONNECTIONS_PER_IP: number;
+}
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = parseInt(raw ?? '', 10);
+  return n > 0 ? n : fallback;
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -156,6 +165,8 @@ export function loadEnv(): Env {
     PASSWORD_RESET_URL: process.env.PASSWORD_RESET_URL ?? primaryAppUrl,
     RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX ?? '200', 10),
     RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? '60000', 10),
+    COLLAB_UPGRADES_PER_MINUTE: positiveInt(process.env.COLLAB_UPGRADES_PER_MINUTE, 30),
+    COLLAB_MAX_CONNECTIONS_PER_IP: positiveInt(process.env.COLLAB_MAX_CONNECTIONS_PER_IP, 20),
     CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
     CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
     CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,

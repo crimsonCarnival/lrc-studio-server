@@ -33,6 +33,8 @@ const collabSessionSchema = new mongoose.Schema(
     members: { type: [memberSchema], default: [] },
     kicked: { type: [String], default: [] },
     endedAt: { type: Date, default: null },
+    // Last edit, connect or disconnect; written at most once a minute. A session idle for a day ends.
+    lastActivityAt: { type: Date, default: Date.now },
   },
   { timestamps: true },
 )
@@ -41,5 +43,7 @@ const collabSessionSchema = new mongoose.Schema(
 collabSessionSchema.index({ publicId: 1 }, { unique: true, partialFilterExpression: { endedAt: null } })
 // POST /collab/join looks a session up by the sha256 of its invite token.
 collabSessionSchema.index({ 'invites.tokenHash': 1 })
+// The idle sweep.
+collabSessionSchema.index({ lastActivityAt: 1 }, { partialFilterExpression: { endedAt: null } })
 
 export default mongoose.model('CollabSession', collabSessionSchema)

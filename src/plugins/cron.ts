@@ -6,6 +6,7 @@ import { recomputeTrendingScores } from '../jobs/trending.job.js';
 import { recomputeLeaderboardRanking } from '../jobs/leaderboard-ranking.job.js';
 import { syncRolePermissions } from '../modules/admin/admin.service.js';
 import { sweepJobs } from '../modules/asr/job.store.js';
+import { endIdleSessions } from '../modules/collab/collab.service.js';
 import { sendStreakWarnings } from '../jobs/streak-warning.job.js';
 import { resetLapsedStreaks } from '../jobs/streak-lapse.job.js';
 import { seedBuiltinBadges, runSyncStatsRefresh, SYNC_STATS_REFRESH_JOB } from '../modules/badges/badge.service.js';
@@ -81,6 +82,13 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
       await defineRecurring('streak-lapse', '15 minutes', async () => {
         const reset = await resetLapsedStreaks();
         if (reset > 0) fastify.log.info(`[jobs] lapsed streaks reset: ${reset}`);
+      });
+
+      // Collab sessions idle for a day. Reads live connections from this process,
+      // which is every connection while production runs one instance.
+      await defineRecurring('collab-idle-sweep', '15 minutes', async () => {
+        const ended = await endIdleSessions();
+        if (ended > 0) fastify.log.info(`[jobs] idle collab sessions ended: ${ended}`);
       });
 
       defineOnce(SYNC_STATS_REFRESH_JOB, runSyncStatsRefresh);

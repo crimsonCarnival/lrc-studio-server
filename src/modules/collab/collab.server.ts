@@ -7,6 +7,11 @@
  * the same project can land on different instances and never see each other.
  * Same constraint as socket/project-viewers.ts, asr/job.store.ts and the
  * requests pending queue — see .claude/rules/technical-debt.md.
+ *
+ * In-memory state (single instance is confirmed; no multi-instance machinery):
+ * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
+ * the awareness/stateless rate buckets, dirty (failed stores awaiting retry),
+ * discarded, discardAfterStore, settling, the activity throttle, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -22,12 +27,14 @@ import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js'
 import Upload from '../uploads/upload.model.js'
 import type { LineEntry } from '../../types/index.js'
 import CollabDoc from './collab-doc.model.js'
+import CollabSession from './collab-session.model.js'
 import { createLockTable } from './collab.locks.js'
 import { docToMeta, docToSections, sanitizeSectionsForLyrics, seedDocFromProject, validEditorMode } from './collab.projection.js'
 import { cleanTitle, hasProjectIdentity, PROJECT_SONG_NAME_MAX, slugFor } from '../projects/project-identity.js'
 import { stripHtml } from '../../utils/sanitize.js'
 import { CollabAuthError, resolvePrincipal, type CollabPrincipal } from './collab.auth.js'
 import type { CollabMeta } from './collab.types.js'
+import { clearHandled, creditCollaborator, handledSubjects } from './collab-credits.service.js'
 
 const LOCK_IDLE_MS = 30_000
 const SWEEP_MS = 5_000
@@ -44,6 +51,18 @@ const RECHECK_BYTES = 64 * 1024
 const MAX_PENDING_DOCUMENTS = 4
 /** Upper bound on how long shutdown waits for pending stores before giving up. */
 const DESTROY_TIMEOUT_MS = 10_000
+const UNLOAD_POLL_MS = 10
+/** How often a doc whose last store failed is stored again. */
+const DEFAULT_STORE_RETRY_MS = 10_000
+/** A client awareness state larger than this (JSON length) is never relayed. */
+const MAX_AWARENESS_STATE_CHARS = 4 * 1024
+/** Per-connection token buckets: awareness messages and lock-protocol messages. */
+const AWARENESS_RATE = { perSec: 30, burst: 60 }
+const STATELESS_RATE = { perSec: 30, burst: 60 }
+/** Lines one connection may hold locked at once. */
+const MAX_LOCKS_PER_CONN = 20
+/** Minimum gap between lastActivityAt writes for one doc. The idle threshold is a day. */
+const ACTIVITY_THROTTLE_MS = 60_000
 
 // Application close codes (4000–4999 are free for app use).
 const CLOSE = {
@@ -52,15 +71,46 @@ const CLOSE = {
   session_ended: 4410,
   kicked: 4403,
   roleChanged: 4409,
+  reauth: 4409,
   tooLarge: 4413,
 } as const
 
-type CollabContext = { ws: WebSocket; ip?: string; principal?: CollabPrincipal; connId?: string }
+type TokenBucket = { tokens: number; at: number }
+type CollabContext = {
+  ws: WebSocket
+  ip?: string
+  principal?: CollabPrincipal
+  connId?: string
+  awarenessTokens?: TokenBucket
+  statelessTokens?: TokenBucket
+}
+
+function takeToken(bucket: TokenBucket, rate: { perSec: number; burst: number }): boolean {
+  const now = Date.now()
+  bucket.tokens = Math.min(rate.burst, bucket.tokens + ((now - bucket.at) / 1000) * rate.perSec)
+  bucket.at = now
+  if (bucket.tokens < 1) return false
+  bucket.tokens -= 1
+  return true
+}
 
 export type CollabServer = {
   closeSubject(docName: string, subject: string): void
+  /** Final projection, then closes every connection and deletes the stored doc: the next session seeds from Lyrics. */
   endSession(docName: string): Promise<void>
+  /** An ended session's final store has not landed yet, so a solo save would be written over. */
+  isFlushingEnd(docName: string): boolean
+  /** For a deleted project: closes every connection without storing anything and deletes the stored doc. */
+  discardSession(docName: string): Promise<void>
   reconnectSubject(docName: string, subject: string): void
+  /** Closes every live connection of a signed-in user, in every doc (ban, account deletion). */
+  closeUserEverywhere(userId: string): void
+  /** Makes every connection of a signed-in user re-authenticate (a revoked login session is refused there). */
+  reauthUserEverywhere(userId: string): void
+  /** Makes every connection from this IP re-authenticate, where network bans apply. */
+  reauthIpEverywhere(ip: string): void
+  /** Connections on this process, which is all of them: production runs one instance. */
+  hasConnections(docName: string): boolean
   broadcastLocks(docName: string): void
 }
 
@@ -74,6 +124,23 @@ let current: MountedCollabServer | null = null
 export function getCollabServer(): CollabServer {
   if (!current) throw new Error('collab server is not mounted')
   return current
+}
+
+/** The mounted server, or null where none is (jobs and tests that run without the plugin). */
+export function mountedCollabServer(): CollabServer | null {
+  return current
+}
+
+/**
+ * Tells the mounted server about a ban or a revocation that has already happened. Never throws:
+ * failing to close a socket must not fail the moderation action, and the next re-auth still refuses.
+ */
+export function withCollabServer(action: (server: CollabServer) => void): void {
+  try {
+    if (current) action(current)
+  } catch (err) {
+    console.error('[collab] reaching live connections failed', err)
+  }
 }
 
 function publicIdOf(docName: string): string {
@@ -95,15 +162,25 @@ function toFetchRequest(req: IncomingMessage): Request {
   return new Request(`http://localhost${req.url ?? '/'}`, { headers })
 }
 
-/** Initial Y.Doc state for a project: the stored CollabDoc if it is current, else a seed from Lyrics. */
-async function fetchState(docName: string): Promise<Uint8Array> {
+function readLyrics(publicId: string) {
+  return Lyrics.findOne({ publicId }).select('+lines sections editorMode version').lean<{
+    sections?: unknown[]; lines?: LineEntry[]; editorMode?: CollabMeta['editorMode']; version?: number
+  }>()
+}
+
+/**
+ * Initial Y.Doc state for a project: the stored CollabDoc if it is current, else a seed from Lyrics.
+ * Null when the project or its live session is gone, whatever is still stored. Checked after the read,
+ * so a delete or an end landing during it is seen, and before the seed's upsert can recreate the doc.
+ */
+async function fetchState(docName: string): Promise<Uint8Array | null> {
   const publicId = publicIdOf(docName)
-  const [stored, lyrics] = await Promise.all([
-    CollabDoc.findOne({ name: docName }),
-    Lyrics.findOne({ publicId }).select('+lines sections editorMode version').lean<{
-      sections?: unknown[]; lines?: LineEntry[]; editorMode?: CollabMeta['editorMode']; version?: number
-    }>(),
+  const [stored, lyrics] = await Promise.all([CollabDoc.findOne({ name: docName }), readLyrics(publicId)])
+  const [hasProject, hasSession] = await Promise.all([
+    Project.exists({ publicId }),
+    CollabSession.exists({ publicId, endedAt: null }),
   ])
+  if (!hasProject || !hasSession) return null
   const lyricsVersion = lyrics?.version ?? 0
   const lyricsSections = lyrics?.sections?.length ? lyrics.sections : migrateLinesToSections(lyrics?.lines ?? [])
 
@@ -125,17 +202,12 @@ async function fetchState(docName: string): Promise<Uint8Array> {
   }
 
   const project = await Project.findOne({ publicId }).select('title metadata uploadId').lean()
-  if (!project) throw new Error('collab: project not found')
-  const upload = project.uploadId
-    ? await Upload.findById(project.uploadId).select('source uploadUrl').lean()
-    : null
+  if (!project) return null
   const meta: CollabMeta = {
     editorMode: lyrics?.editorMode ?? 'lrc',
     // The model's ProjectMetadata type doesn't declare the song fields the schema stores.
     ...songMeta(project as unknown as SongSource),
-    media: upload
-      ? { source: upload.source, url: upload.uploadUrl ?? null, uploadId: String(upload._id) }
-      : { source: null, url: null, uploadId: null },
+    media: await mediaFor(project.uploadId),
   }
   const seed = new Y.Doc()
   seedDocFromProject(seed, lyricsSections, meta)
@@ -172,6 +244,13 @@ function docMatchesLyrics(state: Uint8Array, lyricsSections: unknown[], lyricsMo
   }
 }
 
+async function mediaFor(uploadId: unknown): Promise<CollabMeta['media']> {
+  const upload = uploadId ? await Upload.findById(uploadId).select('source uploadUrl').lean() : null
+  return upload
+    ? { source: upload.source, url: upload.uploadUrl ?? null, uploadId: String(upload._id) }
+    : { source: null, url: null, uploadId: null }
+}
+
 type SongSource = { title?: string | null; metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null }
 type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album'>
 
@@ -182,20 +261,20 @@ function songMeta(project: SongSource): SongMeta {
 }
 
 /**
- * A stored doc's song fields brought in line with the Project. While a session is
- * live the Project only changes through storeState's write-back (solo saves are
- * refused with collab_active), so a difference here means an edit made between
- * sessions, which must win over the stale doc instead of being written over by it.
+ * A stored doc's song fields and media brought in line with the Project. While a session
+ * is live the Project only changes through storeState's write-back (solo saves are refused
+ * with collab_active), so a difference here means an edit made between sessions, which
+ * must win over the stale doc instead of being written over by it.
  */
 async function syncMetaFromProject(docName: string, state: Uint8Array): Promise<Uint8Array> {
-  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata').lean<SongSource>()
+  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata uploadId').lean<SongSource & { uploadId?: unknown }>()
   if (!project) return state
-  const want = songMeta(project)
+  const want = { ...songMeta(project), media: await mediaFor(project.uploadId) }
   const doc = new Y.Doc()
   try {
     Y.applyUpdate(doc, state)
     const meta = doc.getMap<unknown>('meta')
-    const stale = (Object.keys(want) as Array<keyof SongMeta>).filter((k) => (meta.get(k) ?? null) !== want[k])
+    const stale = (Object.keys(want) as Array<keyof typeof want>).filter((k) => JSON.stringify(meta.get(k) ?? null) !== JSON.stringify(want[k]))
     if (stale.length === 0) return state
     doc.transact(() => {
       for (const k of stale) meta.set(k, want[k])
@@ -244,7 +323,11 @@ function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unkn
   return $set
 }
 
-async function storeState(docName: string, document: Document, state: Buffer, log: FastifyBaseLogger): Promise<void> {
+/**
+ * Throws when the state did not persist. Otherwise resolves to whether Lyrics caught up with it:
+ * false is a failed projection, where the CollabDoc holds the truth and the next store can retry.
+ */
+async function storeState(docName: string, document: Y.Doc, state: Buffer, log: FastifyBaseLogger): Promise<boolean> {
   const publicId = publicIdOf(docName)
   try {
     // State only. lyricsVersion is recorded below, and only once Lyrics really
@@ -269,7 +352,7 @@ async function storeState(docName: string, document: Document, state: Buffer, lo
       { $set, $unset: { lines: 1 }, $inc: { version: 1 } },
       { returnDocument: 'after', runValidators: true },
     ).select('version').lean<{ version: number }>()
-    if (!lyrics) return
+    if (!lyrics) return true
     // A crash right here leaves lyricsVersion behind Lyrics; fetchState recognises
     // that case by content and keeps the doc (docMatchesLyrics).
     await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } })
@@ -280,10 +363,36 @@ async function storeState(docName: string, document: Document, state: Buffer, lo
       { $set: { ...metaSet, contentUpdatedAt: new Date() }, $inc: { version: 1 } },
       { runValidators: true },
     )
+    return true
   } catch (err) {
     // The CollabDoc already holds the truth; a projection failure must not keep the doc from persisting.
     log.error({ err, docName }, 'collab: projecting doc into Lyrics failed')
+    return false
   }
+}
+
+/**
+ * Deletes the stored doc of an ended session that is not loaded. A failed projection can leave it
+ * ahead of Lyrics, and then it holds the only copy of those edits: they are projected first, and the
+ * doc is kept if that fails. A doc behind Lyrics was overtaken by a solo save, so it is just dropped.
+ */
+async function removeStoredDoc(docName: string, log: FastifyBaseLogger): Promise<void> {
+  const [stored, lyrics] = await Promise.all([CollabDoc.findOne({ name: docName }), readLyrics(publicIdOf(docName))])
+  if (!stored) return
+  if (lyrics && typeof stored.lyricsVersion === 'number' && stored.lyricsVersion >= (lyrics.version ?? 0)) {
+    const state = new Uint8Array(stored.state)
+    const sections = lyrics.sections?.length ? lyrics.sections : migrateLinesToSections(lyrics.lines ?? [])
+    if (!docMatchesLyrics(state, sections, lyrics.editorMode ?? 'lrc')) {
+      const doc = new Y.Doc()
+      try {
+        Y.applyUpdate(doc, state)
+        if (!(await storeState(docName, doc, stored.state, log))) return
+      } finally {
+        doc.destroy()
+      }
+    }
+  }
+  await CollabDoc.deleteOne({ name: docName })
 }
 
 type LockMsg =
@@ -309,10 +418,11 @@ function parseMessage(payload: string): LockMsg | null {
   return null
 }
 
-export type CollabServerOptions = { maxDocBytes?: number }
+export type CollabServerOptions = { maxDocBytes?: number; storeRetryMs?: number; destroyTimeoutMs?: number }
 
 export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOptions = {}): MountedCollabServer {
   const maxDocBytes = opts.maxDocBytes ?? DEFAULT_MAX_DOC_BYTES
+  const destroyTimeoutMs = opts.destroyTimeoutMs ?? DESTROY_TIMEOUT_MS
   /** Last exact encoded size per loaded doc, plus update bytes received since. */
   const docSize = new Map<string, { bytes: number; pending: number }>()
   /**
@@ -324,6 +434,26 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
+  /** Last lastActivityAt write per loaded doc. */
+  const activityWrittenAt = new Map<string, number>()
+  /**
+   * Loaded docs whose last store failed, retried on a timer. 'state': nothing persisted those
+   * edits, so the doc must not unload. 'projection': the CollabDoc has them and only Lyrics is behind.
+   */
+  const dirty = new Map<string, 'state' | 'projection'>()
+  /**
+   * Docs of an ended session: once the final store has landed and the doc unloads, the stored
+   * doc is deleted. A later session then seeds from Lyrics rather than resuming this one.
+   */
+  const discardAfterStore = new Set<string>()
+  /**
+   * Tombstones of deleted projects: from the moment the discard starts until the stored doc is gone
+   * (and the doc has unloaded), no connection is admitted, nothing loads and nothing is stored.
+   * Each entry is removed when its discard finishes, so the set only holds deletes in progress.
+   */
+  const discarded = new Set<string>()
+  /** Teardown in progress per doc. A new connection waits for it rather than attaching to a doc on its way out. */
+  const settling = new Map<string, Promise<void>>()
   // Per document: awareness clientId -> owning subject, and connection -> the one clientId it may use.
   type AwarenessIds = { subjectOf: Map<number, string>; idOf: Map<string, number> }
   const awarenessIds = new Map<string, AwarenessIds>()
@@ -357,22 +487,59 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     maxPendingDocuments: MAX_PENDING_DOCUMENTS,
     extensions: [
       new Database({
-        fetch: ({ documentName }) => fetchState(documentName),
-        store: ({ documentName, document, state }) => storeState(documentName, document, state, log),
+        fetch: async ({ documentName, context }) => {
+          const state = discarded.has(documentName) ? null : await fetchState(documentName)
+          if (state && !discarded.has(documentName)) return state
+          setTimeout(() => (context as CollabContext).ws.close(CLOSE.session_ended, 'session_ended'), 0)
+          // A plain object (no `message`) keeps Hocuspocus from logging it, as in onAuthenticate.
+          // Its `reason` reaches the client as the permission-denied reason.
+          throw { reason: 'session_ended' }
+        },
+        store: async ({ documentName, document, state }) => {
+          if (discarded.has(documentName)) return
+          let projected: boolean
+          try {
+            projected = await storeState(documentName, document, state, log)
+          } catch (err) {
+            dirty.set(documentName, 'state')
+            throw err
+          }
+          if (projected) {
+            dirty.delete(documentName)
+            return
+          }
+          dirty.set(documentName, 'projection')
+          // Rethrowing keeps the doc loaded. Mid-session the CollabDoc has the edits and that is
+          // not needed; at the end of a session the CollabDoc is about to go.
+          if (discardAfterStore.has(documentName)) throw new Error('collab: final projection failed')
+        },
       }),
     ],
 
     async onAuthenticate({ documentName, requestHeaders, requestParameters, connectionConfig, context }) {
+      await settling.get(documentName)?.catch(() => undefined)
       try {
+        if (discarded.has(documentName)) throw new CollabAuthError('session_ended')
         const principal = await resolvePrincipal({
           cookieHeader: requestHeaders.get('cookie') ?? '',
           docName: documentName,
           ip: context.ip,
           // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
           deviceId: requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined,
+          sessionId: requestParameters.get('sessionId') ?? undefined,
         })
+        if (discarded.has(documentName)) throw new CollabAuthError('session_ended')
+        // A new session reached a doc still waiting on its predecessor's final store: it carries on
+        // from that doc (the same Yjs items), and the stored state stays.
+        if (!settling.has(documentName)) discardAfterStore.delete(documentName)
         if (principal.role === 'viewer' || frozen.has(documentName)) connectionConfig.readOnly = true
-        return { principal, connId: randomUUID() }
+        const now = Date.now()
+        return {
+          principal,
+          connId: randomUUID(),
+          awarenessTokens: { tokens: AWARENESS_RATE.burst, at: now },
+          statelessTokens: { tokens: STATELESS_RATE.burst, at: now },
+        }
       } catch (err) {
         const code = err instanceof CollabAuthError ? err.code : 'forbidden'
         if (!(err instanceof CollabAuthError)) log.error({ err, documentName }, 'collab: auth failed unexpectedly')
@@ -386,16 +553,22 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     async onStateless({ connection, documentName, document, payload }: onStatelessPayload) {
       const ctx = connection.context as CollabContext
-      if (!ctx.principal || !ctx.connId) return
+      if (!ctx.principal || !ctx.connId || !ctx.statelessTokens) return
+      // Before parsing: over the limit a message costs nothing. A client this far past any
+      // real editing pace gets no answer, and a lock it asked for shows up as never granted.
+      if (!takeToken(ctx.statelessTokens, STATELESS_RATE)) return
       const msg = parseMessage(payload)
       if (!msg) return
       const lines = document.getMap('lines')
       const holder = { conn: ctx.connId, subject: ctx.principal.subject, name: ctx.principal.name, colorIndex: ctx.principal.colorIndex }
       const deny = (lineId: string) => connection.sendStateless(JSON.stringify({ t: 'lock-denied', lineId }))
       let changed = false
+      const countHeld = (held: ReturnType<typeof locks.snapshot>) => Object.values(held).filter((h) => h.conn === ctx.connId).length
 
       if (msg.t === 'lock') {
         if (connection.readOnly || !lines.has(msg.lineId)) return deny(msg.lineId)
+        const held = locks.snapshot(documentName)
+        if (held[msg.lineId]?.conn !== ctx.connId && countHeld(held) >= MAX_LOCKS_PER_CONN) return deny(msg.lineId)
         const res = locks.acquire(documentName, msg.lineId, holder)
         if (!res.ok) return deny(msg.lineId)
         changed = true
@@ -410,10 +583,14 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         const held = locks.snapshot(documentName)
         const mine = msg.lineIds.filter((id) => held[id]?.conn === ctx.connId)
         locks.refresh(documentName, mine, ctx.connId)
+        let count = countHeld(held)
         for (const lineId of msg.lineIds) {
           if (held[lineId]?.conn === ctx.connId) continue
-          if (connection.readOnly || !lines.has(lineId) || !locks.acquire(documentName, lineId, holder).ok) deny(lineId)
-          else changed = true
+          if (connection.readOnly || count >= MAX_LOCKS_PER_CONN || !lines.has(lineId) || !locks.acquire(documentName, lineId, holder).ok) deny(lineId)
+          else {
+            count++
+            changed = true
+          }
         }
       }
       if (changed) broadcastLocks(documentName)
@@ -427,11 +604,12 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     // - a subject holds at most MAX_AWARENESS_IDS_PER_SUBJECT bindings per document; past that the
     //   oldest binding with no live connection and no remaining state is evicted (see bindForSubject),
     //   and with none to evict the new id is refused.
+    // - a state above MAX_AWARENESS_STATE_CHARS, or any message past the connection's rate, is dropped.
     // Removing a closed connection's state is onDisconnect's job (see there).
     async beforeHandleAwareness({ documentName, context, states, removedClients, awareness }) {
       const connId = context?.connId
       const principal = context?.principal
-      if (!connId || !principal) {
+      if (!connId || !principal || !context.awarenessTokens || !takeToken(context.awarenessTokens, AWARENESS_RATE)) {
         states.clear()
         removedClients.clear()
         return
@@ -446,7 +624,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       }
       for (const clientId of [...states.keys()]) {
         const state = states.get(clientId)
-        if (!allowed(clientId) || !state || typeof state !== 'object') {
+        if (!allowed(clientId) || !state || typeof state !== 'object' || JSON.stringify(state).length > MAX_AWARENESS_STATE_CHARS) {
           states.delete(clientId)
           continue
         }
@@ -462,6 +640,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     async onDisconnect({ documentName, context, document }) {
       if (!context.connId) return
+      // The idle clock starts when people leave, not at their last edit.
+      touchActivity(documentName)
       // Hocuspocus removes a closing connection's awareness only for ids that were `added` through it.
       // A reconnect with the same clientId arrives as `updated`, so it would be left behind as a ghost
       // for the 30 s awareness timeout: remove it here unless another live connection speaks for it.
@@ -488,12 +668,14 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     // It also greets the connection: guests have no other way to learn their own
     // identity or conn id, which the client compares against lock holders.
     async connected({ documentName, connection, context }) {
+      if (discarded.has(documentName)) return drop(connection, CLOSE.session_ended, 'session-ended')
       if (frozen.has(documentName)) connection.readOnly = true
       const { principal, connId } = context
       if (!principal || !connId) return
+      touchActivity(documentName)
       connection.sendStateless(JSON.stringify({
         t: 'hello', conn: connId, subject: principal.subject, name: principal.name,
-        colorIndex: principal.colorIndex, role: principal.role,
+        colorIndex: principal.colorIndex, role: principal.role, sessionId: principal.sessionId,
       }))
       connection.sendStateless(locksMessage(documentName))
     },
@@ -502,7 +684,9 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     // could grow a doc past Mongo's 16 MB BSON limit, after which every store fails.
     // An exact re-measure costs a full encode, so it runs every RECHECK_BYTES of
     // incoming updates, or on every change once the doc is near the cap.
-    async onChange({ documentName, document, update, connection }) {
+    async onChange({ documentName, document, update, connection, context }) {
+      recordContributor(documentName, connection, context)
+      if (connection) touchActivity(documentName)
       const size = docSize.get(documentName) ?? { bytes: 0, pending: 0 }
       size.pending += update.byteLength
       if (size.pending >= RECHECK_BYTES || size.bytes + size.pending > maxDocBytes) {
@@ -524,13 +708,57 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       }
     },
 
+    // Hocuspocus only keeps a doc for the store that just failed: once nothing is pending, the
+    // last client leaving unloads it. Refusing here is what makes a failed store survive that.
+    async beforeUnloadDocument({ documentName }) {
+      if (isUnstored(documentName)) throw { reason: 'unstored' }
+    },
+
     async afterUnloadDocument({ documentName }) {
       awarenessIds.delete(documentName)
       locks.clearDoc(documentName)
       docSize.delete(documentName)
+      clearHandled(documentName)
+      if (!settling.has(documentName)) discarded.delete(documentName)
+      dirty.delete(documentName)
+      activityWrittenAt.delete(documentName)
+      if (discardAfterStore.delete(documentName)) {
+        // Failing leaves the stored doc for the next session to resume; the epoch still refuses stale tabs.
+        await CollabDoc.deleteOne({ name: documentName }).catch((err: unknown) => log.error({ err, documentName }, 'collab: deleting the stored doc failed'))
+      }
       if (onAllUnloaded && hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
     },
   })
+
+  // Credits a non-owner whose connection applied a change. Server-internal changes (seeding,
+  // projection, a DirectConnection) arrive with no connection and are never credited. Fire and
+  // forget: a failed write must not slow or break sync, and is retried on the subject's next change.
+  function recordContributor(docName: string, connection: Connection | undefined, context: CollabContext | undefined): void {
+    const principal = context?.principal
+    if (!connection || connection.readOnly || !principal || principal.role === 'owner' || principal.role === 'viewer') return
+    const seen = handledSubjects(docName)
+    if (seen.has(principal.subject)) return
+    seen.add(principal.subject)
+    creditCollaborator(publicIdOf(docName), principal).catch((err) => {
+      seen.delete(principal.subject)
+      log.error({ err, docName, subject: principal.subject }, 'collab: recording collaborator credit failed')
+    })
+  }
+
+  // Fire and forget, like recordContributor: a failed write only makes the session look idler.
+  function touchActivity(docName: string): void {
+    const now = Date.now()
+    if (now - (activityWrittenAt.get(docName) ?? 0) < ACTIVITY_THROTTLE_MS) return
+    activityWrittenAt.set(docName, now)
+    CollabSession.updateOne(
+      { publicId: publicIdOf(docName), endedAt: null },
+      { $set: { lastActivityAt: new Date() } },
+      { timestamps: false },
+    ).catch((err: unknown) => {
+      activityWrittenAt.delete(docName)
+      log.error({ err, docName }, 'collab: recording session activity failed')
+    })
+  }
 
   function locksMessage(docName: string): string {
     const locksOut: Record<string, { holderConn: string; subject: string; name: string; colorIndex: number }> = {}
@@ -555,10 +783,74 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     ;(conn.context as CollabContext).ws.close(code, reason)
   }
 
+  function connectionsEverywhere(match: (c: CollabContext) => boolean): Connection[] {
+    return [...hocuspocus.documents.values()].flatMap((d) => d.getConnections()).filter((c) => match(c.context as CollabContext))
+  }
+
+  /** Runs now any pending debounced store of this doc, after one already in flight. Never rejects. */
+  function storeNow(doc: Document): Promise<unknown> {
+    return hocuspocus.storeDocumentHooks(doc, {
+      instance: hocuspocus,
+      clientsCount: doc.getConnectionsCount(),
+      document: doc,
+      documentName: doc.name,
+      lastContext: {} as CollabContext,
+      lastTransactionOrigin: null,
+    }, true)
+  }
+
+  function isUnstored(docName: string): boolean {
+    if (discarded.has(docName)) return false
+    const failed = dirty.get(docName)
+    return failed === 'state' || (failed !== undefined && discardAfterStore.has(docName))
+  }
+
+  function retryDirtyStores(): void {
+    for (const docName of dirty.keys()) {
+      const doc = hocuspocus.documents.get(docName)
+      if (!doc) dirty.delete(docName)
+      else if (!hocuspocus.debouncer.isCurrentlyExecuting(`onStoreDocument-${docName}`)) void storeNow(doc)
+    }
+  }
+
+  /** Serialises teardowns of one doc and publishes the current one to the auth gate. */
+  function settle(docName: string, work: () => Promise<void>): Promise<void> {
+    const run: Promise<void> = (settling.get(docName)?.catch(() => undefined) ?? Promise.resolve())
+      .then(work)
+      .finally(() => {
+        if (settling.get(docName) === run) settling.delete(docName)
+      })
+    settling.set(docName, run)
+    return run
+  }
+
+  /** The doc as loaded, waiting out a load in progress. */
+  async function loadedDoc(docName: string): Promise<Document | undefined> {
+    await hocuspocus.loadingDocuments.get(docName)?.catch(() => undefined)
+    return hocuspocus.documents.get(docName)
+  }
+
+  /**
+   * Closes the doc's connections until it has unloaded. A connection whose auth was already
+   * past the gate can still attach after the first pass; it is closed by a later one.
+   * An unstored doc stays loaded for the retry timer, so there is nothing to wait for.
+   */
+  async function closeUntilUnloaded(docName: string, code: number, reason: string): Promise<void> {
+    const deadline = Date.now() + DESTROY_TIMEOUT_MS
+    while ((hocuspocus.documents.has(docName) || hocuspocus.unloadingDocuments.has(docName)) && Date.now() < deadline) {
+      for (const c of hocuspocus.documents.get(docName)?.getConnections() ?? []) drop(c, code, reason)
+      if (isUnstored(docName)) return
+      await new Promise((r) => setTimeout(r, UNLOAD_POLL_MS))
+    }
+  }
+
   const sweepTimer = setInterval(() => {
     for (const docName of locks.sweep()) broadcastLocks(docName)
   }, SWEEP_MS)
   sweepTimer.unref()
+
+  const storeRetryTimer = setInterval(retryDirtyStores, opts.storeRetryMs ?? DEFAULT_STORE_RETRY_MS)
+  storeRetryTimer.unref()
 
   const server: MountedCollabServer = {
     handleSocket(ws, req, ip) {
@@ -585,22 +877,67 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.roleChanged, 'role-changed')
     },
 
-    async endSession(docName) {
-      const doc = hocuspocus.documents.get(docName)
-      if (doc) {
-        doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
-        await hocuspocus.storeDocumentHooks(doc, {
-          instance: hocuspocus,
-          clientsCount: doc.getConnectionsCount(),
-          document: doc,
-          documentName: docName,
-          lastContext: {} as CollabContext,
-          lastTransactionOrigin: null,
-        }, true)
-        for (const c of doc.getConnections()) drop(c, CLOSE.session_ended, 'session-ended')
-      }
-      locks.clearDoc(docName)
-      frozen.delete(docName) // a later session re-seeds from Lyrics
+    hasConnections(docName) {
+      return (hocuspocus.documents.get(docName)?.getConnectionsCount() ?? 0) > 0
+    },
+
+    closeUserEverywhere(userId) {
+      for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.forbidden, 'forbidden')
+    },
+
+    reauthUserEverywhere(userId) {
+      for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.reauth, 'reauth')
+    },
+
+    reauthIpEverywhere(ip) {
+      for (const c of connectionsEverywhere((ctx) => ctx.ip === ip)) drop(c, CLOSE.reauth, 'reauth')
+    },
+
+    endSession(docName) {
+      return settle(docName, async () => {
+        const doc = await loadedDoc(docName)
+        if (doc) {
+          discardAfterStore.add(docName)
+          // Read-only first, so the final store holds everything anyone will ever have sent,
+          // and "ended" is only said once it has been attempted.
+          for (const c of doc.getConnections()) c.readOnly = true
+          await storeNow(doc)
+          doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
+          await closeUntilUnloaded(docName, CLOSE.session_ended, 'session-ended')
+        } else {
+          await removeStoredDoc(docName, log).catch((err: unknown) => log.error({ err, docName }, 'collab: removing the stored doc failed'))
+        }
+        locks.clearDoc(docName)
+        frozen.delete(docName) // a later session re-seeds from Lyrics
+      })
+    },
+
+    isFlushingEnd(docName) {
+      return discardAfterStore.has(docName) && dirty.has(docName)
+    },
+
+    discardSession(docName) {
+      // Up front, not in the queued work: a load already in flight checks it when its read returns.
+      discarded.add(docName)
+      return settle(docName, async () => {
+        try {
+          const doc = await loadedDoc(docName)
+          if (doc) {
+            // The store is now a no-op, so this only waits out one already writing:
+            // that write must land before the delete below.
+            await storeNow(doc)
+            doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
+            await closeUntilUnloaded(docName, CLOSE.session_ended, 'session-ended')
+          }
+          locks.clearDoc(docName)
+          frozen.delete(docName)
+          await CollabDoc.deleteOne({ name: docName })
+        } finally {
+          // From here fetchState refuses by itself: the project is gone. A doc that outlived
+          // the wait keeps its tombstone, and afterUnloadDocument clears it.
+          if (!hocuspocus.documents.has(docName)) discarded.delete(docName)
+        }
+      })
     },
 
     async destroy() {
@@ -608,7 +945,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       // Same sequence as @hocuspocus/server's Server.destroy(): close every
       // connection, run pending debounced stores now, wait for the unloads.
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, DESTROY_TIMEOUT_MS)
+        // Docs still unstored keep this from resolving early, so the retry timer gets the whole bound.
+        const timer = setTimeout(resolve, destroyTimeoutMs)
         timer.unref()
         onAllUnloaded = () => {
           clearTimeout(timer)
@@ -617,7 +955,9 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         if (hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
         hocuspocus.closeConnections()
         hocuspocus.flushPendingStores()
+        retryDirtyStores()
       })
+      clearInterval(storeRetryTimer)
       for (const ws of sockets) ws.terminate()
       sockets.clear()
       if (current === server) current = previous
