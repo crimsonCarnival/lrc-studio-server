@@ -12,9 +12,10 @@ import { requestSchema } from './request.schema.js';
 import { artistSchema } from './artist.schema.js';
 import { wallSchema } from './wall.schema.js';
 import { reportSchema } from './report.schema.js';
+import { collabSchema } from './collab.schema.js';
 
 export const schemaString = [
   userSchema, projectSchema, lyricsSchema, uploadSchema,
   settingsSchema, playlistSchema, activitySchema, exploreSchema, reactionSchema, rootSchema,
-  requestSchema, artistSchema, wallSchema, reportSchema,
+  requestSchema, artistSchema, wallSchema, reportSchema, collabSchema,
 ].join('\n');

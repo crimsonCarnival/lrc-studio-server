@@ -5,6 +5,7 @@ import mongoose from './plugins/mongoose.js';
 import cron from './plugins/cron.js';
 import cors from './plugins/cors.js';
 import socket from './plugins/socket.js';
+import collab from './plugins/collab.js';
 import helmet from './plugins/helmet.js';
 import rateLimit from './plugins/rate-limit.js';
 import csrf from './plugins/csrf.js';
@@ -17,7 +18,7 @@ import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
 import fastifyCookie from '@fastify/cookie';
 import { handleFastifyError } from './shared/error-handler.js';
-import { getEnv } from './config/env.js';
+import { getEnv, toFastifyTrustProxy } from './config/env.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import lyricsRoutes from './modules/lyrics/lyrics.routes.js';
@@ -32,6 +33,7 @@ import rootRoutes from './modules/root/root.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
 import ogRoutes from './modules/og/og.routes.js';
 import asrRoutes from './modules/asr/asr.routes.js';
+import collabRoutes from './modules/collab/collab.routes.js';
 import { deriveErrorCode } from './graphql/error-code.js';
 
 const envToLogger: Record<string, Record<string, unknown>> = {
@@ -61,11 +63,6 @@ function isInternalError(err: Error | undefined): boolean {
   return process.env.NODE_ENV === 'production' && !!err && INTERNAL_ERROR_NAMES.has(err.name);
 }
 
-/** A hop count trusts the nearest N proxies, as proxy-addr does for a number. */
-function toFastifyTrustProxy(value: boolean | number | string[]) {
-  return typeof value === 'number' ? (_addr: string, hop: number) => hop < value : value;
-}
-
 async function build() {
   const app = Fastify({
     logger: envToLogger[process.env.NODE_ENV as string] ?? envToLogger.production,
@@ -93,6 +90,9 @@ async function build() {
   await app.register(mongoose);
   await app.register(cron);
   await app.register(auth);
+  // After socket (destroyUpgrade: false) and mongoose: collab owns non-Socket.IO
+  // upgrades, and its onClose must flush pending stores before Mongo closes.
+  await app.register(collab);
   
   
 
@@ -184,6 +184,7 @@ async function build() {
   await app.register(notificationsRoutes, { prefix: '/notifications' });
   await app.register(ogRoutes, { prefix: '/og' });
   await app.register(asrRoutes, { prefix: '/asr' });
+  await app.register(collabRoutes, { prefix: '/collab' });
 
   return app;
 }

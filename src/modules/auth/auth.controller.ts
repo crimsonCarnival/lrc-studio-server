@@ -18,7 +18,8 @@ const REFRESH_COOKIE_MAX_AGE = parseExpiry(env.JWT_REFRESH_EXPIRY, 24 * 60 * 60)
 // it as a different cookie and logout silently leaves the original in place.
 const cookieDomain = env.COOKIE_DOMAIN || undefined;
 
-const cookieOptions: CookieSerializeOptions = {
+/** Attributes every httpOnly session-style cookie shares (collab guest cookie too). */
+export const cookieOptions: CookieSerializeOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',

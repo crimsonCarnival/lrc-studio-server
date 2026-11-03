@@ -2,6 +2,7 @@ import Project from '../../modules/projects/project.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import { Context } from './context.js';
 import { scheduleSyncStatsRefresh, updateStreak } from '../../modules/badges/badge.service.js';
+import { collabSessionBlocks } from '../../modules/projects/projects.crud.service.js';
 
 export interface LyricsInput {
   [key: string]: unknown;
@@ -20,6 +21,9 @@ export const lyricsResolvers = {
       if (!context.userId) throw new Error('Unauthorized');
       const project = await Project.findOne({ publicId, userId: context.userId });
       if (!project) throw new Error('Project not found or access denied');
+      // Same guard as updateProject: a live session's next store would overwrite this write.
+      const blocked = await collabSessionBlocks(publicId, { lyrics: input });
+      if (blocked) throw Object.assign(new Error(blocked.error ?? 'collab_active'), { extensions: { code: blocked.code, status: blocked.status } });
       const update: Record<string, unknown> = {};
       if (input.editorMode !== undefined) update.editorMode = input.editorMode;
       if (input.sections !== undefined) update.sections = input.sections;

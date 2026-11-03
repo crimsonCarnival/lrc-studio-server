@@ -9,6 +9,7 @@ import Project from './project.model.js';
 import ProjectFork from './project-fork.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
+import CollabSession from '../collab/collab-session.model.js';
 import User from '../users/user.model.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
@@ -406,6 +407,17 @@ export async function getProject(publicId: string, requestingUserId?: string | n
   return pub as unknown as ProjectPublic;
 }
 
+// Fields a live collab session owns: its Y.Doc projects lyrics and the song
+// title/album back on every store, so a solo save here would be overwritten
+// moments later. Visibility, cover, state and media stay writable.
+const COLLAB_OWNED_FIELDS = ['lyrics', 'metadata', 'title'] as const;
+
+export async function collabSessionBlocks(publicId: string, data: UpdateProjectData): Promise<ServiceResult | null> {
+  if (!COLLAB_OWNED_FIELDS.some((k) => data[k] !== undefined)) return null;
+  if (!(await CollabSession.exists({ publicId, endedAt: null }))) return null;
+  return { error: 'A live collaborative session is editing this project', status: 409, code: 'collab_active' } as ServiceResult;
+}
+
 export async function updateProject(
   publicId: string,
   rawData: unknown,
@@ -419,6 +431,8 @@ export async function updateProject(
   if (!project.isOwnedBy(userId ?? '')) {
     return { error: 'Not authorized to edit this project', status: 403 } as ServiceResult;
   }
+  const collabBlock = await collabSessionBlocks(publicId, data);
+  if (collabBlock) return collabBlock;
 
   const { title, uploadId, lyrics, state, metadata, readOnly } = data;
 
@@ -531,6 +545,8 @@ export async function patchProject(
   if (!project.isOwnedBy(userId ?? '')) {
     return { error: 'Not authorized to edit this project', status: 403 } as ServiceResult;
   }
+  const collabBlock = await collabSessionBlocks(publicId, data);
+  if (collabBlock) return collabBlock;
 
   if (data.uploadId !== undefined) {
     const ownedUpload = await Upload.findOne({ _id: data.uploadId, userId });

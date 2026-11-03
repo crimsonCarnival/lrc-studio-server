@@ -95,6 +95,12 @@ export interface Env {
    * deployment running today qualifies.
    */
   SOCKET_IO_ADAPTER?: 'mongo';
+  /**
+   * Signing key for collab guest tokens (the `collabGuest` cookie). Unset
+   * derives one from JWT_SECRET with HMAC domain separation, exactly like the
+   * admin sudo key, so a guest token can never verify as an access token.
+   */
+  COLLAB_GUEST_SECRET?: string;
 }
 
 function requireEnv(name: string, value: string | undefined, requiredInProduction = false): string | undefined {
@@ -110,6 +116,16 @@ export function parseTrustProxy(raw: string | undefined): boolean | number | str
   if (value === 'false') return false;
   if (/^\d+$/.test(value)) return parseInt(value, 10);
   return value.split(',').map(v => v.trim()).filter(Boolean);
+}
+
+/**
+ * TRUST_PROXY in the shape Fastify's `trustProxy` takes. A hop count trusts the
+ * nearest N proxies, as proxy-addr does for a number. Shared by server.ts and
+ * the collab upgrade listener, which must derive the client IP exactly as
+ * request.ip does (raw upgrades never reach Fastify's request object).
+ */
+export function toFastifyTrustProxy(value: boolean | number | string[]) {
+  return typeof value === 'number' ? (_addr: string, hop: number) => hop < value : value;
 }
 
 export function loadEnv(): Env {
@@ -157,6 +173,7 @@ export function loadEnv(): Env {
     OG_API_ORIGIN: process.env.OG_API_ORIGIN?.trim() || undefined,
     CLIENT_ORIGIN: process.env.CLIENT_ORIGIN?.trim() || undefined,
     SOCKET_IO_ADAPTER: process.env.SOCKET_IO_ADAPTER?.trim() === 'mongo' ? 'mongo' : undefined,
+    COLLAB_GUEST_SECRET: process.env.COLLAB_GUEST_SECRET?.trim() || undefined,
   };
 }
 

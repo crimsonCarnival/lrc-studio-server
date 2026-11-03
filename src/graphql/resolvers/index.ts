@@ -14,6 +14,7 @@ import { artistResolvers }   from './artist.resolvers.js';
 import { badgeResolvers }    from './badge.resolvers.js';
 import { wallResolvers }     from './wall.resolvers.js';
 import { reportResolvers }   from './report.resolvers.js';
+import { collabResolvers }   from './collab.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -32,6 +33,7 @@ export const resolvers = {
     ...badgeResolvers.Query,
     ...wallResolvers.Query,
     ...reportResolvers.Query,
+    ...collabResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -46,6 +48,7 @@ export const resolvers = {
     ...badgeResolvers.Mutation,
     ...wallResolvers.Mutation,
     ...reportResolvers.Mutation,
+    ...collabResolvers.Mutation,
   },
   User:     userResolvers.User,
   UserBan: userResolvers.UserBan,
