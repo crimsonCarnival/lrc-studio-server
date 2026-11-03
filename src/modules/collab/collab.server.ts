@@ -10,7 +10,7 @@
  *
  * In-memory state (single instance is confirmed; no multi-instance machinery):
  * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
- * discarded, settling, and handled credits.
+ * dirty (failed stores awaiting retry), discarded, settling, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -50,6 +50,8 @@ const MAX_PENDING_DOCUMENTS = 4
 /** Upper bound on how long shutdown waits for pending stores before giving up. */
 const DESTROY_TIMEOUT_MS = 10_000
 const UNLOAD_POLL_MS = 10
+/** How often a doc whose last store failed is stored again. */
+const DEFAULT_STORE_RETRY_MS = 10_000
 
 // Application close codes (4000–4999 are free for app use).
 const CLOSE = {
@@ -257,7 +259,11 @@ function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unkn
   return $set
 }
 
-async function storeState(docName: string, document: Document, state: Buffer, log: FastifyBaseLogger): Promise<void> {
+/**
+ * Throws when the state did not persist. Otherwise resolves to whether Lyrics caught up with it:
+ * false is a failed projection, where the CollabDoc holds the truth and the next store can retry.
+ */
+async function storeState(docName: string, document: Y.Doc, state: Buffer, log: FastifyBaseLogger): Promise<boolean> {
   const publicId = publicIdOf(docName)
   try {
     // State only. lyricsVersion is recorded below, and only once Lyrics really
@@ -282,7 +288,7 @@ async function storeState(docName: string, document: Document, state: Buffer, lo
       { $set, $unset: { lines: 1 }, $inc: { version: 1 } },
       { returnDocument: 'after', runValidators: true },
     ).select('version').lean<{ version: number }>()
-    if (!lyrics) return
+    if (!lyrics) return true
     // A crash right here leaves lyricsVersion behind Lyrics; fetchState recognises
     // that case by content and keeps the doc (docMatchesLyrics).
     await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } })
@@ -293,9 +299,11 @@ async function storeState(docName: string, document: Document, state: Buffer, lo
       { $set: { ...metaSet, contentUpdatedAt: new Date() }, $inc: { version: 1 } },
       { runValidators: true },
     )
+    return true
   } catch (err) {
     // The CollabDoc already holds the truth; a projection failure must not keep the doc from persisting.
     log.error({ err, docName }, 'collab: projecting doc into Lyrics failed')
+    return false
   }
 }
 
@@ -322,10 +330,11 @@ function parseMessage(payload: string): LockMsg | null {
   return null
 }
 
-export type CollabServerOptions = { maxDocBytes?: number }
+export type CollabServerOptions = { maxDocBytes?: number; storeRetryMs?: number; destroyTimeoutMs?: number }
 
 export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOptions = {}): MountedCollabServer {
   const maxDocBytes = opts.maxDocBytes ?? DEFAULT_MAX_DOC_BYTES
+  const destroyTimeoutMs = opts.destroyTimeoutMs ?? DESTROY_TIMEOUT_MS
   /** Last exact encoded size per loaded doc, plus update bytes received since. */
   const docSize = new Map<string, { bytes: number; pending: number }>()
   /**
@@ -337,6 +346,11 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
+  /**
+   * Loaded docs whose last store failed, retried on a timer. 'state': nothing persisted those
+   * edits, so the doc must not unload. 'projection': the CollabDoc has them and only Lyrics is behind.
+   */
+  const dirty = new Map<string, 'state' | 'projection'>()
   /** Docs of a deleted project: nothing is stored from here on, so no store can resurrect it. */
   const discarded = new Set<string>()
   /** Teardown in progress per doc. A new connection waits for it rather than attaching to a doc on its way out. */
@@ -377,7 +391,15 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         fetch: ({ documentName }) => fetchState(documentName),
         store: async ({ documentName, document, state }) => {
           if (discarded.has(documentName)) return
-          await storeState(documentName, document, state, log)
+          let projected: boolean
+          try {
+            projected = await storeState(documentName, document, state, log)
+          } catch (err) {
+            dirty.set(documentName, 'state')
+            throw err
+          }
+          if (projected) dirty.delete(documentName)
+          else dirty.set(documentName, 'projection')
         },
       }),
     ],
@@ -546,12 +568,19 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       }
     },
 
+    // Hocuspocus only keeps a doc for the store that just failed: once nothing is pending, the
+    // last client leaving unloads it. Refusing here is what makes a failed store survive that.
+    async beforeUnloadDocument({ documentName }) {
+      if (isUnstored(documentName)) throw { reason: 'unstored' }
+    },
+
     async afterUnloadDocument({ documentName }) {
       awarenessIds.delete(documentName)
       locks.clearDoc(documentName)
       docSize.delete(documentName)
       clearHandled(documentName)
       discarded.delete(documentName)
+      dirty.delete(documentName)
       if (onAllUnloaded && hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
     },
   })
@@ -606,6 +635,18 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     }, true)
   }
 
+  function isUnstored(docName: string): boolean {
+    return !discarded.has(docName) && dirty.get(docName) === 'state'
+  }
+
+  function retryDirtyStores(): void {
+    for (const docName of dirty.keys()) {
+      const doc = hocuspocus.documents.get(docName)
+      if (!doc) dirty.delete(docName)
+      else if (!hocuspocus.debouncer.isCurrentlyExecuting(`onStoreDocument-${docName}`)) void storeNow(doc)
+    }
+  }
+
   /** Serialises teardowns of one doc and publishes the current one to the auth gate. */
   function settle(docName: string, work: () => Promise<void>): Promise<void> {
     const run: Promise<void> = (settling.get(docName)?.catch(() => undefined) ?? Promise.resolve())
@@ -639,6 +680,9 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     for (const docName of locks.sweep()) broadcastLocks(docName)
   }, SWEEP_MS)
   sweepTimer.unref()
+
+  const storeRetryTimer = setInterval(retryDirtyStores, opts.storeRetryMs ?? DEFAULT_STORE_RETRY_MS)
+  storeRetryTimer.unref()
 
   const server: MountedCollabServer = {
     handleSocket(ws, req, ip) {
@@ -697,7 +741,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       // Same sequence as @hocuspocus/server's Server.destroy(): close every
       // connection, run pending debounced stores now, wait for the unloads.
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, DESTROY_TIMEOUT_MS)
+        // Docs still unstored keep this from resolving early, so the retry timer gets the whole bound.
+        const timer = setTimeout(resolve, destroyTimeoutMs)
         timer.unref()
         onAllUnloaded = () => {
           clearTimeout(timer)
@@ -706,7 +751,9 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         if (hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
         hocuspocus.closeConnections()
         hocuspocus.flushPendingStores()
+        retryDirtyStores()
       })
+      clearInterval(storeRetryTimer)
       for (const ws of sockets) ws.terminate()
       sockets.clear()
       if (current === server) current = previous

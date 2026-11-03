@@ -66,14 +66,16 @@ async function waitFor(cond: () => boolean | Promise<boolean>, ms = 5000): Promi
   }
 }
 
-function connect(cookie: string, clientId?: number): Client {
+function connect(cookie: string, clientId?: number, opts: { url?: string; parameters?: Record<string, string> } = {}): Client {
   const headers = { Origin: ORIGIN, Cookie: cookie }
   class HeaderedWebSocket extends WebSocket {
     constructor(address: string) {
       super(address, { headers })
     }
   }
-  const socket = new HocuspocusProviderWebsocket({ url, WebSocketPolyfill: HeaderedWebSocket, delay: 50, minDelay: 50 })
+  const socket = new HocuspocusProviderWebsocket({
+    url: opts.url ?? url, parameters: opts.parameters, WebSocketPolyfill: HeaderedWebSocket, delay: 50, minDelay: 50,
+  })
   const doc = new Y.Doc()
   if (clientId !== undefined) doc.clientID = clientId
   const client: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, stateless: [], failures: [] }
@@ -127,7 +129,7 @@ beforeAll(async () => {
   await mongoose.connect(mongo.getUri())
   app = Fastify()
   // Loose admission limits: this file opens many sockets from one IP. Small doc cap keeps the size test fast.
-  await app.register(collabPlugin, { upgradesPerMinute: 10_000, maxConnectionsPerIp: 1_000, maxDocBytes: 100_000 })
+  await app.register(collabPlugin, { upgradesPerMinute: 10_000, maxConnectionsPerIp: 1_000, maxDocBytes: 100_000, storeRetryMs: 100 })
   await app.listen({ port: 0, host: '127.0.0.1' })
   const addr = app.server.address() as { port: number }
   url = `ws://127.0.0.1:${addr.port}/collab`
@@ -939,5 +941,69 @@ describe('collab account deletion', () => {
     await archiveDeletedUsers()
     expect(await User.exists({ _id: ownerId })).toBeNull()
     expect(await isLive()).toBeNull()
+  })
+})
+
+describe('collab store retry', () => {
+  const quietly = () => vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  it('a store that fails mid-session is retried, and the doc outlives the last client until it lands', async () => {
+    const errors = quietly()
+    try {
+      const editor = await connectSynced(guest('ed', editorInvite))
+      const spy = vi.spyOn(CollabDoc, 'updateOne').mockRejectedValueOnce(new Error('boom')).mockRejectedValueOnce(new Error('boom'))
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'survives')
+      await waitFor(() => !editor.provider.hasUnsyncedChanges)
+      // The debounced store fails while the client is still here; nothing is pending when it leaves.
+      await waitFor(() => spy.mock.calls.length >= 1)
+      close(editor)
+      await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text === 'survives')
+      spy.mockRestore()
+      const doc = new Y.Doc()
+      Y.applyUpdate(doc, new Uint8Array((await CollabDoc.findOne({ name: DOC }))!.state))
+      expect(lineText(doc, 'l1')).toBe('survives')
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('a projection that fails mid-session is retried while the doc is loaded', async () => {
+    const errors = quietly()
+    try {
+      const editor = await connectSynced(guest('ed', editorInvite))
+      const spy = vi.spyOn(Lyrics, 'findOneAndUpdate').mockImplementationOnce(() => {
+        throw new Error('projection down')
+      })
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'projected')
+      await waitFor(() => spy.mock.calls.length >= 1)
+      spy.mockRestore()
+      await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text === 'projected')
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('shutdown gives up on a store that keeps failing within its time bound', async () => {
+    const errors = quietly()
+    const second = Fastify()
+    await second.register(collabPlugin, { upgradesPerMinute: 10_000, maxConnectionsPerIp: 1_000, storeRetryMs: 50, destroyTimeoutMs: 300 })
+    await second.listen({ port: 0, host: '127.0.0.1' })
+    const port = (second.server.address() as { port: number }).port
+    const spy = vi.spyOn(CollabDoc, 'updateOne')
+    try {
+      const editor = await connectSynced(guest('ed', editorInvite), undefined, { url: `ws://127.0.0.1:${port}/collab` })
+      spy.mockRejectedValue(new Error('down'))
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'stuck')
+      await waitFor(() => !editor.provider.hasUnsyncedChanges)
+      close(editor)
+      await new Promise((r) => setTimeout(r, 100))
+      const started = Date.now()
+      await second.close()
+      expect(Date.now() - started).toBeLessThan(2000)
+      expect(spy.mock.calls.length).toBeGreaterThan(1)
+    } finally {
+      spy.mockRestore()
+      errors.mockRestore()
+    }
   })
 })
