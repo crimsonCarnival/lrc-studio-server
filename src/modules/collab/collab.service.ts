@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import mongoose from 'mongoose'
 import { nanoid } from 'nanoid'
-import Project from '../projects/project.model.js'
+import Project, { MAX_REMOVED_COLLABORATORS } from '../projects/project.model.js'
 import User from '../users/user.model.js'
 import { isValidPublicId } from '../../socket/project-viewers.js'
 import CollabSession from './collab-session.model.js'
@@ -10,6 +10,7 @@ import {
 } from './collab.auth.js'
 import { getCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
+import { markHandled } from './collab-credits.service.js'
 
 /** Expected failure with a client-facing code; GraphQL puts `code` in extensions, REST in the body. */
 export class CollabError extends Error {
@@ -200,6 +201,26 @@ export async function setGuestAccess(publicId: string, allowGuests: boolean, use
   const s = await liveSession(publicId)
   await CollabSession.updateOne({ _id: s._id }, { $set: { allowGuests } })
   if (!allowGuests) reconnect(publicId, s.members.filter((m) => m.subject.startsWith('guest:')).map((m) => m.subject))
+  return true
+}
+
+/**
+ * Owner removes a collaborator credit. The subject is remembered so it is never credited again, and
+ * the live doc (if loaded) is told so the session does not re-add it. Both changes are one update.
+ */
+export async function removeProjectCollaborator(publicId: string, id: string, userId: string | null | undefined): Promise<true> {
+  await requireOwner(publicId, userId)
+  if (!SUBJECT_RE.test(id)) throw notFound()
+  const res = await Project.updateOne(
+    {
+      publicId,
+      $or: [{ removedCollaborators: id }, { [`removedCollaborators.${MAX_REMOVED_COLLABORATORS - 1}`]: { $exists: false } }],
+    },
+    { $addToSet: { removedCollaborators: id }, $pull: { collaborators: { subject: id } } },
+    { timestamps: false },
+  )
+  if (res.matchedCount === 0) throw new CollabError('collab_removal_limit', 409)
+  markHandled(docNameOf(publicId), id)
   return true
 }
 

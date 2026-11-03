@@ -28,6 +28,7 @@ import { cleanTitle, hasProjectIdentity, PROJECT_SONG_NAME_MAX, slugFor } from '
 import { stripHtml } from '../../utils/sanitize.js'
 import { CollabAuthError, resolvePrincipal, type CollabPrincipal } from './collab.auth.js'
 import type { CollabMeta } from './collab.types.js'
+import { clearHandled, creditCollaborator, handledSubjects } from './collab-credits.service.js'
 
 const LOCK_IDLE_MS = 30_000
 const SWEEP_MS = 5_000
@@ -502,7 +503,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     // could grow a doc past Mongo's 16 MB BSON limit, after which every store fails.
     // An exact re-measure costs a full encode, so it runs every RECHECK_BYTES of
     // incoming updates, or on every change once the doc is near the cap.
-    async onChange({ documentName, document, update, connection }) {
+    async onChange({ documentName, document, update, connection, context }) {
+      recordContributor(documentName, connection, context)
       const size = docSize.get(documentName) ?? { bytes: 0, pending: 0 }
       size.pending += update.byteLength
       if (size.pending >= RECHECK_BYTES || size.bytes + size.pending > maxDocBytes) {
@@ -528,9 +530,25 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       awarenessIds.delete(documentName)
       locks.clearDoc(documentName)
       docSize.delete(documentName)
+      clearHandled(documentName)
       if (onAllUnloaded && hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
     },
   })
+
+  // Credits a non-owner whose connection applied a change. Server-internal changes (seeding,
+  // projection, a DirectConnection) arrive with no connection and are never credited. Fire and
+  // forget: a failed write must not slow or break sync, and is retried on the subject's next change.
+  function recordContributor(docName: string, connection: Connection | undefined, context: CollabContext | undefined): void {
+    const principal = context?.principal
+    if (!connection || connection.readOnly || !principal || principal.role === 'owner' || principal.role === 'viewer') return
+    const seen = handledSubjects(docName)
+    if (seen.has(principal.subject)) return
+    seen.add(principal.subject)
+    creditCollaborator(publicIdOf(docName), principal).catch((err) => {
+      seen.delete(principal.subject)
+      log.error({ err, docName, subject: principal.subject }, 'collab: recording collaborator credit failed')
+    })
+  }
 
   function locksMessage(docName: string): string {
     const locksOut: Record<string, { holderConn: string; subject: string; name: string; colorIndex: number }> = {}

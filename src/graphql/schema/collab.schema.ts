@@ -48,5 +48,7 @@ export const collabSchema = `
     setCollabRole(publicId: String!, subject: String!, role: String!): Boolean!
     kickCollabParticipant(publicId: String!, subject: String!): CollabKickResult!
     setCollabGuestAccess(publicId: String!, allowGuests: Boolean!): Boolean!
+    "Owner only. Removes a collaborator credit and stops it being re-added. id is the credit's subject."
+    removeProjectCollaborator(publicId: String!, id: ID!): Boolean!
   }
 `;

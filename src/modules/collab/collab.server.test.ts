@@ -17,6 +17,7 @@ import CollabSession from './collab-session.model.js'
 import CollabDoc from './collab-doc.model.js'
 import { signGuestToken } from './collab.auth.js'
 import { getCollabServer } from './collab.server.js'
+import { removeProjectCollaborator } from './collab.service.js'
 
 // Lets a test hold the server's disconnect-time awareness removal, to stand in for a peer whose
 // connection is gone but whose state the server has not cleaned up yet.
@@ -782,5 +783,74 @@ describe('collab awareness identity', () => {
     sendAs(squatter, ghosts[1], { activeLineId: 'squat' })
     await new Promise((r) => setTimeout(r, 300))
     expect(states(witness).get(ghosts[1])).toMatchObject({ activeLineId: 'g1b', user: { subject: 'guest:vw' } })
+  })
+})
+
+describe('collab credits', () => {
+  const credits = async () => ((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.collaborators ?? [])
+  const edit = (c: Client, id = 'l1', text = 'x') => c.doc.getMap<Y.Map<unknown>>('lines').get(id)!.set('text', text)
+  const settle = (ms = 250) => new Promise((r) => setTimeout(r, ms))
+
+  it('credits a guest editor once, by the name they typed, however many changes they make', async () => {
+    const ed = await connectSynced(guest('ed', editorInvite))
+    edit(ed, 'l1', 'a')
+    edit(ed, 'l2', 'b')
+    await waitFor(async () => (await credits()).length === 1)
+    edit(ed, 'l1', 'c')
+    await settle()
+    const list = await credits()
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ subject: 'guest:ed', userId: null, guestName: 'ed' })
+  })
+
+  it('credits a signed-in editor by userId', async () => {
+    const u = await User.collection.insertOne({
+      accountName: 'editor1', displayName: 'Editor One', email: 'e@x.test', passwordHash: 'x',
+      isDeleted: false, role: 'user', permissions: [], ban: { active: false },
+    })
+    const id = u.insertedId.toString()
+    await CollabSession.updateOne({ publicId: PUBLIC_ID }, { $push: { members: { subject: `user:${id}`, role: 'editor', colorIndex: 2, name: 'Editor One' } } })
+    const familyId = `fam-${id}`
+    await Session.create({ userId: id, familyId, refreshTokenHash: 'x', expiresAt: new Date(Date.now() + 3600_000) })
+    const ed = await connectSynced(`accessToken=${jwtTools.signAccess({ sub: id, familyId })}`)
+    edit(ed)
+    await waitFor(async () => (await credits()).length === 1)
+    const [c] = await credits()
+    expect(c.subject).toBe(`user:${id}`)
+    expect(String(c.userId)).toBe(id)
+    expect(c.guestName).toBeNull()
+  })
+
+  it('never credits the owner, a viewer, or someone who only joined', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    await connectSynced(guest('lurker', editorInvite))
+    edit(owner, 'l1', 'owner edit')
+    edit(viewer, 'l2', 'viewer edit')
+    await waitFor(() => lineText(viewer.doc, 'l1') === 'owner edit')
+    await settle()
+    expect(await credits()).toHaveLength(0)
+  })
+
+  it('does not re-add a subject the owner removed, even in the same live session', async () => {
+    const ed = await connectSynced(guest('ed', editorInvite))
+    const later = await connectSynced(guest('later', editorInvite))
+    edit(ed, 'l1', 'a')
+    await waitFor(async () => (await credits()).length === 1)
+
+    await removeProjectCollaborator(PUBLIC_ID, 'guest:ed', ownerId)
+    await removeProjectCollaborator(PUBLIC_ID, 'guest:later', ownerId)
+    expect(await credits()).toHaveLength(0)
+
+    edit(ed, 'l1', 'b')
+    edit(later, 'l2', 'c')
+    // A subject that was never removed proves the hook is still alive.
+    const other = await connectSynced(guest('other', editorInvite))
+    edit(other, 'l1', 'd')
+    await waitFor(async () => (await credits()).length === 1)
+    await settle()
+    expect((await credits()).map((c) => c.subject)).toEqual(['guest:other'])
+    const project = await Project.findOne({ publicId: PUBLIC_ID }).lean()
+    expect([...project!.removedCollaborators].sort()).toEqual(['guest:ed', 'guest:later'])
   })
 })

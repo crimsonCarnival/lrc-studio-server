@@ -1,4 +1,15 @@
 export const projectSchema = `
+  "Someone, other than the owner, who edited a project in a collaborative session."
+  type ProjectCollaborator {
+    "The credit's subject (user:<id> or guest:<id>); pass it to removeProjectCollaborator."
+    id: ID!
+    "The signed-in collaborator; null for guests."
+    user: User
+    "Current display name for users, the typed name for guests."
+    name: String!
+    isGuest: Boolean!
+  }
+
   type Project {
     id: ID!
     publicId: String!
@@ -46,6 +57,8 @@ export const projectSchema = `
     hasWordSync: Boolean
     forksEnabled: Boolean
     trendingScore: Float
+    "Oldest contribution first. Empty when the viewer cannot read the project."
+    collaborators: [ProjectCollaborator!]!
   }
 
   type ProfileShareItem {

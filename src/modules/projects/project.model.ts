@@ -31,6 +31,10 @@ export interface IProject extends Document {
     accountName?: string | null;
     sourceDeleted?: boolean;
   };
+  /** Session participants other than the owner who edited the doc. See collab/collab-credits.service.ts. */
+  collaborators: ProjectCollaboratorCredit[];
+  /** Credits the owner removed; never re-added, so the owner's decision sticks. */
+  removedCollaborators: string[];
   forkCount: number;
   starCount: number;
   viewCount: number;
@@ -48,6 +52,17 @@ export interface IProject extends Document {
    */
   contentUpdatedAt?: Date;
 }
+
+export type ProjectCollaboratorCredit = {
+  /** `user:<id>` or `guest:<id>`. */
+  subject: string;
+  userId: mongoose.Types.ObjectId | null;
+  guestName: string | null;
+  firstContributedAt: Date;
+};
+
+export const MAX_PROJECT_COLLABORATORS = 50;
+export const MAX_REMOVED_COLLABORATORS = 200;
 
 const textSetter = (v: unknown) => (typeof v === 'string' ? stripHtml(v) : v);
 
@@ -201,6 +216,27 @@ const projectSchema = new mongoose.Schema(
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
       accountName: { type: String, default: null },
       sourceDeleted: { type: Boolean, default: false },
+    },
+
+    // The real cap is the atomic filter in collab-credits.service.ts (updateOne skips validators);
+    // the validators only guard documents saved through Mongoose.
+    collaborators: {
+      type: [new mongoose.Schema(
+        {
+          subject: { type: String, required: true, maxlength: 80 },
+          userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+          guestName: { type: String, default: null, maxlength: 40 },
+          firstContributedAt: { type: Date, required: true },
+        },
+        { _id: false },
+      )],
+      default: [],
+      validate: (v: unknown[]) => v.length <= MAX_PROJECT_COLLABORATORS,
+    },
+    removedCollaborators: {
+      type: [{ type: String, maxlength: 80 }],
+      default: [],
+      validate: (v: unknown[]) => v.length <= MAX_REMOVED_COLLABORATORS,
     },
 
     forkCount: { type: Number, default: 0 },

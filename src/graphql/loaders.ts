@@ -9,6 +9,9 @@ import { messageCounts } from '../modules/reports/report-thread.service.js';
 import Follow from '../modules/users/follow.model.js';
 import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
+import { loadProjectCredits } from '../modules/collab/collab-credits.service.js';
+import { canViewProject } from './resolvers/auth-guards.js';
+import type { Context } from './resolvers/context.js';
 
 /** Shape of a GraphQL parent object as passed by Mercurius loaders */
 type LoaderObj = Record<string, unknown>;
@@ -249,6 +252,20 @@ export const loaders: MercuriusLoaders = {
     // its project page instead of a failed query. Drop once clients have rolled over.
     boostCount: { loader: profileShareCountLoader },
     isBoostedByMe: { loader: isSharedToProfileByMeLoader },
+
+    // Credits come from the DB (not the parent, which list queries may project away) and are
+    // re-gated on the project's own visibility: the edge is reachable from places that never
+    // ran the top-level project check.
+    collaborators: {
+      loader: async (queries: Array<{ obj: LoaderObj }>, context) => {
+        const credits = await loadProjectCredits([...new Set(queries.map(({ obj }) => obj.publicId as string))]);
+        return Promise.all(queries.map(async ({ obj }) => {
+          const entry = credits.get(obj.publicId as string);
+          if (!entry || !(await canViewProject(entry, context as unknown as Context))) return [];
+          return entry.collaborators;
+        }));
+      },
+    },
 
     // Projects only the word times, not the lyric text, so a list of results stays cheap.
     hasWordSync: {
