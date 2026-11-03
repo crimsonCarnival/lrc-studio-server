@@ -303,6 +303,21 @@ describe('POST /collab/join', () => {
     expect(s!.members.find((m) => m.subject === `user:${u}`)!.role).toBe('editor')
   })
 
+  it('a demoted member who rejoins with an editor link stays a viewer and reconnects readOnly', async () => {
+    await start()
+    const editorToken = await invite('editor')
+    const u = await mkUser()
+    const cookie = await cookieFor(u)
+    expect((await join({ token: editorToken }, cookie)).json().role).toBe('editor')
+    expect(await M.setCollabRole(null, { publicId: PUBLIC_ID, subject: `user:${u}`, role: 'viewer' }, ctx(ownerId))).toBe(true)
+    const again = await join({ token: editorToken }, cookie)
+    expect(again.json()).toEqual({ ok: true, publicId: PUBLIC_ID, role: 'viewer' })
+    const s = await CollabSession.findOne({ publicId: PUBLIC_ID }).lean()
+    expect(s!.members.find((m) => m.subject === `user:${u}`)!.role).toBe('viewer')
+    const client = await connectSynced(cookie)
+    expect(client.provider.authorizedScope).toBe('readonly')
+  })
+
   it('applies the requireAuth ban gates to signed-in users and the network gates to guests', async () => {
     await start()
     const token = await invite('editor')

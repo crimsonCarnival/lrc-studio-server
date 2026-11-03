@@ -27,7 +27,6 @@ const MAX_INVITES = 50
 const MAX_MEMBERS = 50
 const MAX_NAME = 40
 const INVITE_ROLES = new Set(['editor', 'viewer'])
-const ROLE_RANK: Record<CollabRole, number> = { viewer: 0, editor: 1, owner: 2 }
 const SUBJECT_RE = /^(user|guest):[A-Za-z0-9_-]{1,64}$/
 
 const notFound = () => new CollabError('not_found', 404)
@@ -217,19 +216,19 @@ export type JoinInput = {
 export type JoinResult = { publicId: string; role: CollabRole; guestToken?: string }
 
 /**
- * Adds `subject` with `role`, or raises an existing member to `role`; never
- * lowers anyone (an owner's demotion of a member is a role, not a floor here).
+ * Adds `subject` with the invite's role. An existing member's role is never
+ * changed by a join: the owner's setCollabRole is authoritative, and a demoted
+ * member must not climb back with a link they still hold. Only a guest's
+ * inviteId is refreshed, so a kick still revokes the link they last used.
  * Returns the role the member ends up with.
  */
 async function upsertMember(s: SessionDoc, entry: Omit<MemberEntry, 'colorIndex'>): Promise<CollabRole> {
   const existing = s.members.find((m) => m.subject === entry.subject)
   if (existing) {
-    const role = ROLE_RANK[entry.role] > ROLE_RANK[existing.role] ? entry.role : existing.role
-    const $set: Record<string, unknown> = { 'members.$.role': role }
-    if (entry.inviteId) $set['members.$.inviteId'] = entry.inviteId
-    await CollabSession.updateOne({ _id: s._id, 'members.subject': entry.subject }, { $set })
-    if (role !== existing.role) reconnect(s.publicId, [entry.subject])
-    return role
+    if (entry.inviteId && entry.inviteId !== existing.inviteId) {
+      await CollabSession.updateOne({ _id: s._id, 'members.subject': entry.subject }, { $set: { 'members.$.inviteId': entry.inviteId } })
+    }
+    return existing.role
   }
   const res = await CollabSession.updateOne(
     { _id: s._id, 'members.subject': { $ne: entry.subject }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } },
