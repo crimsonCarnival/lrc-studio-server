@@ -17,7 +17,9 @@ import CollabSession from './collab-session.model.js'
 import CollabDoc from './collab-doc.model.js'
 import { signGuestToken } from './collab.auth.js'
 import { getCollabServer } from './collab.server.js'
-import { endSession, removeProjectCollaborator, startSession } from './collab.service.js'
+import {
+  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, removeProjectCollaborator, startSession,
+} from './collab.service.js'
 import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
 import { changePasswordAtomically } from '../auth/auth.tx.service.js'
@@ -1425,5 +1427,77 @@ describe('collab awareness and stateless limits', () => {
     client.provider.sendStateless(JSON.stringify({ t: 'lock', lineId: 'x24' }))
     await waitFor(() => !!lastLocks(client)?.x24)
     expect(client.stateless.filter((m) => m.t === 'lock-denied')).toHaveLength(10)
+  })
+})
+
+describe('collab expiry', () => {
+  const DAY = 86_400_000
+  const live = () => CollabSession.exists({ _id: sessionId, endedAt: null })
+  const lastActivity = async () => (await CollabSession.findById(sessionId).lean())!.lastActivityAt!.getTime()
+  const age = (ms: number) => CollabSession.updateOne({ _id: sessionId }, { $set: { lastActivityAt: new Date(Date.now() - ms) } })
+
+  it('an invite older than 7 days is refused with the revoked-link code and shows as revoked', async () => {
+    const token = await createInvite(PUBLIC_ID, 'editor', ownerId)
+    const join = () => joinSession({ token, name: 'Ana', userId: null })
+    await expect(join()).resolves.toMatchObject({ publicId: PUBLIC_ID })
+    await CollabSession.updateOne(
+      { _id: sessionId, 'invites.tokenHash': hashInviteToken(token) },
+      { $set: { 'invites.$.createdAt': new Date(Date.now() - 7 * DAY - 1000) } },
+    )
+    await expect(join()).rejects.toMatchObject({ code: 'collab_link_revoked' })
+    const view = await getSessionView(PUBLIC_ID, ownerId)
+    expect(view!.invites.find((i) => i.role === 'editor' && i.revoked)).toBeTruthy()
+  })
+
+  it('a session idle for 24 hours with nobody connected ends, keeping its edits', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text === 'kept')
+    await new Promise((r) => setTimeout(r, 150))
+    await age(DAY + 1000)
+    expect(await endIdleSessions()).toBe(1)
+    expect(await live()).toBeNull()
+    expect(await CollabDoc.exists({ name: DOC })).toBeNull()
+    expect((await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text).toBe('kept')
+  })
+
+  it('the sweep leaves a session with a live connection, and one active within the day', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await age(DAY + 1000)
+    expect(getCollabServer().hasConnections(DOC)).toBe(true)
+    expect(await endIdleSessions()).toBe(0)
+    expect(await live()).not.toBeNull()
+    close(editor)
+    await new Promise((r) => setTimeout(r, 150))
+    await age(DAY - 60_000)
+    expect(getCollabServer().hasConnections(DOC)).toBe(false)
+    expect(await endIdleSessions()).toBe(0)
+    expect(await live()).not.toBeNull()
+  })
+
+  it('activity moves lastActivityAt, at most once per throttle window per doc', async () => {
+    await age(DAY)
+    const before = await lastActivity()
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await waitFor(async () => await lastActivity() > before)
+    // Inside the window: an edit is not written.
+    await age(1000 * 60 * 60)
+    const aged = await lastActivity()
+    const lines = editor.doc.getMap<Y.Map<unknown>>('lines')
+    lines.get('l1')!.set('text', 'a')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(await lastActivity()).toBe(aged)
+    // Past the window: the next edit is.
+    const realNow = Date.now.bind(Date)
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 61_000)
+    try {
+      lines.get('l1')!.set('text', 'b')
+      await waitFor(async () => await lastActivity() > aged)
+    } finally {
+      clock.mockRestore()
+    }
   })
 })

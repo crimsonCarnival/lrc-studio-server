@@ -29,6 +29,10 @@ const MAX_INVITES = 50
 const MAX_MEMBERS = 50
 const MAX_NAME = 40
 const INVITE_ROLES = new Set(['editor', 'viewer'])
+/** How long an invite link works. A guest's cookie outlives it by at most its own 12 hours. */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** A session nobody has touched for this long ends, once nobody is connected either. */
+const SESSION_IDLE_MS = 24 * 60 * 60 * 1000
 const SUBJECT_RE = /^(user|guest):[A-Za-z0-9_-]{1,64}$/
 
 const notFound = () => new CollabError('not_found', 404)
@@ -57,6 +61,8 @@ export type CollabSessionView = {
   invites: CollabInviteView[]
 }
 
+const inviteExpired = (i: InviteEntry): boolean => Date.now() - new Date(i.createdAt).getTime() > INVITE_TTL_MS
+
 function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
   return {
     id: s._id.toString(),
@@ -68,7 +74,7 @@ function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
       inviteId: asOwner ? (m.inviteId ?? null) : null,
     })),
     invites: asOwner
-      ? s.invites.map((i) => ({ id: i._id.toString(), role: i.role, revoked: !!i.revokedAt, createdAt: i.createdAt.toISOString() }))
+      ? s.invites.map((i) => ({ id: i._id.toString(), role: i.role, revoked: !!i.revokedAt || inviteExpired(i), createdAt: i.createdAt.toISOString() }))
       : [],
   }
 }
@@ -133,6 +139,27 @@ export async function endSession(publicId: string, userId: string | null | undef
   if (!ended) throw notFound()
   await getCollabServer().endSession(docNameOf(publicId))
   return true
+}
+
+/**
+ * Ends sessions idle for a day with nobody connected, the normal way: edits reach Lyrics. Returns
+ * how many. Needs the mounted server, which is the only place live connections are known.
+ */
+export async function endIdleSessions(): Promise<number> {
+  const server = mountedCollabServer()
+  if (!server) return 0
+  const cutoff = new Date(Date.now() - SESSION_IDLE_MS)
+  const idle = await CollabSession.find({ endedAt: null, lastActivityAt: { $lt: cutoff } }).select('publicId').lean<Array<{ publicId: string }>>()
+  let ended = 0
+  for (const { publicId } of idle) {
+    if (server.hasConnections(docNameOf(publicId))) continue
+    // The filter repeats the cutoff: someone may have connected and left since the read.
+    const res = await CollabSession.updateOne({ publicId, endedAt: null, lastActivityAt: { $lt: cutoff } }, { $set: { endedAt: new Date() } })
+    if (res.modifiedCount === 0) continue
+    await server.endSession(docNameOf(publicId))
+    ended++
+  }
+  return ended
 }
 
 /**
@@ -307,7 +334,7 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
   if (!s) throw new CollabError('collab_link_invalid', 404)
   if (s.endedAt) throw new CollabError('collab_session_ended', 403)
   const invite = s.invites.find((i) => i.tokenHash === hashInviteToken(input.token))!
-  if (invite.revokedAt) throw new CollabError('collab_link_revoked', 403)
+  if (invite.revokedAt || inviteExpired(invite)) throw new CollabError('collab_link_revoked', 403)
   const sessionId = s._id.toString()
   const inviteId = invite._id.toString()
 

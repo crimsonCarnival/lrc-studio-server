@@ -11,7 +11,7 @@
  * In-memory state (single instance is confirmed; no multi-instance machinery):
  * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
  * the awareness/stateless rate buckets, dirty (failed stores awaiting retry),
- * discarded, discardAfterStore, settling, and handled credits.
+ * discarded, discardAfterStore, settling, the activity throttle, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -61,6 +61,8 @@ const AWARENESS_RATE = { perSec: 30, burst: 60 }
 const STATELESS_RATE = { perSec: 30, burst: 60 }
 /** Lines one connection may hold locked at once. */
 const MAX_LOCKS_PER_CONN = 20
+/** Minimum gap between lastActivityAt writes for one doc. The idle threshold is a day. */
+const ACTIVITY_THROTTLE_MS = 60_000
 
 // Application close codes (4000–4999 are free for app use).
 const CLOSE = {
@@ -107,6 +109,8 @@ export type CollabServer = {
   reauthUserEverywhere(userId: string): void
   /** Makes every connection from this IP re-authenticate, where network bans apply. */
   reauthIpEverywhere(ip: string): void
+  /** Connections on this process, which is all of them: production runs one instance. */
+  hasConnections(docName: string): boolean
   broadcastLocks(docName: string): void
 }
 
@@ -428,6 +432,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
+  /** Last lastActivityAt write per loaded doc. */
+  const activityWrittenAt = new Map<string, number>()
   /**
    * Loaded docs whose last store failed, retried on a timer. 'state': nothing persisted those
    * edits, so the doc must not unload. 'projection': the CollabDoc has them and only Lyrics is behind.
@@ -632,6 +638,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     async onDisconnect({ documentName, context, document }) {
       if (!context.connId) return
+      // The idle clock starts when people leave, not at their last edit.
+      touchActivity(documentName)
       // Hocuspocus removes a closing connection's awareness only for ids that were `added` through it.
       // A reconnect with the same clientId arrives as `updated`, so it would be left behind as a ghost
       // for the 30 s awareness timeout: remove it here unless another live connection speaks for it.
@@ -662,6 +670,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       if (frozen.has(documentName)) connection.readOnly = true
       const { principal, connId } = context
       if (!principal || !connId) return
+      touchActivity(documentName)
       connection.sendStateless(JSON.stringify({
         t: 'hello', conn: connId, subject: principal.subject, name: principal.name,
         colorIndex: principal.colorIndex, role: principal.role, sessionId: principal.sessionId,
@@ -675,6 +684,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     // incoming updates, or on every change once the doc is near the cap.
     async onChange({ documentName, document, update, connection, context }) {
       recordContributor(documentName, connection, context)
+      if (connection) touchActivity(documentName)
       const size = docSize.get(documentName) ?? { bytes: 0, pending: 0 }
       size.pending += update.byteLength
       if (size.pending >= RECHECK_BYTES || size.bytes + size.pending > maxDocBytes) {
@@ -709,6 +719,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       clearHandled(documentName)
       if (!settling.has(documentName)) discarded.delete(documentName)
       dirty.delete(documentName)
+      activityWrittenAt.delete(documentName)
       if (discardAfterStore.delete(documentName)) {
         // Failing leaves the stored doc for the next session to resume; the epoch still refuses stale tabs.
         await CollabDoc.deleteOne({ name: documentName }).catch((err: unknown) => log.error({ err, documentName }, 'collab: deleting the stored doc failed'))
@@ -729,6 +740,21 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     creditCollaborator(publicIdOf(docName), principal).catch((err) => {
       seen.delete(principal.subject)
       log.error({ err, docName, subject: principal.subject }, 'collab: recording collaborator credit failed')
+    })
+  }
+
+  // Fire and forget, like recordContributor: a failed write only makes the session look idler.
+  function touchActivity(docName: string): void {
+    const now = Date.now()
+    if (now - (activityWrittenAt.get(docName) ?? 0) < ACTIVITY_THROTTLE_MS) return
+    activityWrittenAt.set(docName, now)
+    CollabSession.updateOne(
+      { publicId: publicIdOf(docName), endedAt: null },
+      { $set: { lastActivityAt: new Date() } },
+      { timestamps: false },
+    ).catch((err: unknown) => {
+      activityWrittenAt.delete(docName)
+      log.error({ err, docName }, 'collab: recording session activity failed')
     })
   }
 
@@ -847,6 +873,10 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     reconnectSubject(docName, subject) {
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.roleChanged, 'role-changed')
+    },
+
+    hasConnections(docName) {
+      return (hocuspocus.documents.get(docName)?.getConnectionsCount() ?? 0) > 0
     },
 
     closeUserEverywhere(userId) {
