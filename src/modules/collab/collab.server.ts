@@ -407,8 +407,17 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     // Covers the first load after a restart, where auth ran before the size was known.
-    async connected({ documentName, connection }) {
+    // It also greets the connection: guests have no other way to learn their own
+    // identity or conn id, which the client compares against lock holders.
+    async connected({ documentName, connection, context }) {
       if (frozen.has(documentName)) connection.readOnly = true
+      const { principal, connId } = context
+      if (!principal || !connId) return
+      connection.sendStateless(JSON.stringify({
+        t: 'hello', conn: connId, subject: principal.subject, name: principal.name,
+        colorIndex: principal.colorIndex, role: principal.role,
+      }))
+      connection.sendStateless(locksMessage(documentName))
     },
 
     // The 5 MiB ws frame cap bounds one message, not the doc: without this, editors
@@ -444,14 +453,16 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
   })
 
-  function broadcastLocks(docName: string): void {
-    const doc = hocuspocus.documents.get(docName)
-    if (!doc) return
+  function locksMessage(docName: string): string {
     const locksOut: Record<string, { holderConn: string; subject: string; name: string; colorIndex: number }> = {}
     for (const [lineId, h] of Object.entries(locks.snapshot(docName))) {
       locksOut[lineId] = { holderConn: h.conn, subject: h.subject, name: h.name, colorIndex: h.colorIndex }
     }
-    doc.broadcastStateless(JSON.stringify({ t: 'locks', locks: locksOut }))
+    return JSON.stringify({ t: 'locks', locks: locksOut })
+  }
+
+  function broadcastLocks(docName: string): void {
+    hocuspocus.documents.get(docName)?.broadcastStateless(locksMessage(docName))
   }
 
   function connectionsOf(docName: string, match: (c: CollabContext) => boolean): Connection[] {

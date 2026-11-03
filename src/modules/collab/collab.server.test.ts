@@ -522,6 +522,27 @@ describe('collab lock protocol', () => {
   })
 })
 
+describe('collab hello', () => {
+  it('greets each connection with its own identity, then the lock snapshot', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    owner.provider.sendStateless(JSON.stringify({ t: 'lock', lineId: 'l1' }))
+    await waitFor(() => !!lastLocks(owner)?.l1)
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    await waitFor(() => owner.stateless.some((m) => m.t === 'hello') && viewer.stateless.some((m) => m.t === 'hello'))
+    const helloOf = (c: Client) => c.stateless.find((m) => m.t === 'hello')!
+    expect(helloOf(owner)).toMatchObject({ subject: `user:${ownerId}`, role: 'owner' })
+    expect(helloOf(viewer)).toMatchObject({ subject: 'guest:vw', name: 'vw', role: 'viewer' })
+    expect(helloOf(owner).conn).not.toBe(helloOf(viewer).conn)
+    expect(helloOf(viewer).colorIndex).toBeGreaterThanOrEqual(1)
+    expect(helloOf(viewer).colorIndex).toBeLessThanOrEqual(8)
+    // The joiner sees the owner's existing lock, keyed by the owner's conn, without waiting for a change.
+    await waitFor(() => !!lastLocks(viewer)?.l1)
+    expect((lastLocks(viewer)!.l1 as { holderConn: string }).holderConn).toBe(helloOf(owner).conn)
+    // Each connection is greeted once, and only about itself.
+    expect(owner.stateless.filter((m) => m.t === 'hello')).toHaveLength(1)
+  })
+})
+
 describe('collab moderation hooks', () => {
   it('endSession notifies, closes, stores, and the session refuses reconnects', async () => {
     const editor = await connectSynced(guest('ed', editorInvite))
