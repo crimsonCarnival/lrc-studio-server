@@ -1354,3 +1354,76 @@ describe('collab moderation reaches live sockets', () => {
     }
   })
 })
+
+describe('collab awareness and stateless limits', () => {
+  it('an oversized awareness state is never relayed, and a normal one after it is', async () => {
+    const speaker = await connectSynced(guest('sp', editorInvite))
+    const peer = await connectSynced(await ownerCookie())
+    const id = speaker.doc.clientID
+    speaker.provider.setAwarenessField('small', 'ok')
+    await waitFor(() => peer.provider.awareness!.getStates().get(id)?.small === 'ok')
+    speaker.provider.setAwarenessField('blob', 'x'.repeat(5000))
+    await new Promise((r) => setTimeout(r, 200))
+    expect(peer.provider.awareness!.getStates().get(id)?.blob).toBeUndefined()
+    speaker.provider.setAwarenessField('blob', null)
+    speaker.provider.setAwarenessField('small', 'again')
+    await waitFor(() => peer.provider.awareness!.getStates().get(id)?.small === 'again')
+  })
+
+  it('a flood of awareness messages is cut to the bucket', async () => {
+    const speaker = await connectSynced(guest('sp', editorInvite))
+    const peer = await connectSynced(await ownerCookie())
+    await new Promise((r) => setTimeout(r, 100))
+    let relayed = 0
+    peer.provider.awareness!.on('update', () => { relayed++ })
+    const started = Date.now()
+    for (let i = 0; i < 400; i++) {
+      speaker.provider.setAwarenessField('n', i)
+      await new Promise((r) => setImmediate(r))
+    }
+    await new Promise((r) => setTimeout(r, 300))
+    expect(relayed).toBeGreaterThan(0)
+    // The burst plus the refill over the time taken, with room for scheduling.
+    expect(relayed).toBeLessThan(60 + ((Date.now() - started) / 1000) * 30 + 20)
+  })
+
+  it('a flood of stateless messages is cut to the bucket', async () => {
+    const client = await connectSynced(guest('sp', editorInvite))
+    await new Promise((r) => setTimeout(r, 50))
+    for (let i = 0; i < 400; i++) client.provider.sendStateless(JSON.stringify({ t: 'lock', lineId: 'missing' }))
+    await new Promise((r) => setTimeout(r, 500))
+    const denied = client.stateless.filter((m) => m.t === 'lock-denied').length
+    expect(denied).toBeGreaterThan(0)
+    expect(denied).toBeLessThan(150)
+  })
+
+  it('one connection holds at most 20 locks, by lock or by heartbeat', async () => {
+    const client = await connectSynced(guest('sp', editorInvite))
+    const lines = client.doc.getMap<Y.Map<unknown>>('lines')
+    const ids = Array.from({ length: 25 }, (_, i) => `x${i}`)
+    client.doc.transact(() => {
+      for (const id of ids) {
+        const m = new Y.Map<unknown>()
+        m.set('id', id)
+        m.set('order', `a${id}`)
+        m.set('text', id)
+        lines.set(id, m)
+      }
+    })
+    await waitFor(() => !client.provider.hasUnsyncedChanges)
+    for (const lineId of ids) client.provider.sendStateless(JSON.stringify({ t: 'lock', lineId }))
+    await waitFor(() => client.stateless.filter((m) => m.t === 'lock-denied').length === 5)
+    await waitFor(() => Object.keys(lastLocks(client) ?? {}).length === 20)
+
+    client.provider.sendStateless(JSON.stringify({ t: 'heartbeat', lineIds: ids }))
+    await waitFor(() => client.stateless.filter((m) => m.t === 'lock-denied').length === 10)
+    expect(Object.keys(lastLocks(client)!)).toHaveLength(20)
+
+    // Re-locking one already held is not a new lock; releasing one makes room.
+    client.provider.sendStateless(JSON.stringify({ t: 'lock', lineId: 'x0' }))
+    client.provider.sendStateless(JSON.stringify({ t: 'unlock', lineId: 'x1' }))
+    client.provider.sendStateless(JSON.stringify({ t: 'lock', lineId: 'x24' }))
+    await waitFor(() => !!lastLocks(client)?.x24)
+    expect(client.stateless.filter((m) => m.t === 'lock-denied')).toHaveLength(10)
+  })
+})

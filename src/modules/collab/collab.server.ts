@@ -10,7 +10,8 @@
  *
  * In-memory state (single instance is confirmed; no multi-instance machinery):
  * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
- * dirty (failed stores awaiting retry), discarded, discardAfterStore, settling, and handled credits.
+ * the awareness/stateless rate buckets, dirty (failed stores awaiting retry),
+ * discarded, discardAfterStore, settling, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -53,6 +54,13 @@ const DESTROY_TIMEOUT_MS = 10_000
 const UNLOAD_POLL_MS = 10
 /** How often a doc whose last store failed is stored again. */
 const DEFAULT_STORE_RETRY_MS = 10_000
+/** A client awareness state larger than this (JSON length) is never relayed. */
+const MAX_AWARENESS_STATE_CHARS = 4 * 1024
+/** Per-connection token buckets: awareness messages and lock-protocol messages. */
+const AWARENESS_RATE = { perSec: 30, burst: 60 }
+const STATELESS_RATE = { perSec: 30, burst: 60 }
+/** Lines one connection may hold locked at once. */
+const MAX_LOCKS_PER_CONN = 20
 
 // Application close codes (4000–4999 are free for app use).
 const CLOSE = {
@@ -65,7 +73,24 @@ const CLOSE = {
   tooLarge: 4413,
 } as const
 
-type CollabContext = { ws: WebSocket; ip?: string; principal?: CollabPrincipal; connId?: string }
+type TokenBucket = { tokens: number; at: number }
+type CollabContext = {
+  ws: WebSocket
+  ip?: string
+  principal?: CollabPrincipal
+  connId?: string
+  awarenessTokens?: TokenBucket
+  statelessTokens?: TokenBucket
+}
+
+function takeToken(bucket: TokenBucket, rate: { perSec: number; burst: number }): boolean {
+  const now = Date.now()
+  bucket.tokens = Math.min(rate.burst, bucket.tokens + ((now - bucket.at) / 1000) * rate.perSec)
+  bucket.at = now
+  if (bucket.tokens < 1) return false
+  bucket.tokens -= 1
+  return true
+}
 
 export type CollabServer = {
   closeSubject(docName: string, subject: string): void
@@ -500,7 +525,13 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         // from that doc (the same Yjs items), and the stored state stays.
         if (!settling.has(documentName)) discardAfterStore.delete(documentName)
         if (principal.role === 'viewer' || frozen.has(documentName)) connectionConfig.readOnly = true
-        return { principal, connId: randomUUID() }
+        const now = Date.now()
+        return {
+          principal,
+          connId: randomUUID(),
+          awarenessTokens: { tokens: AWARENESS_RATE.burst, at: now },
+          statelessTokens: { tokens: STATELESS_RATE.burst, at: now },
+        }
       } catch (err) {
         const code = err instanceof CollabAuthError ? err.code : 'forbidden'
         if (!(err instanceof CollabAuthError)) log.error({ err, documentName }, 'collab: auth failed unexpectedly')
@@ -514,16 +545,22 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     async onStateless({ connection, documentName, document, payload }: onStatelessPayload) {
       const ctx = connection.context as CollabContext
-      if (!ctx.principal || !ctx.connId) return
+      if (!ctx.principal || !ctx.connId || !ctx.statelessTokens) return
+      // Before parsing: over the limit a message costs nothing. A client this far past any
+      // real editing pace gets no answer, and a lock it asked for shows up as never granted.
+      if (!takeToken(ctx.statelessTokens, STATELESS_RATE)) return
       const msg = parseMessage(payload)
       if (!msg) return
       const lines = document.getMap('lines')
       const holder = { conn: ctx.connId, subject: ctx.principal.subject, name: ctx.principal.name, colorIndex: ctx.principal.colorIndex }
       const deny = (lineId: string) => connection.sendStateless(JSON.stringify({ t: 'lock-denied', lineId }))
       let changed = false
+      const countHeld = (held: ReturnType<typeof locks.snapshot>) => Object.values(held).filter((h) => h.conn === ctx.connId).length
 
       if (msg.t === 'lock') {
         if (connection.readOnly || !lines.has(msg.lineId)) return deny(msg.lineId)
+        const held = locks.snapshot(documentName)
+        if (held[msg.lineId]?.conn !== ctx.connId && countHeld(held) >= MAX_LOCKS_PER_CONN) return deny(msg.lineId)
         const res = locks.acquire(documentName, msg.lineId, holder)
         if (!res.ok) return deny(msg.lineId)
         changed = true
@@ -538,10 +575,14 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         const held = locks.snapshot(documentName)
         const mine = msg.lineIds.filter((id) => held[id]?.conn === ctx.connId)
         locks.refresh(documentName, mine, ctx.connId)
+        let count = countHeld(held)
         for (const lineId of msg.lineIds) {
           if (held[lineId]?.conn === ctx.connId) continue
-          if (connection.readOnly || !lines.has(lineId) || !locks.acquire(documentName, lineId, holder).ok) deny(lineId)
-          else changed = true
+          if (connection.readOnly || count >= MAX_LOCKS_PER_CONN || !lines.has(lineId) || !locks.acquire(documentName, lineId, holder).ok) deny(lineId)
+          else {
+            count++
+            changed = true
+          }
         }
       }
       if (changed) broadcastLocks(documentName)
@@ -555,11 +596,12 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     // - a subject holds at most MAX_AWARENESS_IDS_PER_SUBJECT bindings per document; past that the
     //   oldest binding with no live connection and no remaining state is evicted (see bindForSubject),
     //   and with none to evict the new id is refused.
+    // - a state above MAX_AWARENESS_STATE_CHARS, or any message past the connection's rate, is dropped.
     // Removing a closed connection's state is onDisconnect's job (see there).
     async beforeHandleAwareness({ documentName, context, states, removedClients, awareness }) {
       const connId = context?.connId
       const principal = context?.principal
-      if (!connId || !principal) {
+      if (!connId || !principal || !context.awarenessTokens || !takeToken(context.awarenessTokens, AWARENESS_RATE)) {
         states.clear()
         removedClients.clear()
         return
@@ -574,7 +616,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       }
       for (const clientId of [...states.keys()]) {
         const state = states.get(clientId)
-        if (!allowed(clientId) || !state || typeof state !== 'object') {
+        if (!allowed(clientId) || !state || typeof state !== 'object' || JSON.stringify(state).length > MAX_AWARENESS_STATE_CHARS) {
           states.delete(clientId)
           continue
         }
