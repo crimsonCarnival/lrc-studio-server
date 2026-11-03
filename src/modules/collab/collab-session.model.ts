@@ -39,5 +39,7 @@ const collabSessionSchema = new mongoose.Schema(
 
 // One live session per project; ended sessions keep their publicId for history.
 collabSessionSchema.index({ publicId: 1 }, { unique: true, partialFilterExpression: { endedAt: null } })
+// POST /collab/join looks a session up by the sha256 of its invite token.
+collabSessionSchema.index({ 'invites.tokenHash': 1 })
 
 export default mongoose.model('CollabSession', collabSessionSchema)
