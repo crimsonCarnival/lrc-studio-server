@@ -18,6 +18,20 @@ import CollabDoc from './collab-doc.model.js'
 import { signGuestToken } from './collab.auth.js'
 import { getCollabServer } from './collab.server.js'
 
+// Lets a test hold the server's disconnect-time awareness removal, to stand in for a peer whose
+// connection is gone but whose state the server has not cleaned up yet.
+const awarenessGate = vi.hoisted(() => ({ hold: false, held: [] as Array<() => void> }))
+vi.mock('y-protocols/awareness', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('y-protocols/awareness')>()
+  return {
+    ...actual,
+    removeAwarenessStates: (...args: Parameters<typeof actual.removeAwarenessStates>) => {
+      if (awarenessGate.hold) awarenessGate.held.push(() => actual.removeAwarenessStates(...args))
+      else actual.removeAwarenessStates(...args)
+    },
+  }
+})
+
 const ORIGIN = 'http://localhost:5173'
 const PUBLIC_ID = 'srvproj001'
 const DOC = `project:${PUBLIC_ID}`
@@ -47,7 +61,7 @@ async function waitFor(cond: () => boolean | Promise<boolean>, ms = 5000): Promi
   }
 }
 
-function connect(cookie: string): Client {
+function connect(cookie: string, clientId?: number): Client {
   const headers = { Origin: ORIGIN, Cookie: cookie }
   class HeaderedWebSocket extends WebSocket {
     constructor(address: string) {
@@ -56,6 +70,7 @@ function connect(cookie: string): Client {
   }
   const socket = new HocuspocusProviderWebsocket({ url, WebSocketPolyfill: HeaderedWebSocket, delay: 50, minDelay: 50 })
   const doc = new Y.Doc()
+  if (clientId !== undefined) doc.clientID = clientId
   const client: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, stateless: [], failures: [] }
   client.provider = new HocuspocusProvider({
     name: DOC,
@@ -69,8 +84,8 @@ function connect(cookie: string): Client {
   return client
 }
 
-async function connectSynced(cookie: string): Promise<Client> {
-  const c = connect(cookie)
+async function connectSynced(cookie: string, clientId?: number): Promise<Client> {
+  const c = connect(cookie, clientId)
   await waitFor(() => c.provider.isSynced)
   return c
 }
@@ -146,6 +161,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  awarenessGate.hold = false
+  awarenessGate.held.length = 0
   for (const c of open.splice(0)) close(c)
   // Let the server observe the disconnects and unload before the next test wipes the DB.
   await new Promise((r) => setTimeout(r, 150))
@@ -711,5 +728,59 @@ describe('collab awareness identity', () => {
     ninth.provider.awareness!.setLocalState({ activeLineId: 'ninth-again' })
     await waitFor(() => states(witness).has(ninth.doc.clientID))
     for (const c of live.slice(1)) expect(states(witness).has(c.doc.clientID)).toBe(true)
+  })
+
+  // A binding of subject 'vw' whose connection is gone but whose state the server still holds
+  // (the disconnect-time removal is held back). Reconnecting first makes the id arrive as an
+  // update, so Hocuspocus does not remove it on close either; only our onDisconnect would.
+  async function ghostBinding(witness: Client, i: number): Promise<number> {
+    const c = await connectSynced(guest('vw', viewerInvite))
+    const id = c.doc.clientID
+    c.provider.awareness!.setLocalState({ activeLineId: `g${i}` })
+    await waitFor(() => states(witness).has(id))
+    c.socket.disconnect()
+    await waitFor(() => !states(witness).has(id))
+    c.socket.connect().catch(() => {})
+    await waitFor(() => c.provider.isSynced)
+    c.provider.awareness!.setLocalState({ activeLineId: `g${i}b` })
+    await waitFor(() => (states(witness).get(id) as { activeLineId?: string } | undefined)?.activeLineId === `g${i}b`)
+    const before = awarenessGate.held.length
+    awarenessGate.hold = true
+    c.socket.disconnect()
+    await waitFor(() => awarenessGate.held.length === before + 1)
+    awarenessGate.hold = false
+    return id
+  }
+
+  it('at the cap, does not evict a binding whose state is still present', async () => {
+    const witness = await connectSynced(guest('ed', editorInvite))
+    const ghosts: number[] = []
+    for (let i = 0; i < 8; i++) ghosts.push(await ghostBinding(witness, i))
+    const ninth = await connectSynced(guest('vw', viewerInvite))
+    ninth.provider.awareness!.setLocalState({ activeLineId: 'ninth' })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(states(witness).has(ninth.doc.clientID)).toBe(false)
+    for (const id of ghosts) expect(states(witness).has(id)).toBe(true)
+  })
+
+  it('at the cap, evicts a non-live binding once its state is gone, and only that one', async () => {
+    const witness = await connectSynced(guest('ed', editorInvite))
+    const ghosts: number[] = []
+    for (let i = 0; i < 8; i++) ghosts.push(await ghostBinding(witness, i))
+    // The oldest ghost's disconnect cleanup runs; the others are still pending.
+    awarenessGate.held[0]()
+    await waitFor(() => !states(witness).has(ghosts[0]))
+    const ninth = await connectSynced(guest('vw', viewerInvite))
+    ninth.provider.awareness!.setLocalState({ activeLineId: 'ninth' })
+    await waitFor(() => states(witness).has(ninth.doc.clientID))
+    // The evicted id is free for another subject; a ghost that still has state is not.
+    // (sendAs jumps the clock past the server's, which a fresh client with a reused id would not do.)
+    const claimer = await connectSynced(await ownerCookie(), ghosts[0])
+    sendAs(claimer, ghosts[0], { activeLineId: 'claimed' })
+    await waitFor(() => (states(witness).get(ghosts[0]) as { user?: { subject?: string } } | undefined)?.user?.subject === `user:${ownerId}`)
+    const squatter = await connectSynced(await ownerCookie(), ghosts[1])
+    sendAs(squatter, ghosts[1], { activeLineId: 'squat' })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(states(witness).get(ghosts[1])).toMatchObject({ activeLineId: 'g1b', user: { subject: 'guest:vw' } })
   })
 })

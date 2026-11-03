@@ -15,7 +15,7 @@ import type { Connection, Document, WebSocketLike, onStatelessPayload } from '@h
 import { Database } from '@hocuspocus/extension-database'
 import type { WebSocket, RawData } from 'ws'
 import * as Y from 'yjs'
-import { removeAwarenessStates } from 'y-protocols/awareness'
+import { removeAwarenessStates, type Awareness } from 'y-protocols/awareness'
 import type { FastifyBaseLogger } from 'fastify'
 import Project from '../projects/project.model.js'
 import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js'
@@ -329,13 +329,19 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const awarenessIds = new Map<string, AwarenessIds>()
   const MAX_AWARENESS_IDS_PER_SUBJECT = 8
 
-  // Binds clientId to subject, evicting that subject's oldest binding no live connection uses.
-  // False when all of the subject's bindings are live (Map order is insertion order, so oldest first).
-  function bindForSubject(doc: AwarenessIds, clientId: number, subject: string): boolean {
+  // Binds clientId to subject. At the cap it evicts that subject's oldest binding that is both
+  // unused by any live connection AND has no state left in the document's awareness; false when
+  // none qualifies (Map order is insertion order, so oldest first).
+  // Both conditions are needed because eviction frees the id for any other subject. A binding with
+  // no live connection may still have state (its tab is mid-reconnect and the disconnect cleanup has
+  // not run yet); freeing it would let another participant claim that id and speak over the state
+  // peers still show for the original owner. Only once the state is gone is the id truly abandoned.
+  function bindForSubject(doc: AwarenessIds, clientId: number, subject: string, awareness: Awareness): boolean {
     const mine = [...doc.subjectOf].filter(([, owner]) => owner === subject).map(([id]) => id)
     if (mine.length >= MAX_AWARENESS_IDS_PER_SUBJECT) {
       const live = new Set(doc.idOf.values())
-      const victim = mine.find((id) => !live.has(id))
+      const present = awareness.getStates()
+      const victim = mine.find((id) => !live.has(id) && !present.has(id))
       if (victim === undefined) return false
       doc.subjectOf.delete(victim)
     }
@@ -419,9 +425,10 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     // - a connection may speak for exactly one clientId per document, the first it sends;
     // - every state accepted carries the identity attested at authentication.
     // - a subject holds at most MAX_AWARENESS_IDS_PER_SUBJECT bindings per document; past that the
-    //   oldest binding no live connection uses is evicted, and with none to evict the new id is refused.
+    //   oldest binding with no live connection and no remaining state is evicted (see bindForSubject),
+    //   and with none to evict the new id is refused.
     // Removing a closed connection's state is onDisconnect's job (see there).
-    async beforeHandleAwareness({ documentName, context, states, removedClients }) {
+    async beforeHandleAwareness({ documentName, context, states, removedClients, awareness }) {
       const connId = context?.connId
       const principal = context?.principal
       if (!connId || !principal) {
@@ -443,7 +450,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
           states.delete(clientId)
           continue
         }
-        if (!doc.subjectOf.has(clientId) && !bindForSubject(doc, clientId, principal.subject)) {
+        if (!doc.subjectOf.has(clientId) && !bindForSubject(doc, clientId, principal.subject, awareness)) {
           states.delete(clientId)
           continue
         }
