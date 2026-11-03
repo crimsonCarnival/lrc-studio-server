@@ -22,7 +22,9 @@ import Upload from '../uploads/upload.model.js'
 import type { LineEntry } from '../../types/index.js'
 import CollabDoc from './collab-doc.model.js'
 import { createLockTable } from './collab.locks.js'
-import { docToSections, sanitizeSectionsForLyrics, seedDocFromProject, validEditorMode } from './collab.projection.js'
+import { docToMeta, docToSections, sanitizeSectionsForLyrics, seedDocFromProject, validEditorMode } from './collab.projection.js'
+import { cleanTitle, hasProjectIdentity, PROJECT_SONG_NAME_MAX, slugFor } from '../projects/project-identity.js'
+import { stripHtml } from '../../utils/sanitize.js'
 import { CollabAuthError, resolvePrincipal, type CollabPrincipal } from './collab.auth.js'
 import type { CollabMeta } from './collab.types.js'
 
@@ -108,7 +110,7 @@ async function fetchState(docName: string): Promise<Uint8Array> {
     // lyricsVersion is only ever the version Lyrics actually reached from this doc
     // (storeState sets it after a successful projection), so equal means current.
     if (typeof stored.lyricsVersion === 'number' && stored.lyricsVersion >= lyricsVersion) {
-      return new Uint8Array(stored.state)
+      return syncMetaFromProject(docName, new Uint8Array(stored.state))
     }
     // Lyrics moved past the doc. Either someone saved outside the session (re-seed),
     // or the process died between the Lyrics write and the lyricsVersion write: then
@@ -117,7 +119,7 @@ async function fetchState(docName: string): Promise<Uint8Array> {
     const state = new Uint8Array(stored.state)
     if (lyrics && docMatchesLyrics(state, lyricsSections, lyrics.editorMode ?? 'lrc')) {
       await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion } })
-      return state
+      return syncMetaFromProject(docName, state)
     }
   }
 
@@ -126,12 +128,10 @@ async function fetchState(docName: string): Promise<Uint8Array> {
   const upload = project.uploadId
     ? await Upload.findById(project.uploadId).select('source uploadUrl').lean()
     : null
-  const md = (project.metadata ?? {}) as { songName?: string; songArtist?: string; songAlbum?: string }
   const meta: CollabMeta = {
     editorMode: lyrics?.editorMode ?? 'lrc',
-    title: md.songName || project.title || null,
-    artist: md.songArtist || null,
-    album: md.songAlbum || null,
+    // The model's ProjectMetadata type doesn't declare the song fields the schema stores.
+    ...songMeta(project as unknown as SongSource),
     media: upload
       ? { source: upload.source, url: upload.uploadUrl ?? null, uploadId: String(upload._id) }
       : { source: null, url: null, uploadId: null },
@@ -171,6 +171,78 @@ function docMatchesLyrics(state: Uint8Array, lyricsSections: unknown[], lyricsMo
   }
 }
 
+type SongSource = { title?: string | null; metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null }
+type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album'>
+
+/** The doc's song fields as the seed derives them from a Project. */
+function songMeta(project: SongSource): SongMeta {
+  const md = project.metadata ?? {}
+  return { title: md.songName || project.title || null, artist: md.songArtist || null, album: md.songAlbum || null }
+}
+
+/**
+ * A stored doc's song fields brought in line with the Project. While a session is
+ * live the Project only changes through storeState's write-back (solo saves are
+ * refused with collab_active), so a difference here means an edit made between
+ * sessions, which must win over the stale doc instead of being written over by it.
+ */
+async function syncMetaFromProject(docName: string, state: Uint8Array): Promise<Uint8Array> {
+  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata').lean<SongSource>()
+  if (!project) return state
+  const want = songMeta(project)
+  const doc = new Y.Doc()
+  try {
+    Y.applyUpdate(doc, state)
+    const meta = doc.getMap<unknown>('meta')
+    const stale = (Object.keys(want) as Array<keyof SongMeta>).filter((k) => (meta.get(k) ?? null) !== want[k])
+    if (stale.length === 0) return state
+    doc.transact(() => {
+      for (const k of stale) meta.set(k, want[k])
+    })
+    const update = Y.encodeStateAsUpdate(doc)
+    await CollabDoc.updateOne({ name: docName }, { $set: { state: Buffer.from(update) } })
+    return update
+  } finally {
+    doc.destroy()
+  }
+}
+
+const ALBUM_MAX = 500
+const cleanText = (v: unknown, max: number): string => (typeof v === 'string' ? stripHtml(v).trim().slice(0, max) : '')
+
+/**
+ * The Project `$set` that writes the doc's title and album back to the fields the
+ * seed read them from (songName when set, else title; songAlbum), sanitised and
+ * capped like the Project schema, with the slug kept in step. Artist is not
+ * written: songArtist is derived from structured credits and never free text.
+ * Media is not editable in a session.
+ */
+function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unknown> {
+  const md = project.metadata ?? {}
+  const $set: Record<string, unknown> = {}
+  let title = project.title ?? ''
+  let songName = md.songName ?? ''
+  if (md.songName) {
+    const next = cleanText(meta.title, PROJECT_SONG_NAME_MAX)
+    if (next && next !== md.songName) $set['metadata.songName'] = songName = next
+  } else {
+    const next = cleanTitle(meta.title)
+    if (next && next !== project.title) $set.title = title = next
+  }
+  const album = cleanText(meta.album, ALBUM_MAX)
+  if (album !== (md.songAlbum ?? '')) $set['metadata.songAlbum'] = album
+  if ('title' in $set || 'metadata.songName' in $set) {
+    const nextMd = { songName, songArtist: md.songArtist ?? '' }
+    if (!hasProjectIdentity(title, nextMd)) {
+      delete $set.title
+      delete $set['metadata.songName']
+    } else {
+      $set.slug = slugFor(title, nextMd)
+    }
+  }
+  return $set
+}
+
 async function storeState(docName: string, document: Document, state: Buffer, log: FastifyBaseLogger): Promise<void> {
   const publicId = publicIdOf(docName)
   try {
@@ -200,7 +272,13 @@ async function storeState(docName: string, document: Document, state: Buffer, lo
     // A crash right here leaves lyricsVersion behind Lyrics; fetchState recognises
     // that case by content and keeps the doc (docMatchesLyrics).
     await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } })
-    await Project.updateOne({ publicId }, { $set: { contentUpdatedAt: new Date() }, $inc: { version: 1 } })
+    const project = await Project.findOne({ publicId }).select('title metadata').lean<SongSource>()
+    const metaSet = project ? metaWriteBack(project, docToMeta(document)) : {}
+    await Project.updateOne(
+      { publicId },
+      { $set: { ...metaSet, contentUpdatedAt: new Date() }, $inc: { version: 1 } },
+      { runValidators: true },
+    )
   } catch (err) {
     // The CollabDoc already holds the truth; a projection failure must not keep the doc from persisting.
     log.error({ err, docName }, 'collab: projecting doc into Lyrics failed')

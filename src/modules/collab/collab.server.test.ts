@@ -427,6 +427,52 @@ describe('collab version bookkeeping', () => {
   })
 })
 
+describe('collab metadata write-back', () => {
+  it('meta title and album are written back to the project fields they came from, sanitised', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const meta = editor.doc.getMap('meta')
+    editor.doc.transact(() => {
+      meta.set('title', '<b>New</b> Song')
+      meta.set('album', 'A'.repeat(600))
+      meta.set('artist', 'Someone Else')
+    })
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())?.metadata?.songName === 'New Song')
+    const p = await Project.findOne({ publicId: PUBLIC_ID }).lean()
+    expect(p!.metadata!.songAlbum).toBe('A'.repeat(500))
+    // songArtist is derived from structured credits and never written from free text.
+    expect(p!.metadata!.songArtist).toBe('Artist')
+    expect(p!.title).toBe('T')
+    expect(p!.slug).toContain('new-song')
+  })
+
+  it('writes the title to Project.title when the seed took it from there', async () => {
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { 'metadata.songName': '' } })
+    const editor = await connectSynced(guest('ed', editorInvite))
+    expect(editor.doc.getMap('meta').get('title')).toBe('T')
+    editor.doc.getMap('meta').set('title', 'Retitled')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())?.title === 'Retitled')
+    expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songName).toBe('')
+  })
+
+  it('a stored doc picks up project metadata changed between sessions', async () => {
+    const first = await connectSynced(guest('ed', editorInvite))
+    first.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
+    await waitFor(() => !first.provider.hasUnsyncedChanges)
+    close(first)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())?.sections?.[0]?.lines?.[0]?.text === 'kept')
+    await new Promise((r) => setTimeout(r, 150))
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { 'metadata.songName': 'Renamed Solo', 'metadata.songAlbum': '' } })
+    const fresh = await connectSynced(guest('ed', editorInvite))
+    expect(fresh.doc.getMap('meta').get('title')).toBe('Renamed Solo')
+    expect(fresh.doc.getMap('meta').get('album')).toBe(null)
+    expect(lineText(fresh.doc, 'l1')).toBe('kept')
+  })
+})
+
 describe('collab lock protocol', () => {
   it('two simultaneous lock requests → exactly one holder in the snapshot', async () => {
     const owner = await connectSynced(await ownerCookie())
