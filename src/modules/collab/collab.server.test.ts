@@ -673,4 +673,43 @@ describe('collab awareness identity', () => {
     await waitFor(() => (states(witness).get(viewer.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'marker')
     expect(states(witness).has(424242)).toBe(false)
   })
+
+  it('a reconnect with the same clientId leaves no ghost behind when it closes', async () => {
+    const witness = await connectSynced(guest('ed', editorInvite))
+    const peer = await connectSynced(guest('vw', viewerInvite))
+    const id = peer.doc.clientID
+    peer.provider.awareness!.setLocalState({ activeLineId: 'a' })
+    await waitFor(() => states(witness).has(id))
+    peer.socket.disconnect()
+    await waitFor(() => !states(witness).has(id))
+    // Same id on a new connection arrives as an update, not an add.
+    peer.socket.connect().catch(() => {})
+    await waitFor(() => peer.provider.isSynced)
+    peer.provider.awareness!.setLocalState({ activeLineId: 'b' })
+    await waitFor(() => (states(witness).get(id) as { activeLineId?: string } | undefined)?.activeLineId === 'b')
+    peer.socket.disconnect()
+    await waitFor(() => !states(witness).has(id), 3000)
+  })
+
+  it("caps a subject's awareness bindings at 8 and never evicts a live one", async () => {
+    const witness = await connectSynced(guest('ed', editorInvite))
+    const live: Client[] = []
+    for (let i = 0; i < 8; i++) {
+      const c = await connectSynced(guest('vw', viewerInvite))
+      c.provider.awareness!.setLocalState({ activeLineId: `l${i}` })
+      await waitFor(() => states(witness).has(c.doc.clientID))
+      live.push(c)
+    }
+    // A ninth live connection of the same subject has nothing to evict: refused.
+    const ninth = await connectSynced(guest('vw', viewerInvite))
+    ninth.provider.awareness!.setLocalState({ activeLineId: 'ninth' })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(states(witness).has(ninth.doc.clientID)).toBe(false)
+    // One live connection leaves: its binding is the one that can go, so the ninth is now accepted.
+    close(live[0])
+    await waitFor(() => !states(witness).has(live[0].doc.clientID))
+    ninth.provider.awareness!.setLocalState({ activeLineId: 'ninth-again' })
+    await waitFor(() => states(witness).has(ninth.doc.clientID))
+    for (const c of live.slice(1)) expect(states(witness).has(c.doc.clientID)).toBe(true)
+  })
 })

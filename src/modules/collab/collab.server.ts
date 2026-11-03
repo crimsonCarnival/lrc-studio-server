@@ -15,6 +15,7 @@ import type { Connection, Document, WebSocketLike, onStatelessPayload } from '@h
 import { Database } from '@hocuspocus/extension-database'
 import type { WebSocket, RawData } from 'ws'
 import * as Y from 'yjs'
+import { removeAwarenessStates } from 'y-protocols/awareness'
 import type { FastifyBaseLogger } from 'fastify'
 import Project from '../projects/project.model.js'
 import Lyrics, { migrateLinesToSections } from '../lyrics/lyrics.model.js'
@@ -324,7 +325,23 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
   // Per document: awareness clientId -> owning subject, and connection -> the one clientId it may use.
-  const awarenessIds = new Map<string, { subjectOf: Map<number, string>; idOf: Map<string, number> }>()
+  type AwarenessIds = { subjectOf: Map<number, string>; idOf: Map<string, number> }
+  const awarenessIds = new Map<string, AwarenessIds>()
+  const MAX_AWARENESS_IDS_PER_SUBJECT = 8
+
+  // Binds clientId to subject, evicting that subject's oldest binding no live connection uses.
+  // False when all of the subject's bindings are live (Map order is insertion order, so oldest first).
+  function bindForSubject(doc: AwarenessIds, clientId: number, subject: string): boolean {
+    const mine = [...doc.subjectOf].filter(([, owner]) => owner === subject).map(([id]) => id)
+    if (mine.length >= MAX_AWARENESS_IDS_PER_SUBJECT) {
+      const live = new Set(doc.idOf.values())
+      const victim = mine.find((id) => !live.has(id))
+      if (victim === undefined) return false
+      doc.subjectOf.delete(victim)
+    }
+    doc.subjectOf.set(clientId, subject)
+    return true
+  }
 
   const hocuspocus = new Hocuspocus<CollabContext>({
     name: 'collab',
@@ -401,7 +418,9 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     //   document (a reconnect or another tab of that subject may reuse it; nobody else may);
     // - a connection may speak for exactly one clientId per document, the first it sends;
     // - every state accepted carries the identity attested at authentication.
-    // The states Hocuspocus then applies are tracked per connection and removed when it closes.
+    // - a subject holds at most MAX_AWARENESS_IDS_PER_SUBJECT bindings per document; past that the
+    //   oldest binding no live connection uses is evicted, and with none to evict the new id is refused.
+    // Removing a closed connection's state is onDisconnect's job (see there).
     async beforeHandleAwareness({ documentName, context, states, removedClients }) {
       const connId = context?.connId
       const principal = context?.principal
@@ -424,18 +443,30 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
           states.delete(clientId)
           continue
         }
-        doc.subjectOf.set(clientId, principal.subject)
+        if (!doc.subjectOf.has(clientId) && !bindForSubject(doc, clientId, principal.subject)) {
+          states.delete(clientId)
+          continue
+        }
         doc.idOf.set(connId, clientId)
         state.user = { name: principal.name, colorIndex: principal.colorIndex, role: principal.role, subject: principal.subject }
       }
       for (const clientId of [...removedClients]) if (!allowed(clientId) || doc.idOf.get(connId) !== clientId) removedClients.delete(clientId)
     },
 
-    async onDisconnect({ documentName, context }) {
+    async onDisconnect({ documentName, context, document }) {
       if (!context.connId) return
-      // The connection's awareness state is removed by Hocuspocus itself (Document.removeConnection);
-      // only the connection's claim goes. The clientId stays bound to its subject until the doc unloads.
-      awarenessIds.get(documentName)?.idOf.delete(context.connId)
+      // Hocuspocus removes a closing connection's awareness only for ids that were `added` through it.
+      // A reconnect with the same clientId arrives as `updated`, so it would be left behind as a ghost
+      // for the 30 s awareness timeout: remove it here unless another live connection speaks for it.
+      // (Residual: a half-open old connection closing after the reconnect makes Hocuspocus remove the
+      // live id briefly; the live client re-asserts its state when it sees its own removal.)
+      const ids = awarenessIds.get(documentName)
+      const id = ids?.idOf.get(context.connId)
+      ids?.idOf.delete(context.connId)
+      if (ids && id !== undefined && document.awareness.getStates().has(id) && ![...ids.idOf.values()].includes(id)) {
+        removeAwarenessStates(document.awareness, [id], null)
+      }
+      // The clientId stays bound to its subject (capped) until the document unloads.
       if (locks.releaseAllFor(documentName, context.connId).length > 0) broadcastLocks(documentName)
     },
 
