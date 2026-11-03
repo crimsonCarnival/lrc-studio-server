@@ -17,6 +17,9 @@ const memberSchema = new mongoose.Schema(
     role: { type: String, enum: ['owner', 'editor', 'viewer'], required: true },
     colorIndex: { type: Number, required: true, min: 1, max: 8 },
     name: { type: String, required: true, maxlength: 40 },
+    // Guests only: the invite they joined with, so a kick can revoke it (a kicked
+    // guest could otherwise mint a fresh guest id from the same link).
+    inviteId: { type: String, default: undefined, maxlength: 24 },
   },
   { _id: false },
 )

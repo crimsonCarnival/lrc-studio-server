@@ -82,7 +82,7 @@ async function signedInUser(token: string | undefined): Promise<SignedInUser | n
  * plugins/auth.ts) — but to guests too, since a guest connection is otherwise a
  * free pass around a network ban. Superadmins stay exempt, as they are there.
  */
-async function assertNoNetworkBan(user: SignedInUser | null, ip: string | undefined, deviceId: string | undefined): Promise<void> {
+export async function assertNoNetworkBan(user: SignedInUser | null, ip: string | undefined, deviceId: string | undefined): Promise<void> {
   if (user?.role === 'superadmin') return
   const [deviceBanned, ipBanned] = await Promise.all([
     deviceId ? checkDeviceBan(deviceId) : null,
@@ -92,13 +92,13 @@ async function assertNoNetworkBan(user: SignedInUser | null, ip: string | undefi
 }
 
 /** Lowest colour 1–8 not taken by an existing member; wraps once all eight are used. */
-function nextColour(members: Array<{ colorIndex: number }>): number {
+export function nextColour(members: Array<{ colorIndex: number }>): number {
   const used = new Set(members.map((m) => m.colorIndex))
   for (let c = 1; c <= COLOURS; c++) if (!used.has(c)) return c
   return (members.length % COLOURS) + 1
 }
 
-type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string }
+export type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string; inviteId?: string }
 
 /**
  * Who a collab WebSocket is, for one document. Throws CollabAuthError:
@@ -136,6 +136,7 @@ export async function resolvePrincipal(input: {
   let subject: string
   let name: string
   let role: CollabRole
+  let inviteId: string | undefined
 
   if (user && session.ownerId.toString() === user.id) {
     subject = `user:${user.id}`
@@ -155,6 +156,7 @@ export async function resolvePrincipal(input: {
       const invite = session.invites.find((i) => i._id.toString() === claims.inviteId)
       if (!invite || invite.revokedAt) throw new CollabAuthError('forbidden')
       subject = `guest:${claims.guestId}`
+      inviteId = claims.inviteId
       const guestMember = members.find((m) => m.subject === subject)
       name = guestMember?.name ?? (claims.name.trim().slice(0, MAX_NAME) || 'Guest')
       role = guestMember?.role ?? (invite.role as CollabRole)
@@ -171,7 +173,7 @@ export async function resolvePrincipal(input: {
   const colorIndex = nextColour(members)
   const res = await CollabSession.updateOne(
     { _id: session._id, 'members.subject': { $ne: subject } },
-    { $push: { members: { subject, role, colorIndex, name } } },
+    { $push: { members: { subject, role, colorIndex, name, ...(inviteId ? { inviteId } : {}) } } },
   )
   if (res.modifiedCount === 0) {
     const fresh = await CollabSession.findById(session._id).select('members').lean()
