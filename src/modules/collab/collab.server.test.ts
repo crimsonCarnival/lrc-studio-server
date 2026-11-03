@@ -907,6 +907,106 @@ describe('collab project deletion', () => {
     await deleteProjectAsModerator(PUBLIC_ID, ownerId)
     expect(await CollabDoc.exists({ name: DOC })).toBeNull()
   })
+
+  /** Leaves a stored doc behind with nothing loaded. */
+  async function storedDocOnly(): Promise<void> {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    close(editor)
+    await new Promise((r) => setTimeout(r, 150))
+    expect(await CollabDoc.exists({ name: DOC })).not.toBeNull()
+  }
+
+  /** Holds the next CollabDoc.findOne (the read a load starts with) until release. */
+  function holdNextDocRead() {
+    const real = CollabDoc.findOne.bind(CollabDoc) as (filter: unknown) => unknown
+    let release = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const spy = vi.spyOn(CollabDoc, 'findOne').mockImplementationOnce(((filter: unknown) => gate.then(() => real(filter))) as never)
+    return { spy, release }
+  }
+
+  const neverServed = (c: Client) => {
+    expect(c.provider.isSynced).toBe(false)
+    expect(c.doc.getMap('lines').size).toBe(0)
+  }
+
+  it('a connect while the stored doc is being deleted is refused, with no doc loaded', async () => {
+    await storedDocOnly()
+    const real = CollabDoc.deleteOne.bind(CollabDoc) as (filter: unknown) => unknown
+    let release = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const spy = vi.spyOn(CollabDoc, 'deleteOne').mockImplementationOnce(((filter: unknown) => gate.then(() => real(filter))) as never)
+    const deleting = deleteProjectAsModerator(PUBLIC_ID, ownerId)
+    await waitFor(() => spy.mock.calls.length > 0)
+    spy.mockRestore()
+    // Get past the session check, so only the tombstone stands between this client and the stored state.
+    await CollabSession.create({ publicId: PUBLIC_ID, ownerId })
+    const racer = connect(await ownerCookie())
+    // The connection waits for the discard, and is refused once it finishes: the project is gone.
+    await new Promise((r) => setTimeout(r, 300))
+    neverServed(racer)
+    release()
+    await deleting
+    expect(await CollabDoc.exists({ name: DOC })).toBeNull()
+    await waitFor(() => racer.failures.length > 0)
+    expect(racer.failures[0]).toBe('session_ended')
+    neverServed(racer)
+  })
+
+  it('a load in flight when the delete lands never serves the content or rewrites the doc', async () => {
+    await storedDocOnly()
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(await ownerCookie())
+    await waitFor(() => spy.mock.calls.length > 0)
+    const deleting = deleteProjectAsModerator(PUBLIC_ID, ownerId)
+    await new Promise((r) => setTimeout(r, 100))
+    release()
+    await deleting
+    spy.mockRestore()
+    await waitFor(() => racer.failures.length > 0)
+    expect(racer.failures[0]).toBe('session_ended')
+    neverServed(racer)
+    await new Promise((r) => setTimeout(r, 200))
+    expect(await CollabDoc.exists({ name: DOC })).toBeNull()
+  })
+
+  it('a stored doc is not served once its project is gone, even with a session still live', async () => {
+    await storedDocOnly()
+    await Project.deleteOne({ publicId: PUBLIC_ID })
+    const racer = connect(await ownerCookie())
+    const closes: number[] = []
+    racer.socket.on('close', ({ event }: { event: { code: number } }) => closes.push(event.code))
+    await waitFor(() => racer.failures.length > 0 && closes.length > 0)
+    expect(racer.failures[0]).toBe('session_ended')
+    expect(closes[0]).toBe(4410)
+    neverServed(racer)
+  })
+
+  it('a stored doc is not served once the session ended during the load', async () => {
+    await storedDocOnly()
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(await ownerCookie())
+    await waitFor(() => spy.mock.calls.length > 0)
+    await CollabSession.updateOne({ _id: sessionId }, { $set: { endedAt: new Date() } })
+    release()
+    spy.mockRestore()
+    await waitFor(() => racer.failures.length > 0)
+    neverServed(racer)
+  })
+
+  it('the tombstone is cleared afterwards, so it stays bounded and blocks nothing else', async () => {
+    await storedDocOnly()
+    await deleteProjectAsModerator(PUBLIC_ID, ownerId)
+    // Same name again, as a stand-in for a tombstone left behind: a fresh project under it loads normally.
+    await Project.collection.insertOne({ publicId: PUBLIC_ID, userId: new mongoose.Types.ObjectId(ownerId), title: 'T', slug: 't', version: 1 })
+    await Lyrics.collection.insertOne({
+      publicId: PUBLIC_ID, editorMode: 'lrc', version: 1,
+      sections: [{ label: null, id: null, depth: null, timestamp: null, lines: [{ id: 'l9', text: 'nine' }] }],
+    })
+    await CollabSession.create({ publicId: PUBLIC_ID, ownerId })
+    const fresh = await connectSynced(await ownerCookie())
+    expect(lineText(fresh.doc, 'l9')).toBe('nine')
+  })
 })
 
 describe('collab account deletion', () => {

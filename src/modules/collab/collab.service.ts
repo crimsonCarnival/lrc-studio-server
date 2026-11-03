@@ -137,14 +137,15 @@ export async function endSession(publicId: string, userId: string | null | undef
 
 /**
  * Second half of deleting a project; the caller already ended its session in the delete's
- * transaction. Closes the live connections without storing, then removes the stored doc, which
+ * transaction. Closes the live connections without storing and removes the stored doc, which
  * would otherwise keep serving the content. Never throws: the project is gone either way.
  */
 export async function discardDeletedProject(publicId: string): Promise<void> {
   const docName = docNameOf(publicId)
   try {
-    await mountedCollabServer()?.discardSession(docName)
-    await CollabDoc.deleteOne({ name: docName })
+    const server = mountedCollabServer()
+    if (server) await server.discardSession(docName)
+    else await CollabDoc.deleteOne({ name: docName })
   } catch (err) {
     console.error('[collab] discarding a deleted project failed', { publicId, err })
   }
