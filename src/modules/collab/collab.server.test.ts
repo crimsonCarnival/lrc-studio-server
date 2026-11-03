@@ -575,3 +575,50 @@ describe('collab moderation hooks', () => {
     await waitFor(() => editor.failures.includes('forbidden'))
   })
 })
+
+describe('collab awareness identity', () => {
+  const states = (c: Client) => c.provider.awareness!.getStates()
+
+  it('stamps the real identity over whatever the client claims', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    viewer.provider.awareness!.setLocalState({ user: { name: 'Owner', colorIndex: 1, role: 'owner', subject: `user:${ownerId}` }, pointer: null })
+    const id = viewer.doc.clientID
+    await waitFor(() => (states(owner).get(id) as { pointer?: unknown } | undefined)?.pointer === null)
+    expect(states(owner).get(id)).toMatchObject({ user: { name: 'vw', role: 'viewer', subject: 'guest:vw' } })
+  })
+
+  it('keeps the client\'s other fields', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    viewer.provider.awareness!.setLocalState({ user: { name: 'x' }, activeLineId: 'l1', duration: 90 })
+    await waitFor(() => (states(owner).get(viewer.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'l1')
+    expect(states(owner).get(viewer.doc.clientID)).toMatchObject({ duration: 90 })
+  })
+
+  it("a client cannot overwrite or remove another client's awareness id", async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    // The owner ignores updates about its own id, so a third client is the witness of what the server relays.
+    const witness = await connectSynced(guest('ed', editorInvite))
+    owner.provider.awareness!.setLocalState({ activeLineId: 'real' })
+    const target = owner.doc.clientID
+    await waitFor(() => (states(witness).get(target) as { activeLineId?: string } | undefined)?.activeLineId === 'real')
+    await waitFor(() => (states(viewer).get(target) as { activeLineId?: string } | undefined)?.activeLineId === 'real')
+    // Send updates for the owner's clientId over the viewer's own connection.
+    const aw = viewer.provider.awareness!
+    const send = (change: { updated?: number[]; removed?: number[] }) =>
+      (viewer.provider as unknown as { awarenessUpdateHandler: (c: object, o: unknown) => void })
+        .awarenessUpdateHandler({ added: [], updated: change.updated ?? [], removed: change.removed ?? [] }, 'test')
+    aw.getStates().set(target, { activeLineId: 'forged' })
+    aw.meta.set(target, { clock: 1_000_000, lastUpdated: Date.now() })
+    send({ updated: [target] })
+    aw.getStates().delete(target)
+    send({ removed: [target] })
+    // A later, legitimate update from the viewer proves the forged ones were processed first.
+    aw.setLocalState({ activeLineId: 'marker' })
+    await waitFor(() => (states(owner).get(viewer.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'marker')
+    await new Promise((r) => setTimeout(r, 200))
+    expect((states(witness).get(target) as { activeLineId?: string } | undefined)?.activeLineId).toBe('real')
+  })
+})

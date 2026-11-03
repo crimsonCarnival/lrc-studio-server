@@ -323,6 +323,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
+  // Per document: awareness clientId -> the connection that owns it.
+  const awarenessOwners = new Map<string, Map<number, string>>()
 
   const hocuspocus = new Hocuspocus<CollabContext>({
     name: 'collab',
@@ -394,8 +396,38 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       if (changed) broadcastLocks(documentName)
     },
 
+    // Awareness is client-authored, so the server decides who each awareness clientId is:
+    // the first connection to send an id owns it, and every state a connection may send
+    // carries the identity attested at authentication, whatever the client claims.
+    async beforeHandleAwareness({ documentName, context, states, removedClients }) {
+      const connId = context?.connId
+      const principal = context?.principal
+      if (!connId || !principal) {
+        states.clear()
+        removedClients.clear()
+        return
+      }
+      let bound = awarenessOwners.get(documentName)
+      if (!bound) awarenessOwners.set(documentName, (bound = new Map()))
+      for (const clientId of [...states.keys()]) {
+        const owner = bound.get(clientId)
+        if (owner === undefined) bound.set(clientId, connId)
+        else if (owner !== connId) {
+          states.delete(clientId)
+          continue
+        }
+        const state = states.get(clientId)
+        if (state && typeof state === 'object') {
+          state.user = { name: principal.name, colorIndex: principal.colorIndex, role: principal.role, subject: principal.subject }
+        } else states.delete(clientId)
+      }
+      for (const clientId of [...removedClients]) if (bound.get(clientId) !== connId) removedClients.delete(clientId)
+    },
+
     async onDisconnect({ documentName, context }) {
       if (!context.connId) return
+      const bound = awarenessOwners.get(documentName)
+      if (bound) for (const [clientId, owner] of bound) if (owner === context.connId) bound.delete(clientId)
       if (locks.releaseAllFor(documentName, context.connId).length > 0) broadcastLocks(documentName)
     },
 
@@ -447,6 +479,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     async afterUnloadDocument({ documentName }) {
+      awarenessOwners.delete(documentName)
       locks.clearDoc(documentName)
       docSize.delete(documentName)
       if (onAllUnloaded && hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
