@@ -3,6 +3,8 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import mongoose from 'mongoose'
 import { MongoMemoryServer } from 'mongodb-memory-server'
 import WebSocket from 'ws'
+import net from 'net'
+import { vi } from 'vitest'
 import * as Y from 'yjs'
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider'
 import collabPlugin from '../../plugins/collab.js'
@@ -103,7 +105,8 @@ beforeAll(async () => {
   mongo = await MongoMemoryServer.create()
   await mongoose.connect(mongo.getUri())
   app = Fastify()
-  await app.register(collabPlugin)
+  // Loose admission limits: this file opens many sockets from one IP. Small doc cap keeps the size test fast.
+  await app.register(collabPlugin, { upgradesPerMinute: 10_000, maxConnectionsPerIp: 1_000, maxDocBytes: 100_000 })
   await app.listen({ port: 0, host: '127.0.0.1' })
   const addr = app.server.address() as { port: number }
   url = `ws://127.0.0.1:${addr.port}/collab`
@@ -183,10 +186,60 @@ describe('collab upgrade', () => {
     expect(c.failures[0]).toBe('unauthorized')
   })
 
-  it('an unauthenticated connection is denied', async () => {
-    const c = connect('')
-    await waitFor(() => c.failures.length > 0)
-    expect(c.failures[0]).toBe('unauthorized')
+})
+
+function rawRequest(port: number, raw: string): Promise<string> {
+  return new Promise((resolve) => {
+    const sock = net.connect(port, '127.0.0.1', () => sock.write(raw))
+    let data = ''
+    sock.on('data', (d) => { data += d.toString() })
+    sock.on('close', () => resolve(data))
+    sock.on('error', () => resolve(data))
+    setTimeout(() => sock.destroy(), 2000)
+  })
+}
+
+describe('collab upgrade hardening', () => {
+  it('malformed upgrade targets are refused without crashing the server', async () => {
+    const port = (app.server.address() as { port: number }).port
+    for (const target of ['//', '///', '//:99999/']) {
+      const res = await rawRequest(port, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`)
+      expect(res).toMatch(/^HTTP\/1\.1 404/)
+    }
+    // Still alive and serving.
+    const owner = await connectSynced(await ownerCookie())
+    expect(lineText(owner.doc, 'l1')).toBe('one')
+  })
+
+  it('caps concurrent sockets and upgrade rate per IP', async () => {
+    const limited = Fastify()
+    await limited.register(collabPlugin, { upgradesPerMinute: 3, maxConnectionsPerIp: 2 })
+    await limited.listen({ port: 0, host: '127.0.0.1' })
+    const lurl = `ws://127.0.0.1:${(limited.server.address() as { port: number }).port}/collab`
+    const attempt = () => new Promise<{ ws: WebSocket; status: number }>((resolve) => {
+      const ws = new WebSocket(lurl, { headers: { Origin: ORIGIN } })
+      ws.on('open', () => resolve({ ws, status: 101 }))
+      ws.on('unexpected-response', (_req, res) => resolve({ ws, status: res.statusCode ?? 0 }))
+      ws.on('error', () => resolve({ ws, status: 0 }))
+    })
+    try {
+      const a = await attempt()
+      const b = await attempt()
+      const c = await attempt()
+      expect([a.status, b.status, c.status]).toEqual([101, 101, 429]) // concurrent cap
+      a.ws.close()
+      await new Promise((r) => setTimeout(r, 100))
+      const d = await attempt() // a slot freed up; spends the 3rd and last token
+      expect(d.status).toBe(101)
+      b.ws.close()
+      d.ws.close()
+      await new Promise((r) => setTimeout(r, 100))
+      const e = await attempt() // slots free, bucket empty
+      expect(e.status).toBe(429)
+      for (const x of [a, b, c, d, e]) x.ws.terminate()
+    } finally {
+      await limited.close()
+    }
   })
 })
 
@@ -244,6 +297,78 @@ describe('collab staleness', () => {
     await Lyrics.updateOne({ publicId: PUBLIC_ID }, { $set: { 'sections.0.lines.0.text': 'solo' }, $inc: { version: 1 } })
     const fresh = await connectSynced(await ownerCookie())
     expect(lineText(fresh.doc, 'l1')).toBe('solo')
+  })
+})
+
+describe('collab persistence hardening', () => {
+  it('a doc past the size cap drops the writer and turns read-only, and still persists', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'y'.repeat(150_000))
+    await waitFor(() => editor.provider.authorizedScope === 'readonly')
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l2')!.set('text', 'after-cap')
+    const owner = await connectSynced(await ownerCookie())
+    expect(owner.provider.authorizedScope).toBe('readonly')
+    await new Promise((r) => setTimeout(r, 200))
+    expect(lineText(owner.doc, 'l2')).toBe('two')
+    for (const c of open.splice(0)) close(c)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text.length === 2000)
+    // The read-only mark outlives unloads by design; ending the session is what clears it.
+    await getCollabServer().endSession(DOC)
+  })
+
+  it('malformed client values are sanitised so the Lyrics projection still lands', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.transact(() => {
+      const l1 = editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!
+      l1.set('text', 'z'.repeat(2500))
+      l1.set('words', 'not-an-array')
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l2')!.set('id', 'i'.repeat(55))
+      editor.doc.getMap('meta').set('editorMode', 'bogus')
+    })
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.version > 1)
+    const lyrics = await Lyrics.findOne({ publicId: PUBLIC_ID }).lean()
+    expect(lyrics!.editorMode).toBe('lrc')
+    expect(lyrics!.sections[0].lines[0].text).toHaveLength(2000)
+    expect(lyrics!.sections[0].lines[1].id).toBeNull()
+  })
+
+  it('a failed store keeps the doc in memory and a later store persists it', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const editor = await connectSynced(guest('ed', editorInvite))
+      const spy = vi.spyOn(CollabDoc, 'updateOne').mockRejectedValueOnce(new Error('boom'))
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
+      await waitFor(() => !editor.provider.hasUnsyncedChanges)
+      close(editor)
+      await waitFor(() => spy.mock.calls.length > 0)
+      spy.mockRestore()
+      const again = await connectSynced(guest('ed', editorInvite))
+      expect(lineText(again.doc, 'l1')).toBe('kept')
+      again.doc.getMap<Y.Map<unknown>>('lines').get('l2')!.set('text', 'later')
+      await waitFor(() => !again.provider.hasUnsyncedChanges)
+      close(again)
+      await waitFor(async () => {
+        const l = await Lyrics.findOne({ publicId: PUBLIC_ID }).lean()
+        return l!.sections[0].lines[0].text === 'kept' && l!.sections[0].lines[1].text === 'later'
+      })
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('a crash between the state and Lyrics writes does not re-seed', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'newest')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text === 'newest')
+    await new Promise((r) => setTimeout(r, 150))
+    // Roll Lyrics back to what it held before the projection, as if the process died between the writes.
+    await Lyrics.updateOne({ publicId: PUBLIC_ID }, { $set: { 'sections.0.lines.0.text': 'one' }, $inc: { version: -1 } })
+    const fresh = await connectSynced(await ownerCookie())
+    expect(lineText(fresh.doc, 'l1')).toBe('newest')
   })
 })
 

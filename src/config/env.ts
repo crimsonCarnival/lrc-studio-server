@@ -118,6 +118,16 @@ export function parseTrustProxy(raw: string | undefined): boolean | number | str
   return value.split(',').map(v => v.trim()).filter(Boolean);
 }
 
+/**
+ * TRUST_PROXY in the shape Fastify's `trustProxy` takes. A hop count trusts the
+ * nearest N proxies, as proxy-addr does for a number. Shared by server.ts and
+ * the collab upgrade listener, which must derive the client IP exactly as
+ * request.ip does (raw upgrades never reach Fastify's request object).
+ */
+export function toFastifyTrustProxy(value: boolean | number | string[]) {
+  return typeof value === 'number' ? (_addr: string, hop: number) => hop < value : value;
+}
+
 export function loadEnv(): Env {
   const corsOrigin = requireEnv('CORS_ORIGIN', process.env.CORS_ORIGIN, true) ?? 'http://localhost:5173';
   const appUrlString = process.env.APP_URL ?? corsOrigin;

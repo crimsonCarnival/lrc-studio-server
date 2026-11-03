@@ -18,7 +18,7 @@ import { resolvers } from './graphql/resolvers.js';
 import { loaders } from './graphql/loaders.js';
 import fastifyCookie from '@fastify/cookie';
 import { handleFastifyError } from './shared/error-handler.js';
-import { getEnv } from './config/env.js';
+import { getEnv, toFastifyTrustProxy } from './config/env.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import lyricsRoutes from './modules/lyrics/lyrics.routes.js';
@@ -60,11 +60,6 @@ const INTERNAL_ERROR_NAMES = new Set([
 
 function isInternalError(err: Error | undefined): boolean {
   return process.env.NODE_ENV === 'production' && !!err && INTERNAL_ERROR_NAMES.has(err.name);
-}
-
-/** A hop count trusts the nearest N proxies, as proxy-addr does for a number. */
-function toFastifyTrustProxy(value: boolean | number | string[]) {
-  return typeof value === 'number' ? (_addr: string, hop: number) => hop < value : value;
 }
 
 async function build() {

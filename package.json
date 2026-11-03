@@ -25,6 +25,7 @@
     "@fastify/cors": "11.3.1",
     "@fastify/helmet": "13.2.0",
     "@fastify/multipart": "10.1.6",
+    "@fastify/proxy-addr": "5.1.2",
     "@fastify/rate-limit": "11.2.1",
     "@hocuspocus/extension-database": "4.8.0",
     "@hocuspocus/server": "4.8.0",

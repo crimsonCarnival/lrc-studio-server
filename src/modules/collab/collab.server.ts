@@ -22,7 +22,7 @@ import Upload from '../uploads/upload.model.js'
 import type { LineEntry } from '../../types/index.js'
 import CollabDoc from './collab-doc.model.js'
 import { createLockTable } from './collab.locks.js'
-import { docToMeta, docToSections, seedDocFromProject } from './collab.projection.js'
+import { docToSections, sanitizeSectionsForLyrics, seedDocFromProject, validEditorMode } from './collab.projection.js'
 import { CollabAuthError, resolvePrincipal, type CollabPrincipal } from './collab.auth.js'
 import type { CollabMeta } from './collab.types.js'
 
@@ -30,8 +30,15 @@ const LOCK_IDLE_MS = 30_000
 const SWEEP_MS = 5_000
 const STORE_DEBOUNCE_MS = 2_000
 const STORE_MAX_DEBOUNCE_MS = 10_000
-const MAX_LINE_ID = 64
+// Same as Lyrics.lineSchema `id` maxlength: a lockable line id is always a persistable one.
+const MAX_LINE_ID = 50
 const MAX_HEARTBEAT_IDS = 200
+/** Encoded doc state cap. Stays well under Mongo's 16 MB BSON limit even after one 5 MiB frame lands on top. */
+export const DEFAULT_MAX_DOC_BYTES = 4 * 1024 * 1024
+/** Bytes of incoming updates between exact size re-measurements of a doc. */
+const RECHECK_BYTES = 64 * 1024
+/** Documents one socket may have pending authentication; Hocuspocus defaults to 100. */
+const MAX_PENDING_DOCUMENTS = 4
 /** Upper bound on how long shutdown waits for pending stores before giving up. */
 const DESTROY_TIMEOUT_MS = 10_000
 
@@ -42,9 +49,10 @@ const CLOSE = {
   session_ended: 4410,
   kicked: 4403,
   roleChanged: 4409,
+  tooLarge: 4413,
 } as const
 
-type CollabContext = { ws: WebSocket; principal?: CollabPrincipal; connId?: string }
+type CollabContext = { ws: WebSocket; ip?: string; principal?: CollabPrincipal; connId?: string }
 
 export type CollabServer = {
   closeSubject(docName: string, subject: string): void
@@ -54,7 +62,7 @@ export type CollabServer = {
 }
 
 export type MountedCollabServer = CollabServer & {
-  handleSocket(ws: WebSocket, req: IncomingMessage): void
+  handleSocket(ws: WebSocket, req: IncomingMessage, ip: string | undefined): void
   destroy(): Promise<void>
 }
 
@@ -94,7 +102,13 @@ async function fetchState(docName: string): Promise<Uint8Array> {
     }>(),
   ])
   const lyricsVersion = lyrics?.version ?? 0
-  if (stored && stored.lyricsVersion === lyricsVersion) return new Uint8Array(stored.state)
+  // `>=`, not `===`: storeState records the version Lyrics is *about* to reach in
+  // the same write as the state, so a crash before the Lyrics write leaves the
+  // CollabDoc one ahead, and it is the newer copy. Only a Lyrics version past the
+  // CollabDoc's means someone wrote Lyrics outside the session, which re-seeds.
+  if (stored && typeof stored.lyricsVersion === 'number' && stored.lyricsVersion >= lyricsVersion) {
+    return new Uint8Array(stored.state)
+  }
 
   const project = await Project.findOne({ publicId }).select('title metadata uploadId').lean()
   if (!project) throw new Error('collab: project not found')
@@ -128,24 +142,46 @@ async function fetchState(docName: string): Promise<Uint8Array> {
 }
 
 async function storeState(docName: string, document: Document, state: Buffer, log: FastifyBaseLogger): Promise<void> {
-  await CollabDoc.updateOne({ name: docName }, { $set: { state } }, { upsert: true })
   const publicId = publicIdOf(docName)
+  let expectedVersion: number | null
   try {
+    const current = await Lyrics.findOne({ publicId }).select('version').lean<{ version: number }>()
+    expectedVersion = current ? current.version + 1 : null
+    // State and the Lyrics version it is about to project into, in ONE write: no
+    // crash window leaves a CollabDoc that a load would re-seed over (a re-seed
+    // mints new Yjs items and duplicates every line for clients holding the old ones).
+    await CollabDoc.updateOne(
+      { name: docName },
+      { $set: { state, ...(expectedVersion !== null ? { lyricsVersion: expectedVersion } : {}) } },
+      { upsert: true },
+    )
+  } catch (err) {
+    log.error({ err, docName }, 'collab: persisting doc state failed; keeping the doc in memory')
+    // Rethrown on purpose: Hocuspocus catches a failed store (storeDocumentHooks)
+    // and keeps the doc loaded instead of unloading, and losing, unpersisted edits.
+    throw err
+  }
+  if (expectedVersion === null) return // no Lyrics document (project deleted): nothing to project into
+
+  try {
+    const $set: Record<string, unknown> = { sections: sanitizeSectionsForLyrics(docToSections(document)) }
+    const mode = validEditorMode(document.getMap('meta').get('editorMode'))
+    if (mode) $set.editorMode = mode
     // Mirrors the lyrics write in projects.crud.service updateProject. No upsert:
     // a store landing after the project was deleted must not resurrect its lyrics.
     const lyrics = await Lyrics.findOneAndUpdate(
       { publicId },
-      { $set: { sections: docToSections(document), editorMode: docToMeta(document).editorMode }, $unset: { lines: 1 }, $inc: { version: 1 } },
+      { $set, $unset: { lines: 1 }, $inc: { version: 1 } },
       { returnDocument: 'after', runValidators: true },
     ).select('version').lean<{ version: number }>()
     if (!lyrics) return
-    await Promise.all([
-      CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } }),
-      Project.updateOne({ publicId }, { $set: { contentUpdatedAt: new Date() }, $inc: { version: 1 } }),
-    ])
+    // A solo save raced in between the read and this write: record the real version.
+    if (lyrics.version !== expectedVersion) {
+      await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } })
+    }
+    await Project.updateOne({ publicId }, { $set: { contentUpdatedAt: new Date() }, $inc: { version: 1 } })
   } catch (err) {
-    // The CollabDoc already holds the truth; a projection failure (e.g. a value
-    // that fails Lyrics validation) must not keep the doc from persisting.
+    // The CollabDoc already holds the truth; a projection failure must not keep the doc from persisting.
     log.error({ err, docName }, 'collab: projecting doc into Lyrics failed')
   }
 }
@@ -173,7 +209,18 @@ function parseMessage(payload: string): LockMsg | null {
   return null
 }
 
-export function createCollabServer(log: FastifyBaseLogger): MountedCollabServer {
+export type CollabServerOptions = { maxDocBytes?: number }
+
+export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOptions = {}): MountedCollabServer {
+  const maxDocBytes = opts.maxDocBytes ?? DEFAULT_MAX_DOC_BYTES
+  /** Last exact encoded size per loaded doc, plus update bytes received since. */
+  const docSize = new Map<string, { bytes: number; pending: number }>()
+  /**
+   * Docs over the cap: every connection is read-only. Kept across unloads (the
+   * stored state is just as big), so a reconnect is told it is read-only at auth
+   * time; only a fresh load that measures under the cap clears an entry.
+   */
+  const frozen = new Set<string>()
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
@@ -183,6 +230,7 @@ export function createCollabServer(log: FastifyBaseLogger): MountedCollabServer 
     quiet: true,
     debounce: STORE_DEBOUNCE_MS,
     maxDebounce: STORE_MAX_DEBOUNCE_MS,
+    maxPendingDocuments: MAX_PENDING_DOCUMENTS,
     extensions: [
       new Database({
         fetch: ({ documentName }) => fetchState(documentName),
@@ -190,10 +238,16 @@ export function createCollabServer(log: FastifyBaseLogger): MountedCollabServer 
       }),
     ],
 
-    async onAuthenticate({ documentName, requestHeaders, connectionConfig, context }) {
+    async onAuthenticate({ documentName, requestHeaders, requestParameters, connectionConfig, context }) {
       try {
-        const principal = await resolvePrincipal({ cookieHeader: requestHeaders.get('cookie') ?? '', docName: documentName })
-        if (principal.role === 'viewer') connectionConfig.readOnly = true
+        const principal = await resolvePrincipal({
+          cookieHeader: requestHeaders.get('cookie') ?? '',
+          docName: documentName,
+          ip: context.ip,
+          // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
+          deviceId: requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined,
+        })
+        if (principal.role === 'viewer' || frozen.has(documentName)) connectionConfig.readOnly = true
         return { principal, connId: randomUUID() }
       } catch (err) {
         const code = err instanceof CollabAuthError ? err.code : 'forbidden'
@@ -246,8 +300,42 @@ export function createCollabServer(log: FastifyBaseLogger): MountedCollabServer 
       if (locks.releaseAllFor(documentName, context.connId).length > 0) broadcastLocks(documentName)
     },
 
+    async afterLoadDocument({ documentName, document }) {
+      const bytes = Y.encodeStateAsUpdate(document).byteLength
+      docSize.set(documentName, { bytes, pending: 0 })
+      if (bytes > maxDocBytes) frozen.add(documentName)
+      else frozen.delete(documentName)
+    },
+
+    // Covers the first load after a restart, where auth ran before the size was known.
+    async connected({ documentName, connection }) {
+      if (frozen.has(documentName)) connection.readOnly = true
+    },
+
+    // The 5 MiB ws frame cap bounds one message, not the doc: without this, editors
+    // could grow a doc past Mongo's 16 MB BSON limit, after which every store fails.
+    // An exact re-measure costs a full encode, so it runs every RECHECK_BYTES of
+    // incoming updates, or on every change once the doc is near the cap.
+    async onChange({ documentName, document, update, connection }) {
+      const size = docSize.get(documentName) ?? { bytes: 0, pending: 0 }
+      size.pending += update.byteLength
+      if (size.pending >= RECHECK_BYTES || size.bytes + size.pending > maxDocBytes) {
+        size.bytes = Y.encodeStateAsUpdate(document).byteLength
+        size.pending = 0
+      }
+      docSize.set(documentName, size)
+      if (size.bytes <= maxDocBytes) return
+      if (!frozen.has(documentName)) log.warn({ documentName, bytes: size.bytes }, 'collab: doc over size cap; now read-only')
+      frozen.add(documentName)
+      if (connection) {
+        connection.readOnly = true // drop anything it already queued
+        drop(connection, CLOSE.tooLarge, 'doc-too-large')
+      }
+    },
+
     async afterUnloadDocument({ documentName }) {
       locks.clearDoc(documentName)
+      docSize.delete(documentName)
       if (onAllUnloaded && hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
     },
   })
@@ -279,9 +367,9 @@ export function createCollabServer(log: FastifyBaseLogger): MountedCollabServer 
   sweepTimer.unref()
 
   const server: MountedCollabServer = {
-    handleSocket(ws, req) {
+    handleSocket(ws, req, ip) {
       sockets.add(ws)
-      const client = hocuspocus.handleConnection(ws as unknown as WebSocketLike, toFetchRequest(req), { ws })
+      const client = hocuspocus.handleConnection(ws as unknown as WebSocketLike, toFetchRequest(req), { ws, ip })
       ws.on('message', (data: RawData) => client.handleMessage(toUint8(data)))
       ws.on('pong', () => client.touch())
       ws.on('error', (err) => log.debug({ err }, 'collab: websocket error'))
@@ -318,6 +406,7 @@ export function createCollabServer(log: FastifyBaseLogger): MountedCollabServer 
         for (const c of doc.getConnections()) drop(c, CLOSE.session_ended, 'session-ended')
       }
       locks.clearDoc(docName)
+      frozen.delete(docName) // a later session re-seeds from Lyrics
     },
 
     async destroy() {
@@ -337,10 +426,12 @@ export function createCollabServer(log: FastifyBaseLogger): MountedCollabServer 
       })
       for (const ws of sockets) ws.terminate()
       sockets.clear()
-      if (current === server) current = null
+      if (current === server) current = previous
     },
   }
 
+  // Stack-like so a second server (tests mount more than one app) hands the slot back on destroy.
+  const previous = current
   current = server
   return server
 }
