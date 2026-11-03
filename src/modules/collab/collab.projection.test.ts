@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { docToMeta, docToSections, seedDocFromProject } from './collab.projection.js'
+import { docToMeta, docToSections, sanitizeSectionsForLyrics, seedDocFromProject } from './collab.projection.js'
 import type { CollabMeta } from './collab.types.js'
 
 const meta: CollabMeta = {
@@ -103,5 +103,67 @@ describe('collab projection', () => {
     put('v', 42)
     const flat = (docToSections(doc) as typeof sections).flatMap((s) => s.lines.map((l) => l.id))
     expect(flat).toEqual(['v', 'w', 'x', 'y'])
+  })
+})
+
+describe('sanitizeSectionsForLyrics', () => {
+  const long = (n: number) => 'x'.repeat(n)
+
+  it('truncates over-long strings to the lineSchema limits', () => {
+    const [sec] = sanitizeSectionsForLyrics([{
+      label: long(600), id: 's', depth: 0, lines: [{
+        id: 'a', text: long(2500), secondary: long(2100), translation: long(2100), timestamp: 1,
+        translations: [{ text: long(2100), language: long(60) }],
+        words: [{ word: long(600), time: 1, reading: long(600) }],
+      }],
+    }])
+    const line = sec.lines[0]
+    expect(sec.label).toHaveLength(500)
+    expect(line.text).toHaveLength(2000)
+    expect(line.secondary).toHaveLength(2000)
+    expect(line.translation).toHaveLength(2000)
+    expect(line.translations![0].text).toHaveLength(2000)
+    expect(line.translations![0].language).toHaveLength(50)
+    expect(line.words![0].word).toHaveLength(500)
+    expect(line.words![0].reading).toHaveLength(500)
+  })
+
+  it('nulls ids longer than the schema allows instead of truncating them into collisions', () => {
+    const [sec] = sanitizeSectionsForLyrics([{ id: long(55), lines: [{ id: long(51), text: 'a' }, { id: long(50), text: 'b' }] }])
+    expect(sec.id).toBeNull()
+    expect(sec.lines.map((l) => l.id)).toEqual([null, long(50)])
+  })
+
+  it('drops lines and words of the wrong shape and coerces wrong-typed fields', () => {
+    const [sec] = sanitizeSectionsForLyrics([{
+      lines: [
+        'not a line', null, 42,
+        {
+          id: 'a', text: 7, timestamp: '3', endTime: Number.NaN, mode: 'trio', source: 'robot', adLibOf: 'x',
+          singers: ['A', 3, 'B'], words: 'nope', secondaryWords: [{ word: 'ok', time: 'soon', singerIndex: -1 }, { time: 2 }, 'w'],
+          translations: [{ text: 'hola', language: 'es' }, 'bad', { language: 'fr' }],
+        },
+      ],
+    }])
+    expect(sec.lines).toHaveLength(1)
+    const line = sec.lines[0]
+    expect(line).toMatchObject({ id: 'a', text: '', timestamp: null, endTime: null, mode: null, source: null, adLibOf: null })
+    expect(line.singers).toEqual(['A', 'B'])
+    expect(line.words).toBeUndefined()
+    expect(line.secondaryWords).toEqual([{ word: 'ok', time: null }])
+    expect(line.translations).toEqual([{ text: 'hola', language: 'es' }])
+  })
+
+  it('drops sections of the wrong shape and keeps depth within 0..1', () => {
+    const out = sanitizeSectionsForLyrics(['x', { depth: 5, lines: 'no' }, { depth: 1, lines: [] }])
+    expect(out).toHaveLength(2)
+    expect(out[0]).toMatchObject({ depth: null, lines: [] })
+    expect(out[1]).toMatchObject({ depth: 1 })
+  })
+
+  it('passes a well-formed project through unchanged', () => {
+    const doc = new Y.Doc()
+    seedDocFromProject(doc, structuredClone(sections), meta)
+    expect(sanitizeSectionsForLyrics(docToSections(doc))).toEqual(docToSections(doc))
   })
 })

@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid'
 import { generateNKeysBetween } from 'fractional-indexing'
 import * as Y from 'yjs'
 import { migrateLinesToSections, sectionsToFlatLines } from '../lyrics/lyrics.model.js'
-import type { LineEntry, SectionEntry } from '../../types/index.js'
+import type { LineEntry, SectionEntry, WordEntry } from '../../types/index.js'
 import type { CollabMeta } from './collab.types.js'
 
 // Fields stored per line Y.Map: the shared schema's list plus the remaining fields
@@ -69,4 +69,79 @@ export function docToMeta(doc: Y.Doc): CollabMeta {
     album: (m.get('album') as string | null | undefined) ?? null,
     media,
   }
+}
+
+// Limits mirror Lyrics.lineSchema / sectionSchema / wordSchema / translationSchema
+// (modules/lyrics/lyrics.model.ts). Keep them in step with that file.
+const LIMITS = { id: 50, text: 2000, label: 500, word: 500, language: 50, singer: 60 } as const
+const LINE_MODES = new Set(['solo', 'duet', 'split'])
+const LINE_SOURCES = new Set(['manual', 'asr'])
+
+type Obj = Record<string, unknown>
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
+const finite = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+const clip = (v: unknown, max: number): string | null => (typeof v === 'string' ? v.slice(0, max) : null)
+// An over-long id is dropped, not truncated: two truncated ids could collide.
+const idOf = (v: unknown): string | null => (typeof v === 'string' && v.length <= LIMITS.id ? v : null)
+const singersOf = (v: unknown): string[] | undefined =>
+  Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string').map((s) => s.slice(0, LIMITS.singer)) : undefined
+
+function wordsOf(v: unknown): WordEntry[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  return v
+    .filter((w): w is Obj => isObj(w) && typeof w.word === 'string')
+    .map((w) => {
+      const out: WordEntry = { word: (w.word as string).slice(0, LIMITS.word), time: finite(w.time) }
+      if (typeof w.reading === 'string') out.reading = w.reading.slice(0, LIMITS.word)
+      if (typeof w.singerIndex === 'number' && Number.isInteger(w.singerIndex) && w.singerIndex >= 0) out.singerIndex = w.singerIndex
+      return out
+    })
+}
+
+function lineOf(l: Obj): LineEntry {
+  const out: Record<string, unknown> = { text: clip(l.text, LIMITS.text) ?? '' }
+  const has = (k: string) => l[k] !== undefined
+  if (has('id')) out.id = idOf(l.id)
+  if (has('timestamp')) out.timestamp = finite(l.timestamp)
+  if (has('endTime')) out.endTime = finite(l.endTime)
+  if (has('secondary')) out.secondary = clip(l.secondary, LIMITS.text)
+  if (has('translation')) out.translation = clip(l.translation, LIMITS.text)
+  if (has('singers')) out.singers = singersOf(l.singers)
+  if (has('mode')) out.mode = typeof l.mode === 'string' && LINE_MODES.has(l.mode) ? l.mode : null
+  if (has('source')) out.source = typeof l.source === 'string' && LINE_SOURCES.has(l.source) ? l.source : null
+  if (has('adLibOf')) out.adLibOf = finite(l.adLibOf)
+  if (has('words')) out.words = wordsOf(l.words)
+  if (has('secondaryWords')) out.secondaryWords = wordsOf(l.secondaryWords)
+  if (has('translations')) {
+    out.translations = Array.isArray(l.translations)
+      ? l.translations
+        .filter((t): t is Obj => isObj(t) && typeof t.text === 'string')
+        .map((t) => ({ text: (t.text as string).slice(0, LIMITS.text), language: clip(t.language, LIMITS.language) ?? '' }))
+      : undefined
+  }
+  return out as unknown as LineEntry
+}
+
+/**
+ * Makes doc-derived sections safe to $set into Lyrics. The Y.Doc accepts any
+ * value a collaborator writes, while Lyrics validates (runValidators) — so one
+ * over-long string or wrong-typed field would otherwise fail every projection
+ * until someone edited it away. Values are clipped/coerced to the schema, and
+ * lines, words and sections of the wrong shape are dropped.
+ */
+export function sanitizeSectionsForLyrics(sections: unknown[]): SectionEntry[] {
+  return sections.filter(isObj).map((s) => ({
+    label: clip(s.label, LIMITS.label),
+    depth: s.depth === 0 || s.depth === 1 ? s.depth : null,
+    id: idOf(s.id),
+    singers: singersOf(s.singers),
+    timestamp: finite(s.timestamp),
+    lines: Array.isArray(s.lines) ? s.lines.filter(isObj).map(lineOf) : [],
+  }))
+}
+
+const EDITOR_MODES = new Set<string>(['lrc', 'srt', 'words'])
+/** The doc's editorMode if it is one Lyrics accepts, else null (keep the stored one). */
+export function validEditorMode(v: unknown): CollabMeta['editorMode'] | null {
+  return typeof v === 'string' && EDITOR_MODES.has(v) ? (v as CollabMeta['editorMode']) : null
 }
