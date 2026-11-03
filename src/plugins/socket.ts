@@ -124,6 +124,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
     // (pings, acks, presence) from paying compression overhead that costs
     // more than it saves.
     perMessageDeflate: { threshold: 1024 },
+    // Leave non-Socket.IO upgrades (the /collab Hocuspocus endpoint) alive instead of destroying them after 1s.
+    destroyUpgrade: false,
   });
 
   setIO(io);
