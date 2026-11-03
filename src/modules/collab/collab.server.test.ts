@@ -17,8 +17,8 @@ import CollabSession from './collab-session.model.js'
 import CollabDoc from './collab-doc.model.js'
 import { signGuestToken } from './collab.auth.js'
 import { getCollabServer } from './collab.server.js'
-import { removeProjectCollaborator } from './collab.service.js'
-import { deleteProjectAsModerator } from '../projects/projects.crud.service.js'
+import { endSession, removeProjectCollaborator, startSession } from './collab.service.js'
+import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
 import { deactivateUser } from '../auth/auth.service.js'
 import { deleteUser } from '../admin/admin.service.js'
 import { archiveDeletedUsers } from '../../jobs/archive-deleted-users.js'
@@ -73,8 +73,10 @@ function connect(cookie: string, clientId?: number, opts: { url?: string; parame
       super(address, { headers })
     }
   }
+  // The provider has no parameters option: query params travel on the URL, as the client sends deviceId.
+  const query = opts.parameters ? `?${new URLSearchParams(opts.parameters)}` : ''
   const socket = new HocuspocusProviderWebsocket({
-    url: opts.url ?? url, parameters: opts.parameters, WebSocketPolyfill: HeaderedWebSocket, delay: 50, minDelay: 50,
+    url: `${opts.url ?? url}${query}`, WebSocketPolyfill: HeaderedWebSocket, delay: 50, minDelay: 50,
   })
   const doc = new Y.Doc()
   if (clientId !== undefined) doc.clientID = clientId
@@ -302,8 +304,8 @@ describe('collab document sync', () => {
     const lyrics = await Lyrics.findOne({ publicId: PUBLIC_ID }).lean()
     expect(lyrics!.version).toBeGreaterThan(1)
     expect(lyrics!.sections[0].lines.map((l) => l.id)).toEqual(['l1', 'l2'])
-    const project = await Project.findOne({ publicId: PUBLIC_ID }).lean()
-    expect(project!.contentUpdatedAt).toBeInstanceOf(Date)
+    // The Project write comes after the Lyrics write the wait above saw.
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.contentUpdatedAt instanceof Date)
     expect(await CollabDoc.exists({ name: DOC })).toBeTruthy()
 
     const fresh = await connectSynced(await ownerCookie())
@@ -1003,6 +1005,139 @@ describe('collab store retry', () => {
       expect(spy.mock.calls.length).toBeGreaterThan(1)
     } finally {
       spy.mockRestore()
+      errors.mockRestore()
+    }
+  })
+})
+
+describe('collab session epoch', () => {
+  const closesOf = (c: Client) => {
+    const codes: Array<{ code: number; reason: string }> = []
+    c.socket.on('close', ({ event }: { event: { code: number; reason: string } }) => codes.push({ code: event.code, reason: event.reason }))
+    return codes
+  }
+  const firstLine = async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text
+
+  it('hello carries the session id', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    await waitFor(() => owner.stateless.some((m) => m.t === 'hello'))
+    expect(owner.stateless.find((m) => m.t === 'hello')!.sessionId).toBe(sessionId)
+  })
+
+  it('a tab from an ended session is refused and cannot duplicate lines into the re-seeded doc', async () => {
+    const stale = await connectSynced(await ownerCookie())
+    stale.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'last edit')
+    await waitFor(() => !stale.provider.hasUnsyncedChanges)
+    await endSession(PUBLIC_ID, ownerId)
+    close(stale)
+    expect(await firstLine()).toBe('last edit')
+    // The stored doc is gone, so the next session mints new Yjs items from Lyrics.
+    expect(await CollabDoc.exists({ name: DOC })).toBeNull()
+
+    await startSession(PUBLIC_ID, ownerId)
+    const fresh = await connectSynced(await ownerCookie())
+    expect(fresh.doc.getMap('lines').size).toBe(2)
+    expect(lineText(fresh.doc, 'l1')).toBe('last edit')
+
+    const back = connect(await ownerCookie(), undefined, { parameters: { sessionId } })
+    const closes = closesOf(back)
+    await waitFor(() => back.failures.includes('session_ended') && closes.length > 0)
+    expect(closes[0]).toEqual({ code: 4410, reason: 'session_ended' })
+    expect(fresh.doc.getMap('lines').size).toBe(2)
+  })
+
+  it('a matching session id, and no session id at all, are admitted', async () => {
+    const matching = await connectSynced(await ownerCookie(), undefined, { parameters: { sessionId } })
+    const first = await connectSynced(await ownerCookie())
+    expect(matching.failures).toEqual([])
+    expect(first.failures).toEqual([])
+  })
+
+  it('a stale session id does not add a member', async () => {
+    const editor = await connect(guest('stale', editorInvite), undefined, { parameters: { sessionId: 'someoldsession' } })
+    await waitFor(() => editor.failures.length > 0)
+    expect(editor.failures[0]).toBe('session_ended')
+    const s = await CollabSession.findById(sessionId).lean()
+    expect(s!.members.some((m) => m.subject === 'guest:stale')).toBe(false)
+  })
+
+  it('ending a session with nobody connected still projects a stored doc that is ahead of Lyrics', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const spy = vi.spyOn(Lyrics, 'findOneAndUpdate').mockImplementationOnce(() => {
+      throw new Error('projection down')
+    })
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'only in the doc')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(() => spy.mock.calls.length > 0)
+    spy.mockRestore()
+    await new Promise((r) => setTimeout(r, 150))
+    expect(await firstLine()).toBe('one')
+
+    await endSession(PUBLIC_ID, ownerId)
+
+    expect(await firstLine()).toBe('only in the doc')
+    expect(await CollabDoc.exists({ name: DOC })).toBeNull()
+  })
+
+  it('a failed final store keeps the doc and the stored state until a retry lands, then removes them', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const editor = await connectSynced(guest('ed', editorInvite))
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'final')
+      await waitFor(() => !editor.provider.hasUnsyncedChanges)
+      const spy = vi.spyOn(Lyrics, 'findOneAndUpdate')
+      spy.mockImplementationOnce(() => {
+        throw new Error('projection down')
+      })
+      await endSession(PUBLIC_ID, ownerId)
+      expect(await CollabDoc.exists({ name: DOC })).not.toBeNull()
+      spy.mockRestore()
+      await waitFor(async () => await firstLine() === 'final')
+      await waitFor(async () => !(await CollabDoc.exists({ name: DOC })))
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('a new session reached during a failed final store keeps its doc', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const editor = await connectSynced(guest('ed', editorInvite))
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'final')
+      await waitFor(() => !editor.provider.hasUnsyncedChanges)
+      const spy = vi.spyOn(Lyrics, 'findOneAndUpdate').mockImplementation(() => {
+        throw new Error('projection down')
+      })
+      await endSession(PUBLIC_ID, ownerId)
+      await startSession(PUBLIC_ID, ownerId)
+      const fresh = await connectSynced(await ownerCookie())
+      expect(lineText(fresh.doc, 'l1')).toBe('final')
+      spy.mockRestore()
+      await waitFor(async () => await firstLine() === 'final')
+      await new Promise((r) => setTimeout(r, 300))
+      expect(await CollabDoc.exists({ name: DOC })).not.toBeNull()
+      expect(fresh.provider.isSynced).toBe(true)
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('a solo save is refused while a failed final store is still retrying', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const editor = await connectSynced(guest('ed', editorInvite))
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'final')
+      await waitFor(() => !editor.provider.hasUnsyncedChanges)
+      const spy = vi.spyOn(Lyrics, 'findOneAndUpdate').mockImplementation(() => {
+        throw new Error('projection down')
+      })
+      await endSession(PUBLIC_ID, ownerId)
+      expect(await collabSessionBlocks(PUBLIC_ID, { lyrics: {} } as never)).toMatchObject({ code: 'collab_active' })
+      spy.mockRestore()
+      await waitFor(async () => !(await CollabDoc.exists({ name: DOC })))
+      expect(await collabSessionBlocks(PUBLIC_ID, { lyrics: {} } as never)).toBeNull()
+    } finally {
       errors.mockRestore()
     }
   })

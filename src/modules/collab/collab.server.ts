@@ -10,7 +10,7 @@
  *
  * In-memory state (single instance is confirmed; no multi-instance machinery):
  * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
- * dirty (failed stores awaiting retry), discarded, settling, and handled credits.
+ * dirty (failed stores awaiting retry), discarded, discardAfterStore, settling, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -67,7 +67,10 @@ type CollabContext = { ws: WebSocket; ip?: string; principal?: CollabPrincipal; 
 
 export type CollabServer = {
   closeSubject(docName: string, subject: string): void
+  /** Final projection, then closes every connection and deletes the stored doc: the next session seeds from Lyrics. */
   endSession(docName: string): Promise<void>
+  /** An ended session's final store has not landed yet, so a solo save would be written over. */
+  isFlushingEnd(docName: string): boolean
   /** For a deleted project: closes every connection without storing anything. */
   discardSession(docName: string): Promise<void>
   reconnectSubject(docName: string, subject: string): void
@@ -110,15 +113,16 @@ function toFetchRequest(req: IncomingMessage): Request {
   return new Request(`http://localhost${req.url ?? '/'}`, { headers })
 }
 
+function readLyrics(publicId: string) {
+  return Lyrics.findOne({ publicId }).select('+lines sections editorMode version').lean<{
+    sections?: unknown[]; lines?: LineEntry[]; editorMode?: CollabMeta['editorMode']; version?: number
+  }>()
+}
+
 /** Initial Y.Doc state for a project: the stored CollabDoc if it is current, else a seed from Lyrics. */
 async function fetchState(docName: string): Promise<Uint8Array> {
   const publicId = publicIdOf(docName)
-  const [stored, lyrics] = await Promise.all([
-    CollabDoc.findOne({ name: docName }),
-    Lyrics.findOne({ publicId }).select('+lines sections editorMode version').lean<{
-      sections?: unknown[]; lines?: LineEntry[]; editorMode?: CollabMeta['editorMode']; version?: number
-    }>(),
-  ])
+  const [stored, lyrics] = await Promise.all([CollabDoc.findOne({ name: docName }), readLyrics(publicId)])
   const lyricsVersion = lyrics?.version ?? 0
   const lyricsSections = lyrics?.sections?.length ? lyrics.sections : migrateLinesToSections(lyrics?.lines ?? [])
 
@@ -307,6 +311,30 @@ async function storeState(docName: string, document: Y.Doc, state: Buffer, log: 
   }
 }
 
+/**
+ * Deletes the stored doc of an ended session that is not loaded. A failed projection can leave it
+ * ahead of Lyrics, and then it holds the only copy of those edits: they are projected first, and the
+ * doc is kept if that fails. A doc behind Lyrics was overtaken by a solo save, so it is just dropped.
+ */
+async function removeStoredDoc(docName: string, log: FastifyBaseLogger): Promise<void> {
+  const [stored, lyrics] = await Promise.all([CollabDoc.findOne({ name: docName }), readLyrics(publicIdOf(docName))])
+  if (!stored) return
+  if (lyrics && typeof stored.lyricsVersion === 'number' && stored.lyricsVersion >= (lyrics.version ?? 0)) {
+    const state = new Uint8Array(stored.state)
+    const sections = lyrics.sections?.length ? lyrics.sections : migrateLinesToSections(lyrics.lines ?? [])
+    if (!docMatchesLyrics(state, sections, lyrics.editorMode ?? 'lrc')) {
+      const doc = new Y.Doc()
+      try {
+        Y.applyUpdate(doc, state)
+        if (!(await storeState(docName, doc, stored.state, log))) return
+      } finally {
+        doc.destroy()
+      }
+    }
+  }
+  await CollabDoc.deleteOne({ name: docName })
+}
+
 type LockMsg =
   | { t: 'lock' | 'unlock' | 'force-unlock'; lineId: string }
   | { t: 'heartbeat'; lineIds: string[] }
@@ -351,6 +379,11 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
    * edits, so the doc must not unload. 'projection': the CollabDoc has them and only Lyrics is behind.
    */
   const dirty = new Map<string, 'state' | 'projection'>()
+  /**
+   * Docs of an ended session: once the final store has landed and the doc unloads, the stored
+   * doc is deleted. A later session then seeds from Lyrics rather than resuming this one.
+   */
+  const discardAfterStore = new Set<string>()
   /** Docs of a deleted project: nothing is stored from here on, so no store can resurrect it. */
   const discarded = new Set<string>()
   /** Teardown in progress per doc. A new connection waits for it rather than attaching to a doc on its way out. */
@@ -398,8 +431,14 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
             dirty.set(documentName, 'state')
             throw err
           }
-          if (projected) dirty.delete(documentName)
-          else dirty.set(documentName, 'projection')
+          if (projected) {
+            dirty.delete(documentName)
+            return
+          }
+          dirty.set(documentName, 'projection')
+          // Rethrowing keeps the doc loaded. Mid-session the CollabDoc has the edits and that is
+          // not needed; at the end of a session the CollabDoc is about to go.
+          if (discardAfterStore.has(documentName)) throw new Error('collab: final projection failed')
         },
       }),
     ],
@@ -413,7 +452,11 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
           ip: context.ip,
           // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
           deviceId: requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined,
+          sessionId: requestParameters.get('sessionId') ?? undefined,
         })
+        // A new session reached a doc still waiting on its predecessor's final store: it carries on
+        // from that doc (the same Yjs items), and the stored state stays.
+        if (!settling.has(documentName)) discardAfterStore.delete(documentName)
         if (principal.role === 'viewer' || frozen.has(documentName)) connectionConfig.readOnly = true
         return { principal, connId: randomUUID() }
       } catch (err) {
@@ -536,7 +579,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       if (!principal || !connId) return
       connection.sendStateless(JSON.stringify({
         t: 'hello', conn: connId, subject: principal.subject, name: principal.name,
-        colorIndex: principal.colorIndex, role: principal.role,
+        colorIndex: principal.colorIndex, role: principal.role, sessionId: principal.sessionId,
       }))
       connection.sendStateless(locksMessage(documentName))
     },
@@ -581,6 +624,10 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       clearHandled(documentName)
       discarded.delete(documentName)
       dirty.delete(documentName)
+      if (discardAfterStore.delete(documentName)) {
+        // Failing leaves the stored doc for the next session to resume; the epoch still refuses stale tabs.
+        await CollabDoc.deleteOne({ name: documentName }).catch((err: unknown) => log.error({ err, documentName }, 'collab: deleting the stored doc failed'))
+      }
       if (onAllUnloaded && hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
     },
   })
@@ -636,7 +683,9 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   }
 
   function isUnstored(docName: string): boolean {
-    return !discarded.has(docName) && dirty.get(docName) === 'state'
+    if (discarded.has(docName)) return false
+    const failed = dirty.get(docName)
+    return failed === 'state' || (failed !== undefined && discardAfterStore.has(docName))
   }
 
   function retryDirtyStores(): void {
@@ -667,11 +716,13 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   /**
    * Closes the doc's connections until it has unloaded. A connection whose auth was already
    * past the gate can still attach after the first pass; it is closed by a later one.
+   * An unstored doc stays loaded for the retry timer, so there is nothing to wait for.
    */
   async function closeUntilUnloaded(docName: string, code: number, reason: string): Promise<void> {
     const deadline = Date.now() + DESTROY_TIMEOUT_MS
     while ((hocuspocus.documents.has(docName) || hocuspocus.unloadingDocuments.has(docName)) && Date.now() < deadline) {
       for (const c of hocuspocus.documents.get(docName)?.getConnections() ?? []) drop(c, code, reason)
+      if (isUnstored(docName)) return
       await new Promise((r) => setTimeout(r, UNLOAD_POLL_MS))
     }
   }
@@ -709,15 +760,24 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.roleChanged, 'role-changed')
     },
 
-    async endSession(docName) {
-      const doc = hocuspocus.documents.get(docName)
-      if (doc) {
-        doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
-        await storeNow(doc)
-        for (const c of doc.getConnections()) drop(c, CLOSE.session_ended, 'session-ended')
-      }
-      locks.clearDoc(docName)
-      frozen.delete(docName) // a later session re-seeds from Lyrics
+    endSession(docName) {
+      return settle(docName, async () => {
+        const doc = await loadedDoc(docName)
+        if (doc) {
+          discardAfterStore.add(docName)
+          doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
+          await storeNow(doc)
+          await closeUntilUnloaded(docName, CLOSE.session_ended, 'session-ended')
+        } else {
+          await removeStoredDoc(docName, log).catch((err: unknown) => log.error({ err, docName }, 'collab: removing the stored doc failed'))
+        }
+        locks.clearDoc(docName)
+        frozen.delete(docName) // a later session re-seeds from Lyrics
+      })
+    },
+
+    isFlushingEnd(docName) {
+      return discardAfterStore.has(docName) && dirty.has(docName)
     },
 
     discardSession(docName) {

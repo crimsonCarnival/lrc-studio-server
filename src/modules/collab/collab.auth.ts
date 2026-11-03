@@ -112,6 +112,8 @@ export async function resolvePrincipal(input: {
   ip?: string
   /** Client-supplied device id (X-Device-Id equivalent), for device bans. */
   deviceId?: string
+  /** The session a reconnecting client last connected to. Absent on a first connect. */
+  sessionId?: string
 }): Promise<CollabPrincipal> {
   const match = /^project:(.+)$/.exec(input.docName)
   if (!match || !isValidPublicId(match[1])) throw new CollabAuthError('forbidden')
@@ -164,6 +166,9 @@ export async function resolvePrincipal(input: {
   }
 
   if (role !== 'owner' && session.kicked.includes(subject)) throw new CollabAuthError('forbidden')
+  // A client from an earlier session holds Yjs items the re-seeded doc does not: merging them would
+  // duplicate every line. Checked after identity, so it tells a stranger nothing about the session.
+  if (input.sessionId && input.sessionId !== sessionId) throw new CollabAuthError('session_ended')
 
   const existing = members.find((m) => m.subject === subject)
   if (existing) return { subject, name, role, colorIndex: existing.colorIndex, sessionId }
