@@ -87,4 +87,21 @@ describe('collab projection', () => {
     expect(b.getMap('lines').size).toBe(4)
     expect(docToSections(a)).toEqual(docToSections(b))
   })
+  it('a line map without order sorts as empty order, tie-broken by id', () => {
+    const doc = new Y.Doc()
+    const lines = doc.getMap<Y.Map<unknown>>('lines')
+    const put = (id: string, order?: unknown) => {
+      const m = new Y.Map<unknown>()
+      m.set('id', id)
+      m.set('text', id)
+      if (order !== undefined) m.set('order', order)
+      lines.set(id, m)
+    }
+    put('y', 'a0')
+    put('x')
+    put('w')
+    put('v', 42)
+    const flat = (docToSections(doc) as typeof sections).flatMap((s) => s.lines.map((l) => l.id))
+    expect(flat).toEqual(['v', 'w', 'x', 'y'])
+  })
 })

@@ -45,11 +45,15 @@ export function seedDocFromProject(doc: Y.Doc, sections: unknown[], meta: Collab
 export function docToSections(doc: Y.Doc): unknown[] {
   const flat = [...doc.getMap<Y.Map<unknown>>('lines').values()]
     .map((m) => m.toJSON() as Record<string, unknown>)
+    // A line map with a missing or non-string `order` (a buggy or hostile client)
+    // sorts as '' so the comparator stays a total order; id breaks every tie.
     .sort((a, b) => {
-      const ao = a.order as string
-      const bo = b.order as string
+      const ao = typeof a.order === 'string' ? a.order : ''
+      const bo = typeof b.order === 'string' ? b.order : ''
       if (ao !== bo) return ao < bo ? -1 : 1
-      return (a.id as string) < (b.id as string) ? -1 : 1
+      const ai = String(a.id ?? '')
+      const bi = String(b.id ?? '')
+      return ai < bi ? -1 : ai > bi ? 1 : 0
     })
     .map(({ order: _order, ...line }) => line as unknown as LineEntry)
   return migrateLinesToSections(flat)
