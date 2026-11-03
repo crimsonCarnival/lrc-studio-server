@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid'
 import { generateNKeysBetween } from 'fractional-indexing'
 import * as Y from 'yjs'
 import { migrateLinesToSections, sectionsToFlatLines } from '../lyrics/lyrics.model.js'
+import { MAX_SINGER_NAME_LENGTH } from '../projects/project.model.js'
 import type { LineEntry, SectionEntry, WordEntry } from '../../types/index.js'
 import type { CollabMeta } from './collab.types.js'
 
@@ -73,7 +74,9 @@ export function docToMeta(doc: Y.Doc): CollabMeta {
 
 // Limits mirror Lyrics.lineSchema / sectionSchema / wordSchema / translationSchema
 // (modules/lyrics/lyrics.model.ts). Keep them in step with that file.
-const LIMITS = { id: 50, text: 2000, label: 500, word: 500, language: 50, singer: 60 } as const
+// lineSchema.singers has no maxlength of its own; singer names come from the project
+// roster, capped at MAX_SINGER_NAME_LENGTH (mirrored client-side in SingersInput.tsx).
+const LIMITS = { id: 50, text: 2000, label: 500, word: 500, language: 50, singer: MAX_SINGER_NAME_LENGTH } as const
 const LINE_MODES = new Set(['solo', 'duet', 'split'])
 const LINE_SOURCES = new Set(['manual', 'asr'])
 
