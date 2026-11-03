@@ -412,7 +412,7 @@ export async function getProject(publicId: string, requestingUserId?: string | n
 // moments later. Visibility, cover, state and media stay writable.
 const COLLAB_OWNED_FIELDS = ['lyrics', 'metadata', 'title'] as const;
 
-async function collabSessionBlocks(publicId: string, data: UpdateProjectData): Promise<ServiceResult | null> {
+export async function collabSessionBlocks(publicId: string, data: UpdateProjectData): Promise<ServiceResult | null> {
   if (!COLLAB_OWNED_FIELDS.some((k) => data[k] !== undefined)) return null;
   if (!(await CollabSession.exists({ publicId, endedAt: null }))) return null;
   return { error: 'A live collaborative session is editing this project', status: 409, code: 'collab_active' } as ServiceResult;
