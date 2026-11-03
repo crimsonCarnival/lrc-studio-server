@@ -599,7 +599,7 @@ describe('collab awareness identity', () => {
   it("a client cannot overwrite or remove another client's awareness id", async () => {
     const owner = await connectSynced(await ownerCookie())
     const viewer = await connectSynced(guest('vw', viewerInvite))
-    // The owner ignores updates about its own id, so a third client is the witness of what the server relays.
+    // A client applies a forged state for its own id only when the clock is higher, so a third client is the neutral witness of what the server relays.
     const witness = await connectSynced(guest('ed', editorInvite))
     owner.provider.awareness!.setLocalState({ activeLineId: 'real' })
     const target = owner.doc.clientID
@@ -620,5 +620,57 @@ describe('collab awareness identity', () => {
     await waitFor(() => (states(owner).get(viewer.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'marker')
     await new Promise((r) => setTimeout(r, 200))
     expect((states(witness).get(target) as { activeLineId?: string } | undefined)?.activeLineId).toBe('real')
+  })
+
+  // Sends awareness for an arbitrary clientId over this client's own connection.
+  function sendAs(c: Client, clientId: number, state: object | null) {
+    const aw = c.provider.awareness!
+    if (state) aw.getStates().set(clientId, state)
+    else aw.getStates().delete(clientId)
+    aw.meta.set(clientId, { clock: (aw.meta.get(clientId)?.clock ?? 0) + 1000, lastUpdated: Date.now() })
+    ;(c.provider as unknown as { awarenessUpdateHandler: (ch: object, o: unknown) => void })
+      .awarenessUpdateHandler({ added: [], updated: state ? [clientId] : [], removed: state ? [] : [clientId] }, 'test')
+  }
+
+  it("removes a peer's awareness for everyone else when it disconnects", async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    viewer.provider.awareness!.setLocalState({ activeLineId: 'l1' })
+    const id = viewer.doc.clientID
+    await waitFor(() => states(owner).has(id))
+    close(viewer)
+    await waitFor(() => !states(owner).has(id))
+  })
+
+  it('another subject cannot claim a clientId a disconnected peer used; the same subject can reuse it', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const witness = await connectSynced(guest('ed', editorInvite))
+    const first = await connectSynced(guest('vw', viewerInvite))
+    first.provider.awareness!.setLocalState({ activeLineId: 'a' })
+    const id = first.doc.clientID
+    await waitFor(() => states(witness).has(id))
+    first.socket.disconnect()
+    await waitFor(() => !states(witness).has(id))
+    // A different subject tries to squat the id.
+    sendAs(owner, id, { activeLineId: 'squat' })
+    owner.provider.awareness!.setLocalState({ activeLineId: 'marker' })
+    await waitFor(() => (states(witness).get(owner.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'marker')
+    expect(states(witness).has(id)).toBe(false)
+    // The original subject comes back on a new connection with the same clientId.
+    first.socket.connect().catch(() => {})
+    await waitFor(() => first.provider.isSynced)
+    first.provider.awareness!.setLocalState({ activeLineId: 'back' })
+    await waitFor(() => (states(witness).get(id) as { activeLineId?: string } | undefined)?.activeLineId === 'back')
+  })
+
+  it('drops a second clientId sent over the same connection', async () => {
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    const witness = await connectSynced(guest('ed', editorInvite))
+    viewer.provider.awareness!.setLocalState({ activeLineId: 'a' })
+    await waitFor(() => states(witness).has(viewer.doc.clientID))
+    sendAs(viewer, 424242, { activeLineId: 'extra' })
+    viewer.provider.awareness!.setLocalState({ activeLineId: 'marker' })
+    await waitFor(() => (states(witness).get(viewer.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'marker')
+    expect(states(witness).has(424242)).toBe(false)
   })
 })
