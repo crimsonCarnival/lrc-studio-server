@@ -358,7 +358,7 @@ describe('collab persistence hardening', () => {
     }
   })
 
-  it('a crash between the state and Lyrics writes does not re-seed', async () => {
+  it('a crash after the state write but before the Lyrics write keeps the doc', async () => {
     const editor = await connectSynced(guest('ed', editorInvite))
     editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'newest')
     await waitFor(() => !editor.provider.hasUnsyncedChanges)
@@ -369,6 +369,61 @@ describe('collab persistence hardening', () => {
     await Lyrics.updateOne({ publicId: PUBLIC_ID }, { $set: { 'sections.0.lines.0.text': 'one' }, $inc: { version: -1 } })
     const fresh = await connectSynced(await ownerCookie())
     expect(lineText(fresh.doc, 'l1')).toBe('newest')
+  })
+})
+
+describe('collab version bookkeeping', () => {
+  it('a failed Lyrics write followed by a solo save re-seeds with the solo content', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const spy = vi.spyOn(Lyrics, 'findOneAndUpdate').mockImplementationOnce(() => {
+      throw new Error('projection down')
+    })
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'collab')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(() => spy.mock.calls.length > 0)
+    spy.mockRestore()
+    await new Promise((r) => setTimeout(r, 150))
+    // The owner saves solo while the projection is behind.
+    await Lyrics.updateOne({ publicId: PUBLIC_ID }, { $set: { 'sections.0.lines.0.text': 'solo' }, $inc: { version: 1 } })
+    const fresh = await connectSynced(await ownerCookie())
+    expect(lineText(fresh.doc, 'l1')).toBe('solo')
+  })
+
+  it('a crash after the Lyrics write but before the lyricsVersion write keeps the doc and its Yjs items', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'collab')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    close(editor)
+    await waitFor(async () => {
+      const [l, d] = await Promise.all([Lyrics.findOne({ publicId: PUBLIC_ID }).lean(), CollabDoc.findOne({ name: DOC }).lean()])
+      return l!.sections[0].lines[0].text === 'collab' && d?.lyricsVersion === l!.version
+    })
+    await new Promise((r) => setTimeout(r, 150))
+    const lyrics = await Lyrics.findOne({ publicId: PUBLIC_ID }).lean()
+    // As if the process died before recording the version Lyrics reached.
+    await CollabDoc.updateOne({ name: DOC }, { $set: { lyricsVersion: lyrics!.version - 1 } })
+    const before = (await CollabDoc.findOne({ name: DOC }))!.state
+    const fresh = await connectSynced(await ownerCookie())
+    expect(lineText(fresh.doc, 'l1')).toBe('collab')
+    const after = await CollabDoc.findOne({ name: DOC })
+    expect(Buffer.compare(after!.state, before)).toBe(0) // no re-seed: same Yjs items
+    expect(after!.lyricsVersion).toBe(lyrics!.version)
+  })
+
+  it('a writer already connected when the doc freezes cannot add more', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const owner = await connectSynced(await ownerCookie())
+    const viewer = await connectSynced(guest('vw', viewerInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'y'.repeat(150_000))
+    await waitFor(() => editor.provider.authorizedScope === 'readonly')
+    owner.doc.getMap<Y.Map<unknown>>('lines').get('l2')!.set('text', 'after-freeze')
+    await new Promise((r) => setTimeout(r, 400))
+    expect(lineText(viewer.doc, 'l2')).toBe('two')
+    for (const c of open.splice(0)) close(c)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text.length === 2000)
+    expect((await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[1].text).toBe('two')
+    await getCollabServer().endSession(DOC)
   })
 })
 

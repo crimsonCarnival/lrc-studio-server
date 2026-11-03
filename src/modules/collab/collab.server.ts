@@ -102,12 +102,23 @@ async function fetchState(docName: string): Promise<Uint8Array> {
     }>(),
   ])
   const lyricsVersion = lyrics?.version ?? 0
-  // `>=`, not `===`: storeState records the version Lyrics is *about* to reach in
-  // the same write as the state, so a crash before the Lyrics write leaves the
-  // CollabDoc one ahead, and it is the newer copy. Only a Lyrics version past the
-  // CollabDoc's means someone wrote Lyrics outside the session, which re-seeds.
-  if (stored && typeof stored.lyricsVersion === 'number' && stored.lyricsVersion >= lyricsVersion) {
-    return new Uint8Array(stored.state)
+  const lyricsSections = lyrics?.sections?.length ? lyrics.sections : migrateLinesToSections(lyrics?.lines ?? [])
+
+  if (stored) {
+    // lyricsVersion is only ever the version Lyrics actually reached from this doc
+    // (storeState sets it after a successful projection), so equal means current.
+    if (typeof stored.lyricsVersion === 'number' && stored.lyricsVersion >= lyricsVersion) {
+      return new Uint8Array(stored.state)
+    }
+    // Lyrics moved past the doc. Either someone saved outside the session (re-seed),
+    // or the process died between the Lyrics write and the lyricsVersion write: then
+    // Lyrics holds exactly the doc's projection, and re-seeding would mint new Yjs
+    // items and duplicate every line for clients still holding the old ones.
+    const state = new Uint8Array(stored.state)
+    if (lyrics && docMatchesLyrics(state, lyricsSections, lyrics.editorMode ?? 'lrc')) {
+      await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion } })
+      return state
+    }
   }
 
   const project = await Project.findOne({ publicId }).select('title metadata uploadId').lean()
@@ -125,10 +136,8 @@ async function fetchState(docName: string): Promise<Uint8Array> {
       ? { source: upload.source, url: upload.uploadUrl ?? null, uploadId: String(upload._id) }
       : { source: null, url: null, uploadId: null },
   }
-  const sections = lyrics?.sections?.length ? lyrics.sections : migrateLinesToSections(lyrics?.lines ?? [])
-
   const seed = new Y.Doc()
-  seedDocFromProject(seed, sections, meta)
+  seedDocFromProject(seed, lyricsSections, meta)
   const update = Y.encodeStateAsUpdate(seed)
   seed.destroy()
   // Persist the seed right away: a re-seed on the next load would mint new Yjs
@@ -141,27 +150,40 @@ async function fetchState(docName: string): Promise<Uint8Array> {
   return update
 }
 
+/**
+ * Sections in the exact shape Lyrics persists them: cast through the model so
+ * defaults, setters (HTML stripping) and field order all match a stored document.
+ */
+function canonicalSections(sections: unknown[]): string {
+  const sanitized = sanitizeSectionsForLyrics(sections)
+  return JSON.stringify(new Lyrics({ publicId: '_', sections: sanitized }).toObject().sections)
+}
+
+/** True when the stored doc's projection is what Lyrics already holds. */
+function docMatchesLyrics(state: Uint8Array, lyricsSections: unknown[], lyricsMode: CollabMeta['editorMode']): boolean {
+  const doc = new Y.Doc()
+  try {
+    Y.applyUpdate(doc, state)
+    const mode = validEditorMode(doc.getMap('meta').get('editorMode')) ?? lyricsMode
+    return mode === lyricsMode && canonicalSections(docToSections(doc)) === canonicalSections(lyricsSections)
+  } finally {
+    doc.destroy()
+  }
+}
+
 async function storeState(docName: string, document: Document, state: Buffer, log: FastifyBaseLogger): Promise<void> {
   const publicId = publicIdOf(docName)
-  let expectedVersion: number | null
   try {
-    const current = await Lyrics.findOne({ publicId }).select('version').lean<{ version: number }>()
-    expectedVersion = current ? current.version + 1 : null
-    // State and the Lyrics version it is about to project into, in ONE write: no
-    // crash window leaves a CollabDoc that a load would re-seed over (a re-seed
-    // mints new Yjs items and duplicates every line for clients holding the old ones).
-    await CollabDoc.updateOne(
-      { name: docName },
-      { $set: { state, ...(expectedVersion !== null ? { lyricsVersion: expectedVersion } : {}) } },
-      { upsert: true },
-    )
+    // State only. lyricsVersion is recorded below, and only once Lyrics really
+    // reached that version: claiming it up front would let a failed projection
+    // mask a later solo save (fetchState's `>=` check).
+    await CollabDoc.updateOne({ name: docName }, { $set: { state } }, { upsert: true })
   } catch (err) {
     log.error({ err, docName }, 'collab: persisting doc state failed; keeping the doc in memory')
     // Rethrown on purpose: Hocuspocus catches a failed store (storeDocumentHooks)
     // and keeps the doc loaded instead of unloading, and losing, unpersisted edits.
     throw err
   }
-  if (expectedVersion === null) return // no Lyrics document (project deleted): nothing to project into
 
   try {
     const $set: Record<string, unknown> = { sections: sanitizeSectionsForLyrics(docToSections(document)) }
@@ -175,10 +197,9 @@ async function storeState(docName: string, document: Document, state: Buffer, lo
       { returnDocument: 'after', runValidators: true },
     ).select('version').lean<{ version: number }>()
     if (!lyrics) return
-    // A solo save raced in between the read and this write: record the real version.
-    if (lyrics.version !== expectedVersion) {
-      await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } })
-    }
+    // A crash right here leaves lyricsVersion behind Lyrics; fetchState recognises
+    // that case by content and keeps the doc (docMatchesLyrics).
+    await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } })
     await Project.updateOne({ publicId }, { $set: { contentUpdatedAt: new Date() }, $inc: { version: 1 } })
   } catch (err) {
     // The CollabDoc already holds the truth; a projection failure must not keep the doc from persisting.
@@ -327,9 +348,14 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       if (size.bytes <= maxDocBytes) return
       if (!frozen.has(documentName)) log.warn({ documentName, bytes: size.bytes }, 'collab: doc over size cap; now read-only')
       frozen.add(documentName)
-      if (connection) {
-        connection.readOnly = true // drop anything it already queued
-        drop(connection, CLOSE.tooLarge, 'doc-too-large')
+      // Every connection, not just the sender: another writer already connected
+      // could otherwise keep adding up to a frame each. readOnly takes effect for
+      // messages already queued, so nothing more lands. Writers are then reconnected
+      // so their providers learn the read-only scope instead of editing into the void.
+      for (const conn of document.getConnections()) {
+        const wasWritable = !conn.readOnly
+        conn.readOnly = true
+        if (wasWritable || conn === connection) drop(conn, CLOSE.tooLarge, 'doc-too-large')
       }
     },
 
