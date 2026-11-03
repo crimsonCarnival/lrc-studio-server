@@ -4,11 +4,12 @@ import { nanoid } from 'nanoid'
 import Project from '../projects/project.model.js'
 import User from '../users/user.model.js'
 import { isValidPublicId } from '../../socket/project-viewers.js'
+import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import {
   assertNoNetworkBan, CollabAuthError, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
 } from './collab.auth.js'
-import { getCollabServer } from './collab.server.js'
+import { getCollabServer, mountedCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
 import { markHandled } from './collab-credits.service.js'
 
@@ -132,6 +133,38 @@ export async function endSession(publicId: string, userId: string | null | undef
   if (!ended) throw notFound()
   await getCollabServer().endSession(docNameOf(publicId))
   return true
+}
+
+/**
+ * Second half of deleting a project; the caller already ended its session in the delete's
+ * transaction. Closes the live connections without storing, then removes the stored doc, which
+ * would otherwise keep serving the content. Never throws: the project is gone either way.
+ */
+export async function discardDeletedProject(publicId: string): Promise<void> {
+  const docName = docNameOf(publicId)
+  try {
+    await mountedCollabServer()?.discardSession(docName)
+    await CollabDoc.deleteOne({ name: docName })
+  } catch (err) {
+    console.error('[collab] discarding a deleted project failed', { publicId, err })
+  }
+}
+
+/**
+ * The owner's account is going away: end their live sessions. Their projects stay (a deactivated
+ * account can come back), so this is a normal end that keeps the edits, not a discard. Never throws:
+ * the account change has already happened.
+ */
+export async function endSessionsOwnedBy(userId: string): Promise<void> {
+  try {
+    const live = await CollabSession.find({ ownerId: userId, endedAt: null }).select('publicId').lean<Array<{ publicId: string }>>()
+    await Promise.all(live.map(async ({ publicId }) => {
+      await CollabSession.updateOne({ publicId, endedAt: null }, { $set: { endedAt: new Date() } })
+      await mountedCollabServer()?.endSession(docNameOf(publicId))
+    }))
+  } catch (err) {
+    console.error('[collab] ending a deleted account\'s sessions failed', { userId, err })
+  }
 }
 
 /** Returns the raw token; only its sha256 is stored, so this is the one time it exists. */

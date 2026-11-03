@@ -3,6 +3,7 @@ import User from '../users/user.model.js';
 import { notifyAppealResult } from '../notifications/notifications.events.js';
 import Session from '../auth/session.model.js';
 import BannedIp from './banned-ip.model.js';
+import { endSessionsOwnedBy } from '../collab/collab.service.js';
 import BannedDevice from './banned-device.model.js';
 import UserDevice from '../auth/user-device.model.js';
 import Project from '../projects/project.model.js';
@@ -581,6 +582,7 @@ export async function deleteUser(userId: string, adminId: string | null = null, 
     { $set: { deletedAt: user.deletedAt, isDeleted: user.isDeleted, ban: user.ban, appeal: user.appeal } }
   );
   await syncOwnerVisibility(user._id);
+  await endSessionsOwnedBy(userId);
 
   if (adminId) {
     const admin = await User.findById(adminId);

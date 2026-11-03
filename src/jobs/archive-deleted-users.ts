@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import User from '../modules/users/user.model.js';
+import { endSessionsOwnedBy } from '../modules/collab/collab.service.js';
 
 // UserArchive uses an empty schema with strict: false so it can store any shape
 // of user document without requiring a mirrored schema definition. This is
@@ -21,6 +22,8 @@ export async function archiveDeletedUsers() {
   if (toArchive.length === 0) return;
 
   const ids = toArchive.map((u) => u._id);
+  // Normally ended when the account was deleted; this catches a failure back then.
+  await Promise.all(ids.map((id) => endSessionsOwnedBy(id.toString())));
 
   const session = await mongoose.startSession();
   try {

@@ -7,6 +7,10 @@
  * the same project can land on different instances and never see each other.
  * Same constraint as socket/project-viewers.ts, asr/job.store.ts and the
  * requests pending queue — see .claude/rules/technical-debt.md.
+ *
+ * In-memory state (single instance is confirmed; no multi-instance machinery):
+ * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
+ * discarded, settling, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -45,6 +49,7 @@ const RECHECK_BYTES = 64 * 1024
 const MAX_PENDING_DOCUMENTS = 4
 /** Upper bound on how long shutdown waits for pending stores before giving up. */
 const DESTROY_TIMEOUT_MS = 10_000
+const UNLOAD_POLL_MS = 10
 
 // Application close codes (4000–4999 are free for app use).
 const CLOSE = {
@@ -61,6 +66,8 @@ type CollabContext = { ws: WebSocket; ip?: string; principal?: CollabPrincipal; 
 export type CollabServer = {
   closeSubject(docName: string, subject: string): void
   endSession(docName: string): Promise<void>
+  /** For a deleted project: closes every connection without storing anything. */
+  discardSession(docName: string): Promise<void>
   reconnectSubject(docName: string, subject: string): void
   broadcastLocks(docName: string): void
 }
@@ -74,6 +81,11 @@ let current: MountedCollabServer | null = null
 
 export function getCollabServer(): CollabServer {
   if (!current) throw new Error('collab server is not mounted')
+  return current
+}
+
+/** The mounted server, or null where none is (jobs and tests that run without the plugin). */
+export function mountedCollabServer(): CollabServer | null {
   return current
 }
 
@@ -325,6 +337,10 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
+  /** Docs of a deleted project: nothing is stored from here on, so no store can resurrect it. */
+  const discarded = new Set<string>()
+  /** Teardown in progress per doc. A new connection waits for it rather than attaching to a doc on its way out. */
+  const settling = new Map<string, Promise<void>>()
   // Per document: awareness clientId -> owning subject, and connection -> the one clientId it may use.
   type AwarenessIds = { subjectOf: Map<number, string>; idOf: Map<string, number> }
   const awarenessIds = new Map<string, AwarenessIds>()
@@ -359,11 +375,15 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     extensions: [
       new Database({
         fetch: ({ documentName }) => fetchState(documentName),
-        store: ({ documentName, document, state }) => storeState(documentName, document, state, log),
+        store: async ({ documentName, document, state }) => {
+          if (discarded.has(documentName)) return
+          await storeState(documentName, document, state, log)
+        },
       }),
     ],
 
     async onAuthenticate({ documentName, requestHeaders, requestParameters, connectionConfig, context }) {
+      await settling.get(documentName)?.catch(() => undefined)
       try {
         const principal = await resolvePrincipal({
           cookieHeader: requestHeaders.get('cookie') ?? '',
@@ -531,6 +551,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       locks.clearDoc(documentName)
       docSize.delete(documentName)
       clearHandled(documentName)
+      discarded.delete(documentName)
       if (onAllUnloaded && hocuspocus.getDocumentsCount() === 0) onAllUnloaded()
     },
   })
@@ -573,6 +594,47 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     ;(conn.context as CollabContext).ws.close(code, reason)
   }
 
+  /** Runs now any pending debounced store of this doc, after one already in flight. Never rejects. */
+  function storeNow(doc: Document): Promise<unknown> {
+    return hocuspocus.storeDocumentHooks(doc, {
+      instance: hocuspocus,
+      clientsCount: doc.getConnectionsCount(),
+      document: doc,
+      documentName: doc.name,
+      lastContext: {} as CollabContext,
+      lastTransactionOrigin: null,
+    }, true)
+  }
+
+  /** Serialises teardowns of one doc and publishes the current one to the auth gate. */
+  function settle(docName: string, work: () => Promise<void>): Promise<void> {
+    const run: Promise<void> = (settling.get(docName)?.catch(() => undefined) ?? Promise.resolve())
+      .then(work)
+      .finally(() => {
+        if (settling.get(docName) === run) settling.delete(docName)
+      })
+    settling.set(docName, run)
+    return run
+  }
+
+  /** The doc as loaded, waiting out a load in progress. */
+  async function loadedDoc(docName: string): Promise<Document | undefined> {
+    await hocuspocus.loadingDocuments.get(docName)?.catch(() => undefined)
+    return hocuspocus.documents.get(docName)
+  }
+
+  /**
+   * Closes the doc's connections until it has unloaded. A connection whose auth was already
+   * past the gate can still attach after the first pass; it is closed by a later one.
+   */
+  async function closeUntilUnloaded(docName: string, code: number, reason: string): Promise<void> {
+    const deadline = Date.now() + DESTROY_TIMEOUT_MS
+    while ((hocuspocus.documents.has(docName) || hocuspocus.unloadingDocuments.has(docName)) && Date.now() < deadline) {
+      for (const c of hocuspocus.documents.get(docName)?.getConnections() ?? []) drop(c, code, reason)
+      await new Promise((r) => setTimeout(r, UNLOAD_POLL_MS))
+    }
+  }
+
   const sweepTimer = setInterval(() => {
     for (const docName of locks.sweep()) broadcastLocks(docName)
   }, SWEEP_MS)
@@ -607,18 +669,27 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       const doc = hocuspocus.documents.get(docName)
       if (doc) {
         doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
-        await hocuspocus.storeDocumentHooks(doc, {
-          instance: hocuspocus,
-          clientsCount: doc.getConnectionsCount(),
-          document: doc,
-          documentName: docName,
-          lastContext: {} as CollabContext,
-          lastTransactionOrigin: null,
-        }, true)
+        await storeNow(doc)
         for (const c of doc.getConnections()) drop(c, CLOSE.session_ended, 'session-ended')
       }
       locks.clearDoc(docName)
       frozen.delete(docName) // a later session re-seeds from Lyrics
+    },
+
+    discardSession(docName) {
+      return settle(docName, async () => {
+        const doc = await loadedDoc(docName)
+        if (doc) {
+          discarded.add(docName)
+          // The store is now a no-op, so this only waits out one already writing:
+          // the caller deletes the CollabDoc next, and that write must land first.
+          await storeNow(doc)
+          doc.broadcastStateless(JSON.stringify({ t: 'session-ended' }))
+          await closeUntilUnloaded(docName, CLOSE.session_ended, 'session-ended')
+        }
+        locks.clearDoc(docName)
+        frozen.delete(docName)
+      })
     },
 
     async destroy() {

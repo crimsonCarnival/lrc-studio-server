@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import mongoose from 'mongoose'
-import { MongoMemoryServer } from 'mongodb-memory-server'
+import { MongoMemoryReplSet } from 'mongodb-memory-server'
 import WebSocket from 'ws'
 import net from 'net'
 import { vi } from 'vitest'
@@ -18,6 +18,10 @@ import CollabDoc from './collab-doc.model.js'
 import { signGuestToken } from './collab.auth.js'
 import { getCollabServer } from './collab.server.js'
 import { removeProjectCollaborator } from './collab.service.js'
+import { deleteProjectAsModerator } from '../projects/projects.crud.service.js'
+import { deactivateUser } from '../auth/auth.service.js'
+import { deleteUser } from '../admin/admin.service.js'
+import { archiveDeletedUsers } from '../../jobs/archive-deleted-users.js'
 
 // Lets a test hold the server's disconnect-time awareness removal, to stand in for a peer whose
 // connection is gone but whose state the server has not cleaned up yet.
@@ -37,7 +41,7 @@ const ORIGIN = 'http://localhost:5173'
 const PUBLIC_ID = 'srvproj001'
 const DOC = `project:${PUBLIC_ID}`
 
-let mongo: MongoMemoryServer
+let mongo: MongoMemoryReplSet
 let app: FastifyInstance
 let url: string
 let ownerId: string
@@ -118,7 +122,8 @@ function guest(id: string, inviteId: string): string {
 }
 
 beforeAll(async () => {
-  mongo = await MongoMemoryServer.create()
+  // A replica set: deleting a project and resetting a password run in transactions.
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } })
   await mongoose.connect(mongo.getUri())
   app = Fastify()
   // Loose admission limits: this file opens many sockets from one IP. Small doc cap keeps the size test fast.
@@ -865,5 +870,74 @@ describe('collab credits', () => {
     await settle()
     expect((await credits()).map((c) => c.subject)).not.toContain('guest:late')
     await getCollabServer().endSession(DOC)
+  })
+})
+
+describe('collab project deletion', () => {
+  it('closes live connections without storing, removes the stored doc and ends the session', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const closes: number[] = []
+    editor.socket.on('close', ({ event }: { event: { code: number } }) => closes.push(event.code))
+    await waitFor(async () => !!(await CollabDoc.exists({ name: DOC })))
+    // An edit still inside the store debounce when the delete lands.
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'after delete')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+
+    expect(await deleteProjectAsModerator(PUBLIC_ID, ownerId)).toBe(true)
+
+    await waitFor(() => closes.includes(4410))
+    expect(editor.stateless.some((m) => m.t === 'session-ended')).toBe(true)
+    expect(await CollabSession.exists({ publicId: PUBLIC_ID, endedAt: null })).toBeNull()
+    // Past every debounce: nothing wrote the doc or the lyrics back.
+    await new Promise((r) => setTimeout(r, 2300))
+    expect(await CollabDoc.exists({ name: DOC })).toBeNull()
+    expect(await Lyrics.exists({ publicId: PUBLIC_ID })).toBeNull()
+    await waitFor(() => editor.failures.includes('session_ended'))
+  })
+
+  it('a deleted project with no live connections leaves no stored doc to serve', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    close(editor)
+    await new Promise((r) => setTimeout(r, 150))
+    expect(await CollabDoc.exists({ name: DOC })).not.toBeNull()
+    await deleteProjectAsModerator(PUBLIC_ID, ownerId)
+    expect(await CollabDoc.exists({ name: DOC })).toBeNull()
+  })
+})
+
+describe('collab account deletion', () => {
+  async function liveEdit(): Promise<Client> {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    return editor
+  }
+  const isLive = () => CollabSession.exists({ publicId: PUBLIC_ID, endedAt: null })
+  const firstLine = async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text
+
+  // The project outlives the account (a deactivated account can come back), so the session's edits are kept.
+  it("deactivating the owner's account ends their session and keeps its edits", async () => {
+    const editor = await liveEdit()
+    await deactivateUser(ownerId)
+    expect(await isLive()).toBeNull()
+    expect(editor.stateless.some((m) => m.t === 'session-ended')).toBe(true)
+    expect(await firstLine()).toBe('kept')
+  })
+
+  it("an admin deleting the owner's account ends their session", async () => {
+    const admin = await User.collection.insertOne({
+      accountName: 'admin1', email: 'a@x.test', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    const editor = await liveEdit()
+    await deleteUser(ownerId, admin.insertedId.toString())
+    expect(await isLive()).toBeNull()
+    expect(editor.stateless.some((m) => m.t === 'session-ended')).toBe(true)
+  })
+
+  it('the archive job ends any session still live on an archived account', async () => {
+    await User.updateOne({ _id: ownerId }, { $set: { isDeleted: true, deletedAt: new Date(Date.now() - 91 * 86_400_000) } })
+    await archiveDeletedUsers()
+    expect(await User.exists({ _id: ownerId })).toBeNull()
+    expect(await isLive()).toBeNull()
   })
 })
