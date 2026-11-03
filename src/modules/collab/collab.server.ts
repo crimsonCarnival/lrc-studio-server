@@ -61,6 +61,7 @@ const CLOSE = {
   session_ended: 4410,
   kicked: 4403,
   roleChanged: 4409,
+  reauth: 4409,
   tooLarge: 4413,
 } as const
 
@@ -75,6 +76,12 @@ export type CollabServer = {
   /** For a deleted project: closes every connection without storing anything and deletes the stored doc. */
   discardSession(docName: string): Promise<void>
   reconnectSubject(docName: string, subject: string): void
+  /** Closes every live connection of a signed-in user, in every doc (ban, account deletion). */
+  closeUserEverywhere(userId: string): void
+  /** Makes every connection of a signed-in user re-authenticate (a revoked login session is refused there). */
+  reauthUserEverywhere(userId: string): void
+  /** Makes every connection from this IP re-authenticate, where network bans apply. */
+  reauthIpEverywhere(ip: string): void
   broadcastLocks(docName: string): void
 }
 
@@ -93,6 +100,18 @@ export function getCollabServer(): CollabServer {
 /** The mounted server, or null where none is (jobs and tests that run without the plugin). */
 export function mountedCollabServer(): CollabServer | null {
   return current
+}
+
+/**
+ * Tells the mounted server about a ban or a revocation that has already happened. Never throws:
+ * failing to close a socket must not fail the moderation action, and the next re-auth still refuses.
+ */
+export function withCollabServer(action: (server: CollabServer) => void): void {
+  try {
+    if (current) action(current)
+  } catch (err) {
+    console.error('[collab] reaching live connections failed', err)
+  }
 }
 
 function publicIdOf(docName: string): string {
@@ -694,6 +713,10 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     ;(conn.context as CollabContext).ws.close(code, reason)
   }
 
+  function connectionsEverywhere(match: (c: CollabContext) => boolean): Connection[] {
+    return [...hocuspocus.documents.values()].flatMap((d) => d.getConnections()).filter((c) => match(c.context as CollabContext))
+  }
+
   /** Runs now any pending debounced store of this doc, after one already in flight. Never rejects. */
   function storeNow(doc: Document): Promise<unknown> {
     return hocuspocus.storeDocumentHooks(doc, {
@@ -782,6 +805,18 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     reconnectSubject(docName, subject) {
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.roleChanged, 'role-changed')
+    },
+
+    closeUserEverywhere(userId) {
+      for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.forbidden, 'forbidden')
+    },
+
+    reauthUserEverywhere(userId) {
+      for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.reauth, 'reauth')
+    },
+
+    reauthIpEverywhere(ip) {
+      for (const c of connectionsEverywhere((ctx) => ctx.ip === ip)) drop(c, CLOSE.reauth, 'reauth')
     },
 
     endSession(docName) {

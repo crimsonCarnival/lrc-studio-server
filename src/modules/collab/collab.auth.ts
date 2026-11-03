@@ -9,7 +9,15 @@ import User from '../users/user.model.js'
 import CollabSession from './collab-session.model.js'
 import type { CollabRole } from './collab.types.js'
 
-export type CollabPrincipal = { subject: string; name: string; role: CollabRole; colorIndex: number; sessionId: string }
+export type CollabPrincipal = {
+  subject: string
+  name: string
+  role: CollabRole
+  colorIndex: number
+  sessionId: string
+  /** The signed-in account behind this connection, even when it is connected as a guest. */
+  accountId?: string
+}
 export type CollabAuthCode = 'forbidden' | 'unauthorized' | 'session_ended'
 export type GuestClaims = { guestId: string; name: string; sessionId: string; inviteId: string }
 
@@ -170,8 +178,9 @@ export async function resolvePrincipal(input: {
   // duplicate every line. Checked after identity, so it tells a stranger nothing about the session.
   if (input.sessionId && input.sessionId !== sessionId) throw new CollabAuthError('session_ended')
 
+  const identity = { subject, name, role, sessionId, ...(user ? { accountId: user.id } : {}) }
   const existing = members.find((m) => m.subject === subject)
-  if (existing) return { subject, name, role, colorIndex: existing.colorIndex, sessionId }
+  if (existing) return { ...identity, colorIndex: existing.colorIndex }
 
   // First connection: claim a colour and record the member. The filter keeps a
   // racing second tab of the same subject from adding a duplicate entry.
@@ -183,7 +192,7 @@ export async function resolvePrincipal(input: {
   if (res.modifiedCount === 0) {
     const fresh = await CollabSession.findById(session._id).select('members').lean()
     const raced = (fresh?.members as MemberEntry[] | undefined)?.find((m) => m.subject === subject)
-    if (raced) return { subject, name, role, colorIndex: raced.colorIndex, sessionId }
+    if (raced) return { ...identity, colorIndex: raced.colorIndex }
   }
-  return { subject, name, role, colorIndex, sessionId }
+  return { ...identity, colorIndex }
 }

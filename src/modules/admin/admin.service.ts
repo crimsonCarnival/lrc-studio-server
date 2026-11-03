@@ -3,7 +3,8 @@ import User from '../users/user.model.js';
 import { notifyAppealResult } from '../notifications/notifications.events.js';
 import Session from '../auth/session.model.js';
 import BannedIp from './banned-ip.model.js';
-import { endSessionsOwnedBy } from '../collab/collab.service.js';
+import { disconnectDeletedAccount } from '../collab/collab.service.js';
+import { withCollabServer } from '../collab/collab.server.js';
 import BannedDevice from './banned-device.model.js';
 import UserDevice from '../auth/user-device.model.js';
 import Project from '../projects/project.model.js';
@@ -326,6 +327,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     return { error: 'Cannot act on a user of equal or higher rank', status: 403 };
   }
 
+  let ipBanned: string | null = null;
   if (banStatus) {
     user.ban = { active: true, reason, until: bannedUntil ? new Date(bannedUntil) : null };
 
@@ -343,6 +345,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
           },
           { upsert: true }
         );
+        ipBanned = user.lastIp;
       }
     }
 
@@ -381,6 +384,12 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     { _id: user._id },
     { $set: banStatus ? { ban: user.ban } : { ban: user.ban, appeal: user.appeal } }
   );
+  if (banStatus) {
+    withCollabServer((server) => {
+      server.closeUserEverywhere(userId);
+      if (ipBanned) server.reauthIpEverywhere(ipBanned);
+    });
+  }
 
   // Hide (or restore) everything this user owns. Awaited, not fire-and-forget:
   // a ban that leaves the content visible is the bug this closes, so a failure
@@ -581,8 +590,8 @@ export async function deleteUser(userId: string, adminId: string | null = null, 
     { _id: user._id },
     { $set: { deletedAt: user.deletedAt, isDeleted: user.isDeleted, ban: user.ban, appeal: user.appeal } }
   );
+  await disconnectDeletedAccount(userId);
   await syncOwnerVisibility(user._id);
-  await endSessionsOwnedBy(userId);
 
   if (adminId) {
     const admin = await User.findById(adminId);
@@ -657,6 +666,7 @@ export async function blockIp(ip: string, reason: string, adminId: string, actor
     reason,
     bannedBy: adminId,
   });
+  withCollabServer((server) => server.reauthIpEverywhere(ip));
   await logAdminAction({ adminId, action: 'block_ip', targetName: ip, details: reason || null, ip: actorIp });
   return { success: true, bannedIp };
 }

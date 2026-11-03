@@ -9,7 +9,7 @@ import CollabSession from './collab-session.model.js'
 import {
   assertNoNetworkBan, CollabAuthError, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
 } from './collab.auth.js'
-import { getCollabServer, mountedCollabServer } from './collab.server.js'
+import { getCollabServer, mountedCollabServer, withCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
 import { markHandled } from './collab-credits.service.js'
 
@@ -152,11 +152,12 @@ export async function discardDeletedProject(publicId: string): Promise<void> {
 }
 
 /**
- * The owner's account is going away: end their live sessions. Their projects stay (a deactivated
- * account can come back), so this is a normal end that keeps the edits, not a discard. Never throws:
- * the account change has already happened.
+ * An account is going away: drop it from every session it is in, its own or anyone else's, and end
+ * the ones it owns. Its projects stay (a deactivated account can come back), so that is a normal end
+ * that keeps the edits, not a discard. Never throws: the account change has already happened.
  */
-export async function endSessionsOwnedBy(userId: string): Promise<void> {
+export async function disconnectDeletedAccount(userId: string): Promise<void> {
+  withCollabServer((server) => server.closeUserEverywhere(userId))
   try {
     const live = await CollabSession.find({ ownerId: userId, endedAt: null }).select('publicId').lean<Array<{ publicId: string }>>()
     await Promise.all(live.map(async ({ publicId }) => {

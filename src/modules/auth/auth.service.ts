@@ -5,7 +5,8 @@ import { UAParser } from 'ua-parser-js';
 import User from '../users/user.model.js';
 import type { IUser } from '../users/user.model.js';
 import Session from './session.model.js';
-import { endSessionsOwnedBy } from '../collab/collab.service.js';
+import { disconnectDeletedAccount } from '../collab/collab.service.js';
+import { withCollabServer } from '../collab/collab.server.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { logUserAction } from '../user-logs/logs.service.js';
 import { registerAtomically, loginAtomically } from './auth.tx.service.js';
@@ -552,6 +553,7 @@ export async function refresh(
       // familyId already identifies a single session document, so this is
       // the "entire token family" security.md describes, not every device.
       await Session.updateOne({ _id: current._id, isValid: true }, { $set: { isValid: false } });
+      withCollabServer((server) => server.reauthUserEverywhere(user._id.toString()));
     }
     return err('token_reused', 401);
   }
@@ -570,6 +572,7 @@ export async function logout(userId: string, familyId?: string): Promise<Service
     // Fallback: invalidate all sessions (if familyId wasn't known)
     await Session.updateMany({ userId }, { $set: { isValid: false } });
   }
+  withCollabServer((server) => server.reauthUserEverywhere(userId));
 
   logUserAction({
     userId,
@@ -689,6 +692,7 @@ export async function revokeSession(
   if (!session) return err('session_not_found', 404);
   session.isValid = false;
   await session.save();
+  withCollabServer((server) => server.reauthUserEverywhere(userId));
   try { getIO().to(`user:${userId}`).emit('session:revoked', { sessionId }); } catch { /* socket not ready */ }
   return { success: true };
 }
@@ -703,6 +707,7 @@ export async function revokeAllSessions(
   }
   const result = await Session.updateMany(query, { $set: { isValid: false } });
   if (result.modifiedCount > 0) {
+    withCollabServer((server) => server.reauthUserEverywhere(userId));
     try { getIO().to(`user:${userId}`).emit('session:revoked', {}); } catch { /* socket not ready */ }
   }
   return { revokedCount: result.modifiedCount };
@@ -1041,12 +1046,12 @@ export async function deactivateUser(userId: string): Promise<ServiceResult<{ su
   user.appeal.status = 'none';
 
   await user.save();
+  await disconnectDeletedAccount(userId);
 
   // Self-deactivation must take the user's content down with it — projects,
   // playlists and feed entries used to stay fully visible until reactivation.
   const { syncOwnerVisibility } = await import('../users/owner-visibility.service.js');
   await syncOwnerVisibility(user._id);
-  await endSessionsOwnedBy(userId);
 
   return { success: true };
 }

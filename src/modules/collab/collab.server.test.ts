@@ -19,8 +19,10 @@ import { signGuestToken } from './collab.auth.js'
 import { getCollabServer } from './collab.server.js'
 import { endSession, removeProjectCollaborator, startSession } from './collab.service.js'
 import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
-import { deactivateUser } from '../auth/auth.service.js'
-import { deleteUser } from '../admin/admin.service.js'
+import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
+import { changePasswordAtomically } from '../auth/auth.tx.service.js'
+import { blockIp, deleteUser, toggleBan } from '../admin/admin.service.js'
+import BannedIp from '../admin/banned-ip.model.js'
 import { archiveDeletedUsers } from '../../jobs/archive-deleted-users.js'
 
 // Lets a test hold the server's disconnect-time awareness removal, to stand in for a peer whose
@@ -1239,6 +1241,116 @@ describe('collab session epoch', () => {
       expect(await collabSessionBlocks(PUBLIC_ID, { lyrics: {} } as never)).toBeNull()
     } finally {
       errors.mockRestore()
+    }
+  })
+})
+
+describe('collab moderation reaches live sockets', () => {
+  let memberId: string
+  let adminId: string
+  let seq = 0
+
+  async function loginCookie(userId: string, familyId: string): Promise<string> {
+    await Session.create({ userId, familyId, refreshTokenHash: `x${seq++}`, expiresAt: new Date(Date.now() + 3600_000) })
+    return `accessToken=${jwtTools.signAccess({ sub: userId, familyId })}`
+  }
+  const closesOf = (c: Client) => {
+    const codes: Array<{ code: number; reason: string }> = []
+    c.socket.on('close', ({ event }: { event: { code: number; reason: string } }) => codes.push({ code: event.code, reason: event.reason }))
+    return codes
+  }
+
+  beforeEach(async () => {
+    const member = await User.collection.insertOne({
+      accountName: 'member1', displayName: 'Member', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false }, lastIp: '203.0.113.9',
+    })
+    memberId = member.insertedId.toString()
+    const admin = await User.collection.insertOne({
+      accountName: 'admin1', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    adminId = admin.insertedId.toString()
+    await CollabSession.updateOne({ _id: sessionId }, { $push: { members: { subject: `user:${memberId}`, role: 'editor', colorIndex: 2, name: 'Member' } } })
+  })
+
+  describe.each([
+    ['deactivating the account', () => deactivateUser(memberId), 'unauthorized'],
+    ['an admin deleting the account', () => deleteUser(memberId, adminId), 'unauthorized'],
+    ['banning the account', () => toggleBan(memberId, true, 'r', null, false, false, adminId), 'forbidden'],
+  ] as const)('%s', (_name, act, refusal) => {
+    it("disconnects them from someone else's session and refuses the reconnect; the session carries on", async () => {
+      const owner = await connectSynced(await ownerCookie())
+      const member = await connectSynced(await loginCookie(memberId, 'fam-a'))
+      const closes = closesOf(member)
+      await act()
+      await waitFor(() => closes.length > 0)
+      expect(closes[0]).toEqual({ code: 4403, reason: 'forbidden' })
+      await waitFor(() => member.failures.includes(refusal))
+      expect(await CollabSession.exists({ _id: sessionId, endedAt: null })).not.toBeNull()
+      expect(owner.failures).toEqual([])
+    })
+  })
+
+  it('also reaches an account connected through a guest cookie', async () => {
+    const both = await connectSynced(`${await loginCookie(adminId, 'fam-g')}; ${guest('g1', editorInvite)}`)
+    await User.updateOne({ _id: adminId }, { $set: { role: 'user' } })
+    const closes = closesOf(both)
+    const boss = await User.collection.insertOne({ accountName: 'boss', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false } })
+    await toggleBan(adminId, true, 'r', null, false, false, boss.insertedId.toString())
+    await waitFor(() => closes.length > 0)
+    await waitFor(() => both.failures.includes('forbidden'))
+  })
+
+  it('a failure closing sockets does not fail the ban', async () => {
+    const spy = vi.spyOn(getCollabServer(), 'closeUserEverywhere').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const res = await toggleBan(memberId, true, 'r', null, false, false, adminId)
+      expect(res.success).toBe(true)
+      expect(spy).toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+      errors.mockRestore()
+    }
+  })
+
+  it('revoking one login session refuses that connection and the others continue', async () => {
+    const revoked = await connectSynced(await loginCookie(memberId, 'fam-a'))
+    const other = await connectSynced(await loginCookie(memberId, 'fam-b'))
+    const closes = closesOf(other)
+    const row = await Session.findOne({ familyId: 'fam-a' })
+    await revokeSession(memberId, row!._id.toString())
+    await waitFor(() => revoked.failures.includes('unauthorized'))
+    await waitFor(() => closes.length > 0)
+    expect(closes[0]).toEqual({ code: 4409, reason: 'reauth' })
+    await waitFor(() => other.provider.isAuthenticated && other.provider.isSynced)
+    expect(other.failures).toEqual([])
+  })
+
+  it.each([
+    ['logout', () => logout(memberId, 'fam-a')],
+    ['revoking all other sessions', () => revokeAllSessions(memberId, 'fam-b')],
+    ['a password change', () => changePasswordAtomically(memberId, 'newhash', 'fam-b')],
+  ] as const)('%s refuses the revoked connection', async (_name, act) => {
+    const revoked = await connectSynced(await loginCookie(memberId, 'fam-a'))
+    const kept = await connectSynced(await loginCookie(memberId, 'fam-b'))
+    await act()
+    await waitFor(() => revoked.failures.includes('unauthorized'))
+    await new Promise((r) => setTimeout(r, 200))
+    expect(kept.failures).toEqual([])
+  })
+
+  it('an IP ban makes connections from it re-authenticate, and they are refused', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const closes = closesOf(editor)
+    try {
+      await blockIp('127.0.0.1', 'r', adminId)
+      await waitFor(() => closes.length > 0)
+      expect(closes[0]).toEqual({ code: 4409, reason: 'reauth' })
+      await waitFor(() => editor.failures.includes('forbidden'))
+    } finally {
+      await BannedIp.deleteMany({})
     }
   })
 })
