@@ -198,6 +198,14 @@ describe('transferGuestCredit', () => {
     expect(await credits()).toEqual([])
   })
 
+  it("a guest credit earned by an account the owner already removed does not bring that account back", async () => {
+    const u = await mkUser()
+    await seed({ removedCollaborators: [`user:${u}`], collaborators: [{ subject: G, userId: null, guestName: 'Ana', firstContributedAt: new Date() }] })
+    await transferGuestCredit(PUBLIC_ID, G, u, false)
+    expect(await credits()).toEqual([])
+    expect(await removed()).toEqual([`user:${u}`])
+  })
+
   it('the owner signing in is not added to the removed list', async () => {
     await seed({ removedCollaborators: [G] })
     await transferGuestCredit(PUBLIC_ID, G, ownerId, true)

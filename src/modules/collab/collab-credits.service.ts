@@ -80,7 +80,7 @@ export async function transferGuestCredit(publicId: string, guestSubject: string
   if (!isOwner) {
     await Project.updateOne({ publicId, removedCollaborators: guestSubject }, { $addToSet: { removedCollaborators: subject } }, { timestamps: false })
     await Project.updateOne(
-      { publicId, $and: [{ 'collaborators.subject': guestSubject }, { 'collaborators.subject': { $ne: subject } }] },
+      { publicId, removedCollaborators: { $ne: subject }, $and: [{ 'collaborators.subject': guestSubject }, { 'collaborators.subject': { $ne: subject } }] },
       { $set: { 'collaborators.$[c].subject': subject, 'collaborators.$[c].userId': new mongoose.Types.ObjectId(userId), 'collaborators.$[c].guestName': null } },
       { arrayFilters: [{ 'c.subject': guestSubject }], timestamps: false },
     )
