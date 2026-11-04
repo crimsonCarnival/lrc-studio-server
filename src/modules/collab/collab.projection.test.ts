@@ -8,6 +8,7 @@ const meta: CollabMeta = {
   title: 'Song',
   artist: 'Artist',
   album: null,
+  cover: 'https://res.cloudinary.com/x/cover.jpg',
   media: { source: 'youtube', url: 'https://youtu.be/x', uploadId: null },
 }
 

@@ -512,6 +512,17 @@ describe('collab metadata write-back', () => {
     expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songAlbum).toBe('Album')
   })
 
+  it('seeds meta.cover from the project cover, and a stored doc picks up a new one', async () => {
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { coverImage: 'https://res.cloudinary.com/x/one.jpg' } })
+    const first = await connectSynced(guest('ed', editorInvite))
+    expect(first.doc.getMap('meta').get('cover')).toBe('https://res.cloudinary.com/x/one.jpg')
+    close(first)
+    await new Promise((r) => setTimeout(r, 150))
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { coverImage: '' } })
+    const fresh = await connectSynced(guest('ed', editorInvite))
+    expect(fresh.doc.getMap('meta').get('cover')).toBe(null)
+  })
+
   it('a stored doc picks up project metadata changed between sessions', async () => {
     const first = await connectSynced(guest('ed', editorInvite))
     first.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')

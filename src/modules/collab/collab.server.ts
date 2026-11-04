@@ -201,7 +201,7 @@ async function fetchState(docName: string): Promise<Uint8Array | null> {
     }
   }
 
-  const project = await Project.findOne({ publicId }).select('title metadata uploadId').lean()
+  const project = await Project.findOne({ publicId }).select('title metadata uploadId coverImage').lean()
   if (!project) return null
   const meta: CollabMeta = {
     editorMode: lyrics?.editorMode ?? 'lrc',
@@ -251,13 +251,22 @@ async function mediaFor(uploadId: unknown): Promise<CollabMeta['media']> {
     : { source: null, url: null, uploadId: null }
 }
 
-type SongSource = { title?: string | null; metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null }
-type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album'>
+type SongSource = {
+  title?: string | null
+  metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null
+  coverImage?: string | null
+}
+type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album' | 'cover'>
 
 /** The doc's song fields as the seed derives them from a Project. */
 function songMeta(project: SongSource): SongMeta {
   const md = project.metadata ?? {}
-  return { title: md.songName || project.title || null, artist: md.songArtist || null, album: md.songAlbum || null }
+  return {
+    title: md.songName || project.title || null,
+    artist: md.songArtist || null,
+    album: md.songAlbum || null,
+    cover: project.coverImage || null,
+  }
 }
 
 /**
@@ -267,7 +276,7 @@ function songMeta(project: SongSource): SongMeta {
  * must win over the stale doc instead of being written over by it.
  */
 async function syncMetaFromProject(docName: string, state: Uint8Array): Promise<Uint8Array> {
-  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata uploadId').lean<SongSource & { uploadId?: unknown }>()
+  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata uploadId coverImage').lean<SongSource & { uploadId?: unknown }>()
   if (!project) return state
   const want = { ...songMeta(project), media: await mediaFor(project.uploadId) }
   const doc = new Y.Doc()
@@ -295,7 +304,8 @@ const cleanText = (v: unknown, max: number): string => (typeof v === 'string' ? 
  * seed read them from (songName when set, else title; songAlbum), sanitised and
  * capped like the Project schema, with the slug kept in step. Artist is not
  * written: songArtist is derived from structured credits and never free text.
- * Media is not editable in a session. A title or album the doc does not hold as a string (null,
+ * Media and cover are not editable in a session (the owner saves those through
+ * updateProject). A title or album the doc does not hold as a string (null,
  * absent) leaves the stored field alone: the seed writes null for an empty one.
  */
 function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unknown> {
