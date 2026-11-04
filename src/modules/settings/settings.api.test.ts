@@ -84,6 +84,13 @@ describe('newly persisted client settings', () => {
     expect(((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).interface.theme).toBe('rose-pine-dawn');
   });
 
+  it('refuses an oversized custom theme and stores a normal one', async () => {
+    const u = uid();
+    await expect(update(u, { interface: { customTheme: 'x'.repeat(601) } })).rejects.toThrow('custom_theme_too_large');
+    await update(u, { interface: { theme: 'custom', customTheme: '{"base":"dark"}' } });
+    expect(((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).interface.customTheme).toBe('{"base":"dark"}');
+  });
+
   it('a document written before these fields existed reads them back as undefined (GraphQL null), not an error', async () => {
     const u = uid();
     await Settings.collection.insertOne({ userId: new mongoose.Types.ObjectId(u), interface: { fontSize: 'small' } });

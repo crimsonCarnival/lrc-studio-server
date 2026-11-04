@@ -103,6 +103,8 @@ const interfaceSchema = sub({
   // `dark`, `light`, or a palette id from the client (client/src/shared/theme). Only the shape is checked here,
   // so a new palette needs no server change; the client falls back to dark for an id it does not know.
   theme: { type: String, maxlength: 32, match: /^[a-z0-9-]+$/ },
+  // JSON of the user's own theme, `theme: 'custom'`. The size is capped in updateSettings (updates skip schema validation).
+  customTheme: { type: String, maxlength: 600 },
   fontSize: { type: String, enum: ['small', 'normal', 'large', 'xlarge'] },
   fontWeight: { type: String, enum: ['thinnest', 'lighter', 'light', 'normal', 'bold', 'bolder'] },
   spacing: { type: String, enum: ['compact', 'normal', 'relaxed'] },

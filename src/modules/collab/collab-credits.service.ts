@@ -70,6 +70,25 @@ export async function creditCollaborator(publicId: string, principal: Pick<Colla
   )
 }
 
+/**
+ * A credited guest signed in: the credit becomes the account's, keeping when it was earned, unless the
+ * account is the owner (never credited) or already has its own. An owner's removal of the guest follows
+ * the person to the account, so signing in cannot undo it. Each write's filter is its own rule.
+ */
+export async function transferGuestCredit(publicId: string, guestSubject: string, userId: string, isOwner: boolean): Promise<void> {
+  const subject = `user:${userId}`
+  if (!isOwner) {
+    await Project.updateOne({ publicId, removedCollaborators: guestSubject }, { $addToSet: { removedCollaborators: subject } }, { timestamps: false })
+    await Project.updateOne(
+      { publicId, removedCollaborators: { $ne: subject }, $and: [{ 'collaborators.subject': guestSubject }, { 'collaborators.subject': { $ne: subject } }] },
+      { $set: { 'collaborators.$[c].subject': subject, 'collaborators.$[c].userId': new mongoose.Types.ObjectId(userId), 'collaborators.$[c].guestName': null } },
+      { arrayFilters: [{ 'c.subject': guestSubject }], timestamps: false },
+    )
+  }
+  // Only something left over: the rewrite above already took it otherwise.
+  await Project.updateOne({ publicId, 'collaborators.subject': guestSubject }, { $pull: { collaborators: { subject: guestSubject } } }, { timestamps: false })
+}
+
 export type CollaboratorView = {
   id: string
   user: unknown | null

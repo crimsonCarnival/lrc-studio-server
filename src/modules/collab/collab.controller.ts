@@ -19,6 +19,7 @@ export async function join(request: FastifyRequest<{ Body: JoinBody }>, reply: F
       deviceId: request.headers['x-device-id'] as string | undefined,
     });
     if (res.guestToken) reply.setCookie(GUEST_COOKIE, res.guestToken, { ...cookieOptions, maxAge: GUEST_COOKIE_MAX_AGE });
+    if (res.clearGuestCookie) reply.clearCookie(GUEST_COOKIE, cookieOptions);
     return reply.send({ ok: true, publicId: res.publicId, role: res.role });
   } catch (err) {
     if (err instanceof CollabError) return reply.code(err.status).send({ error: err.code, code: err.code });

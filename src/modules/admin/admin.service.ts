@@ -3,7 +3,7 @@ import User from '../users/user.model.js';
 import { notifyAppealResult } from '../notifications/notifications.events.js';
 import Session from '../auth/session.model.js';
 import BannedIp from './banned-ip.model.js';
-import { disconnectDeletedAccount } from '../collab/collab.service.js';
+import { disconnectAccount } from '../collab/collab.service.js';
 import { withCollabServer } from '../collab/collab.server.js';
 import BannedDevice from './banned-device.model.js';
 import UserDevice from '../auth/user-device.model.js';
@@ -328,6 +328,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   }
 
   let ipBanned: string | null = null;
+  const devicesBanned: string[] = [];
   if (banStatus) {
     user.ban = { active: true, reason, until: bannedUntil ? new Date(bannedUntil) : null };
 
@@ -362,6 +363,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
           },
           { upsert: true }
         );
+        devicesBanned.push(deviceId);
       }
     }
   } else {
@@ -386,9 +388,10 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   );
   if (banStatus) {
     withCollabServer((server) => {
-      server.closeUserEverywhere(userId);
       if (ipBanned) server.reauthIpEverywhere(ipBanned);
+      if (devicesBanned.length > 0) server.reauthDevicesEverywhere(devicesBanned);
     });
+    await disconnectAccount(userId);
   }
 
   // Hide (or restore) everything this user owns. Awaited, not fire-and-forget:
@@ -590,7 +593,7 @@ export async function deleteUser(userId: string, adminId: string | null = null, 
     { _id: user._id },
     { $set: { deletedAt: user.deletedAt, isDeleted: user.isDeleted, ban: user.ban, appeal: user.appeal } }
   );
-  await disconnectDeletedAccount(userId);
+  await disconnectAccount(userId);
   await syncOwnerVisibility(user._id);
 
   if (adminId) {
@@ -698,6 +701,7 @@ export async function blockDevice(deviceId: string, reason: string, adminId: str
     reason,
     bannedBy: adminId,
   });
+  withCollabServer((server) => server.reauthDevicesEverywhere([deviceId]));
   await logAdminAction({ adminId, action: 'block_device', targetName: deviceId, details: reason || null, ip: actorIp });
   return { success: true, bannedDevice };
 }

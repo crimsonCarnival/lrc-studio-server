@@ -7,6 +7,7 @@ import { checkDeviceBan, checkIpBan, verifyLiveAccessToken } from '../../plugins
 import { isValidPublicId } from '../../socket/project-viewers.js'
 import User from '../users/user.model.js'
 import CollabSession from './collab-session.model.js'
+import { transferGuestCredit } from './collab-credits.service.js'
 import type { CollabRole } from './collab.types.js'
 
 export type CollabPrincipal = {
@@ -18,8 +19,13 @@ export type CollabPrincipal = {
   avatarUrl?: string | null
   /** The signed-in account behind this connection, even when it is connected as a guest. */
   accountId?: string
+
   /** This connection added the member or changed its avatar: other participants' lists are stale. */
   membersChanged?: boolean
+
+  /** The guest identity this sign-in just absorbed: its other live connections must be moved off it. */
+  replacedSubject?: string
+
 }
 export type CollabAuthCode = 'forbidden' | 'unauthorized' | 'session_ended'
 export type GuestClaims = { guestId: string; name: string; sessionId: string; inviteId: string }
@@ -37,6 +43,15 @@ const MAX_NAME = 40
 const COLOURS = 8
 /** Members one session holds: it is one Mongo document, and these grow from anyone holding a link. */
 export const MAX_MEMBERS = 50
+/**
+ * Guest identities one member remembers, newest kept. A guest token lives 12 hours, so only someone
+ * minting this many guests in that window loses one, and they could mint a fresh one from the link anyway.
+ */
+const MAX_ABSORBED_GUESTS = 10
+/** How long an invite link works. A guest's cookie outlives it by at most its own 12 hours. */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+export const inviteExpired = (i: { createdAt: Date }): boolean => Date.now() - new Date(i.createdAt).getTime() > INVITE_TTL_MS
 
 // Domain-separated from JWT_SECRET exactly like the admin sudo key, so a guest
 // token can never verify as an access/refresh token (and vice versa).
@@ -104,6 +119,14 @@ export async function assertNoNetworkBan(user: SignedInUser | null, ip: string |
   if (deviceBanned || ipBanned) throw new CollabAuthError('forbidden')
 }
 
+/** False once the session's owner is banned, deleted or archived: nobody is admitted to it any more. */
+export async function isSessionOwnerActive(ownerId: unknown): Promise<boolean> {
+  const owner = await User.findById(ownerId).select('isDeleted deletedAt ban appeal accountName')
+  if (!owner || owner.isDeleted || owner.deletedAt) return false
+  await owner.checkBanStatus()
+  return !owner.ban?.active
+}
+
 /** Lowest colour 1–8 not taken by an existing member; wraps once all eight are used. */
 export function nextColour(members: Array<{ colorIndex: number }>): number {
   const used = new Set(members.map((m) => m.colorIndex))
@@ -111,7 +134,73 @@ export function nextColour(members: Array<{ colorIndex: number }>): number {
   return (members.length % COLOURS) + 1
 }
 
-export type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string; avatarUrl?: string | null; inviteId?: string }
+export type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string; avatarUrl?: string | null; inviteId?: string; absorbedGuests?: string[] }
+
+/**
+ * A signed-in user presented a valid guest token for this session, so that guest is now this person.
+ * The owner or an existing member keeps what they have and the guest entry goes. Anyone else takes the
+ * guest entry over in place, with its role and colour: a demoted guest must not climb through the
+ * invite's role. That needs `guestAccessValid`: when the owner already cut the guest's access the role
+ * must not survive, so the entry just goes and the caller adds the person as a new member. Callers
+ * refuse a kicked guest first. Returns the person's member entry, when there is one, and whether a
+ * guest entry was actually absorbed. The filter repeats the rules, so a kick or a second tab racing
+ * this cannot be overwritten.
+ */
+export async function absorbGuest(
+  session: { _id: unknown; publicId: string; members: MemberEntry[] },
+  guestSubject: string,
+  user: { id: string; name: string; avatarUrl: string | null; isOwner: boolean },
+  guestAccessValid: boolean,
+): Promise<{ member?: MemberEntry; replaced: boolean }> {
+  const subject = `user:${user.id}`
+  const current = session.members.find((m) => m.subject === subject)
+  if (!session.members.some((m) => m.subject === guestSubject)) return { member: current, replaced: false }
+
+  const dropGuest = async (member?: MemberEntry) => {
+    // Two writes, this one first: Mongo refuses a $pull on members alongside an update inside it.
+    if (member) {
+      await CollabSession.updateOne(
+        { _id: session._id },
+        { $push: { 'members.$[m].absorbedGuests': { $each: [guestSubject], $slice: -MAX_ABSORBED_GUESTS } } },
+        { arrayFilters: [{ 'm.subject': subject, 'm.absorbedGuests': { $ne: guestSubject } }] },
+      )
+    }
+    await CollabSession.updateOne({ _id: session._id }, { $pull: { members: { subject: guestSubject } } })
+    await moveCredit(session.publicId, guestSubject, user.id, user.isOwner)
+    return { member, replaced: true }
+  }
+  if (user.isOwner || current || !guestAccessValid) return dropGuest(current)
+
+  const renamed = await CollabSession.findOneAndUpdate(
+    { _id: session._id, kicked: { $nin: [guestSubject, subject] }, $and: [{ 'members.subject': guestSubject }, { 'members.subject': { $ne: subject } }] },
+    {
+      $set: { 'members.$[m].subject': subject, 'members.$[m].name': user.name, 'members.$[m].avatarUrl': user.avatarUrl },
+      $unset: { 'members.$[m].inviteId': 1 },
+      $push: { 'members.$[m].absorbedGuests': { $each: [guestSubject], $slice: -MAX_ABSORBED_GUESTS } },
+    },
+    { arrayFilters: [{ 'm.subject': guestSubject }], returnDocument: 'after' },
+  ).select('members').lean<{ members: MemberEntry[] }>()
+  if (renamed) {
+    await moveCredit(session.publicId, guestSubject, user.id, false)
+    return { member: renamed.members.find((m) => m.subject === subject), replaced: true }
+  }
+
+  // Lost a race: to a kick, to this person's own second tab, or the guest entry is already gone.
+  const fresh = await CollabSession.findById(session._id).select('members kicked').lean<{ members: MemberEntry[]; kicked: string[] }>()
+  if (!fresh || fresh.kicked.includes(guestSubject) || fresh.kicked.includes(subject)) throw new CollabAuthError('forbidden')
+  const raced = fresh.members.find((m) => m.subject === subject)
+  if (raced && fresh.members.some((m) => m.subject === guestSubject)) return dropGuest(raced)
+  return { member: raced, replaced: !!raced }
+}
+
+/** Credits are bookkeeping: failing to move one must not cost the person their sign-in. */
+async function moveCredit(publicId: string, guestSubject: string, userId: string, isOwner: boolean): Promise<void> {
+  try {
+    await transferGuestCredit(publicId, guestSubject, userId, isOwner)
+  } catch (err) {
+    console.error('[collab] moving a guest credit failed', { publicId, guestSubject, err })
+  }
+}
 
 /**
  * Who a collab WebSocket is, for one document. Throws CollabAuthError:
@@ -143,8 +232,13 @@ export async function resolvePrincipal(input: {
   const cookies = parseCookie(input.cookieHeader ?? '')
   const user = await signedInUser(cookies.accessToken)
   await assertNoNetworkBan(user, input.ip, input.deviceId)
-  // A kicked account must not walk back in through a guest cookie it still holds.
-  if (user && session.ownerId.toString() !== user.id && session.kicked.includes(`user:${user.id}`)) {
+  const isOwner = !!user && session.ownerId.toString() === user.id
+  const guestToken = cookies[GUEST_COOKIE]
+  const claims = guestToken ? verifyGuestToken(guestToken) : null
+  // A token only ever counts in its own session.
+  const guestSubject = claims && claims.sessionId === sessionId ? `guest:${claims.guestId}` : null
+  // Neither a kicked account nor a kicked guest gets back in by combining the two.
+  if (user && !isOwner && (session.kicked.includes(`user:${user.id}`) || (guestSubject && session.kicked.includes(guestSubject)))) {
     throw new CollabAuthError('forbidden')
   }
 
@@ -153,7 +247,7 @@ export async function resolvePrincipal(input: {
   let role: CollabRole
   let inviteId: string | undefined
 
-  if (user && session.ownerId.toString() === user.id) {
+  if (user && isOwner) {
     subject = `user:${user.id}`
     name = user.name
     role = 'owner'
@@ -164,17 +258,23 @@ export async function resolvePrincipal(input: {
       name = userMember.name
       role = userMember.role
     } else {
-      const guestToken = cookies[GUEST_COOKIE]
-      const claims = guestToken ? verifyGuestToken(guestToken) : null
       if (!claims) throw new CollabAuthError(user ? 'forbidden' : 'unauthorized')
       if (claims.sessionId !== sessionId || !session.allowGuests) throw new CollabAuthError('forbidden')
       const invite = session.invites.find((i) => i._id.toString() === claims.inviteId)
       if (!invite || invite.revokedAt) throw new CollabAuthError('forbidden')
-      subject = `guest:${claims.guestId}`
-      inviteId = claims.inviteId
-      const guestMember = members.find((m) => m.subject === subject)
-      name = guestMember?.name ?? (claims.name.trim().slice(0, MAX_NAME) || 'Guest')
+      const guestMember = members.find((m) => m.subject === `guest:${claims.guestId}`)
       role = guestMember?.role ?? (invite.role as CollabRole)
+      if (user) {
+        // A guest's access dies with its 12h token; an account's membership does not. So a link past
+        // its life can no longer be turned into one, even while the token still lets a guest stay.
+        if (inviteExpired(invite)) throw new CollabAuthError('forbidden')
+        subject = `user:${user.id}`
+        name = user.name
+      } else {
+        subject = `guest:${claims.guestId}`
+        inviteId = claims.inviteId
+        name = guestMember?.name ?? (claims.name.trim().slice(0, MAX_NAME) || 'Guest')
+      }
     }
   }
 
@@ -182,9 +282,22 @@ export async function resolvePrincipal(input: {
   // A client from an earlier session holds Yjs items the re-seeded doc does not: merging them would
   // duplicate every line. Checked after identity, so it tells a stranger nothing about the session.
   if (input.sessionId && input.sessionId !== sessionId) throw new CollabAuthError('session_ended')
+  // Banning or deleting an owner ends their sessions; this holds even if that step failed.
+  if (!(await isSessionOwnerActive(session.ownerId))) throw new CollabAuthError('session_ended')
 
-  const identity = { subject, name, role, sessionId, avatarUrl: user?.avatarUrl ?? null, ...(user ? { accountId: user.id } : {}) }
-  const existing = members.find((m) => m.subject === subject)
+  // After every refusal above: a refused connection must not change who anyone is.
+  const absorbed = user && guestSubject
+    // A non-member only gets here past the guest checks above, so a role that carries over is a valid one.
+    ? await absorbGuest({ _id: session._id, publicId, members }, guestSubject, { id: user.id, name: user.name, avatarUrl: user.avatarUrl, isOwner }, true)
+    : null
+  if (absorbed?.member && role !== 'owner') role = absorbed.member.role
+
+  const identity = {
+    subject, name, role, sessionId, avatarUrl: user?.avatarUrl ?? null,
+    ...(user ? { accountId: user.id } : {}),
+    ...(absorbed?.replaced && guestSubject ? { replacedSubject: guestSubject } : {}),
+  }
+  const existing = absorbed?.member ?? members.find((m) => m.subject === subject)
   if (existing) {
     // Awaited so the members broadcast that follows reads the new avatar. A failure only
     // leaves the old avatar in other participants' lists; it never refuses the connection.
@@ -193,18 +306,19 @@ export async function resolvePrincipal(input: {
         { _id: session._id, 'members.subject': subject },
         { $set: { 'members.$.avatarUrl': user.avatarUrl ?? null } },
       ).then(() => true, () => false)
-      return { ...identity, colorIndex: existing.colorIndex, ...(updated ? { membersChanged: true } : {}) }
+      return { ...identity, colorIndex: existing.colorIndex, ...(updated || absorbed?.replaced ? { membersChanged: true } : {}) }
     }
-    return { ...identity, colorIndex: existing.colorIndex }
+    return { ...identity, colorIndex: existing.colorIndex, ...(absorbed?.replaced ? { membersChanged: true } : {}) }
   }
 
   // First connection: claim a colour and record the member. The filter keeps a
   // racing second tab of the same subject from adding a duplicate entry.
   const colorIndex = nextColour(members)
-  // The owner is never kept out of their own session by the cap.
-  const notFull = role === 'owner' ? {} : { [`members.${MAX_MEMBERS - 1}`]: { $exists: false } }
+  // The owner is never kept out of their own session by the cap. For anyone else the session read
+  // above may be stale, so the write itself refuses a subject kicked since.
+  const admissible = role === 'owner' ? {} : { kicked: { $ne: subject }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } }
   const res = await CollabSession.updateOne(
-    { _id: session._id, 'members.subject': { $ne: subject }, ...notFull },
+    { _id: session._id, 'members.subject': { $ne: subject }, ...admissible },
     { $push: { members: { subject, role, colorIndex, name, avatarUrl: user?.avatarUrl ?? null, ...(inviteId ? { inviteId } : {}) } } },
   )
   if (res.modifiedCount === 0) {

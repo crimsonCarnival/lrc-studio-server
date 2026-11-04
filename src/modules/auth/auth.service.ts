@@ -5,7 +5,7 @@ import { UAParser } from 'ua-parser-js';
 import User from '../users/user.model.js';
 import type { IUser } from '../users/user.model.js';
 import Session from './session.model.js';
-import { disconnectDeletedAccount } from '../collab/collab.service.js';
+import { disconnectAccount } from '../collab/collab.service.js';
 import { withCollabServer } from '../collab/collab.server.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { logUserAction } from '../user-logs/logs.service.js';
@@ -1046,7 +1046,7 @@ export async function deactivateUser(userId: string): Promise<ServiceResult<{ su
   user.appeal.status = 'none';
 
   await user.save();
-  await disconnectDeletedAccount(userId);
+  await disconnectAccount(userId);
 
   // Self-deactivation must take the user's content down with it — projects,
   // playlists and feed entries used to stay fully visible until reactivation.

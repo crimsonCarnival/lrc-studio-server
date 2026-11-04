@@ -1,6 +1,10 @@
+import mercurius from 'mercurius';
 import Settings from '../../modules/settings/settings.model.js';
 import { Context } from './context.js';
 import { flattenSettingsUpdate } from '../../modules/settings/settings.update.js';
+
+/** Mirrors CUSTOM_THEME_MAX_LENGTH in the client's custom-theme.ts. */
+const MAX_CUSTOM_THEME_LENGTH = 600;
 
 export const settingsResolvers = {
   ExportSettings: {
@@ -19,6 +23,11 @@ export const settingsResolvers = {
   Mutation: {
     updateSettings: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
+      // findOneAndUpdate skips schema validation, so the stored JSON's size is checked here.
+      const custom = (input.interface as { customTheme?: unknown } | undefined)?.customTheme;
+      if (typeof custom === 'string' && custom.length > MAX_CUSTOM_THEME_LENGTH) {
+        throw new mercurius.ErrorWithProps('custom_theme_too_large', { code: 'custom_theme_too_large' });
+      }
       return Settings.findOneAndUpdate(
         { userId: context.userId },
         // Per-field paths: a partial group (e.g. only `export.stripEmptyLines`) must not erase its siblings.

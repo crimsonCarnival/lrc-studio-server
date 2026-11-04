@@ -26,8 +26,10 @@ import {
 import { collabSessionBlocks, deleteProjectAsModerator, patchProject } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
 import { changePasswordAtomically } from '../auth/auth.tx.service.js'
-import { blockIp, deleteUser, toggleBan } from '../admin/admin.service.js'
+import { blockDevice, blockIp, deleteUser, toggleBan } from '../admin/admin.service.js'
 import BannedIp from '../admin/banned-ip.model.js'
+import BannedDevice from '../admin/banned-device.model.js'
+import UserDevice from '../auth/user-device.model.js'
 import { archiveDeletedUsers } from '../../jobs/archive-deleted-users.js'
 
 // Lets a test hold the server's disconnect-time awareness removal, to stand in for a peer whose
@@ -88,7 +90,7 @@ function connect(cookie: string, clientId?: number, opts: { url?: string; parame
   })
   const doc = new Y.Doc()
   if (clientId !== undefined) doc.clientID = clientId
-  const client: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, stateless: [], failures: [] }
+  const client: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, stateless: [], failures: [], headers }
   client.provider = new HocuspocusProvider({
     name: DOC,
     document: doc,
@@ -101,8 +103,8 @@ function connect(cookie: string, clientId?: number, opts: { url?: string; parame
   return client
 }
 
-async function connectSynced(cookie: string, clientId?: number): Promise<Client> {
-  const c = connect(cookie, clientId)
+async function connectSynced(cookie: string, clientId?: number, opts: { parameters?: Record<string, string> } = {}): Promise<Client> {
+  const c = connect(cookie, clientId, opts)
   await waitFor(() => c.provider.isSynced)
   return c
 }
@@ -1017,6 +1019,15 @@ describe('collab credits', () => {
   })
 })
 
+/** Holds the next CollabDoc.findOne (the read a load starts with) until release. */
+function holdNextDocRead() {
+  const real = CollabDoc.findOne.bind(CollabDoc) as (filter: unknown) => unknown
+  let release = () => {}
+  const gate = new Promise<void>((r) => { release = r })
+  const spy = vi.spyOn(CollabDoc, 'findOne').mockImplementationOnce(((filter: unknown) => gate.then(() => real(filter))) as never)
+  return { spy, release }
+}
+
 describe('collab project deletion', () => {
   it('closes live connections without storing, removes the stored doc and ends the session', async () => {
     const editor = await connectSynced(guest('ed', editorInvite))
@@ -1054,15 +1065,6 @@ describe('collab project deletion', () => {
     close(editor)
     await new Promise((r) => setTimeout(r, 150))
     expect(await CollabDoc.exists({ name: DOC })).not.toBeNull()
-  }
-
-  /** Holds the next CollabDoc.findOne (the read a load starts with) until release. */
-  function holdNextDocRead() {
-    const real = CollabDoc.findOne.bind(CollabDoc) as (filter: unknown) => unknown
-    let release = () => {}
-    const gate = new Promise<void>((r) => { release = r })
-    const spy = vi.spyOn(CollabDoc, 'findOne').mockImplementationOnce(((filter: unknown) => gate.then(() => real(filter))) as never)
-    return { spy, release }
   }
 
   const neverServed = (c: Client) => {
@@ -1497,6 +1499,281 @@ describe('collab moderation reaches live sockets', () => {
   })
 })
 
+describe('a guest who signs in, live', () => {
+  let memberId: string
+  beforeEach(async () => {
+    const member = await User.collection.insertOne({
+      accountName: 'promoted', displayName: 'Promoted', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false },
+    })
+    memberId = member.insertedId.toString()
+    await Session.create({ userId: memberId, familyId: 'fam-p', refreshTokenHash: 'xp', expiresAt: new Date(Date.now() + 3600_000) })
+  })
+  const access = () => `accessToken=${jwtTools.signAccess({ sub: memberId, familyId: 'fam-p' })}`
+  const closesOf = (c: Client) => {
+    const reasons: string[] = []
+    c.socket.on('close', ({ event }: { event: { reason: string } }) => reasons.push(event.reason))
+    return reasons
+  }
+
+  it('a new tab moves the old guest tab off; both end up as the account, with no guest row', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const tab = await connectSynced(guest('g1', editorInvite))
+    tab.provider.awareness!.setLocalState({ activeLineId: 'l1' })
+    await waitFor(() => (owner.provider.awareness!.getStates().get(tab.doc.clientID) as { user?: { subject?: string } } | undefined)?.user?.subject === 'guest:g1')
+    const closes = closesOf(tab)
+    const both = `${access()}; ${guest('g1', editorInvite)}`
+    // The browser's other tab now sends the same cookies.
+    tab.headers.Cookie = both
+    const second = await connectSynced(both)
+    await waitFor(() => closes.length > 0)
+    expect(closes[0]).toBe('role-changed')
+    expect(second.stateless.find((m) => m.t === 'hello')).toMatchObject({ subject: `user:${memberId}`, role: 'editor' })
+    await waitFor(() => tab.stateless.filter((m) => m.t === 'hello').length === 2)
+    expect(tab.stateless.filter((m) => m.t === 'hello').at(-1)).toMatchObject({ subject: `user:${memberId}` })
+    const subjects = (await CollabSession.findById(sessionId).lean())!.members.map((m) => m.subject)
+    expect(subjects.sort()).toEqual([`user:${memberId}`, `user:${ownerId}`].sort())
+    // The tab keeps its Yjs clientID across the reconnect: that id must follow the person, or their
+    // awareness would be refused for the life of the loaded doc.
+    tab.provider.awareness!.setLocalState({ activeLineId: 'l2' })
+    await waitFor(() => (owner.provider.awareness!.getStates().get(tab.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'l2')
+    expect(owner.provider.awareness!.getStates().get(tab.doc.clientID)).toMatchObject({ user: { subject: `user:${memberId}`, colorIndex: expect.any(Number) } })
+  })
+
+  it('a demoted guest does not climb: the promoted connection is read-only', async () => {
+    await CollabSession.updateOne({ _id: sessionId }, { $push: { members: { subject: 'guest:d1', role: 'viewer', colorIndex: 4, name: 'd1' } } })
+    const c = await connectSynced(`${access()}; ${guest('d1', editorInvite)}`)
+    expect(c.provider.authorizedScope).toBe('readonly')
+    expect(c.stateless.find((m) => m.t === 'hello')).toMatchObject({ subject: `user:${memberId}`, role: 'viewer', colorIndex: 4 })
+  })
+})
+
+describe('collab device bans', () => {
+  let memberId: string
+  let adminId: string
+  const closesOf = (c: Client) => {
+    const codes: Array<{ code: number; reason: string }> = []
+    c.socket.on('close', ({ event }: { event: { code: number; reason: string } }) => codes.push({ code: event.code, reason: event.reason }))
+    return codes
+  }
+  const onDevice = (name: string, deviceId: string) => connectSynced(guest(name, editorInvite), undefined, { parameters: { deviceId } })
+
+  beforeEach(async () => {
+    const member = await User.collection.insertOne({
+      accountName: 'member2', displayName: 'Member', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false },
+    })
+    memberId = member.insertedId.toString()
+    const admin = await User.collection.insertOne({
+      accountName: 'admin2', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    adminId = admin.insertedId.toString()
+  })
+
+  afterEach(async () => {
+    await Promise.all([BannedDevice.deleteMany({}), UserDevice.deleteMany({})])
+  })
+
+  it('blockDevice drops that device and refuses the reconnect; other devices stay', async () => {
+    const banned = await onDevice('ondevice', 'dev-banned')
+    const other = await onDevice('elsewhere', 'dev-fine')
+    const closes = closesOf(banned)
+    const otherCloses = closesOf(other)
+    await blockDevice('dev-banned', 'r', adminId)
+    await waitFor(() => closes.length > 0)
+    expect(closes[0]).toEqual({ code: 4409, reason: 'reauth' })
+    await waitFor(() => banned.failures.includes('forbidden'))
+    expect(otherCloses).toEqual([])
+    expect(other.failures).toEqual([])
+  })
+
+  it("toggleBan's device branch reaches another account's connection on that device", async () => {
+    await UserDevice.create({ userId: memberId, deviceId: 'dev-shared' })
+    const sharing = await onDevice('sharing', 'dev-shared')
+    const closes = closesOf(sharing)
+    await toggleBan(memberId, true, 'r', null, false, true, adminId)
+    await waitFor(() => closes.length > 0)
+    await waitFor(() => sharing.failures.includes('forbidden'))
+  })
+
+  it('a ban without the device branch leaves that device alone', async () => {
+    await UserDevice.create({ userId: memberId, deviceId: 'dev-shared' })
+    const sharing = await onDevice('sharing', 'dev-shared')
+    const closes = closesOf(sharing)
+    await toggleBan(memberId, true, 'r', null, false, false, adminId)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(closes).toEqual([])
+  })
+
+  it('a failure reaching sockets does not fail the ban', async () => {
+    const spy = vi.spyOn(getCollabServer(), 'reauthDevicesEverywhere').mockImplementation(() => { throw new Error('boom') })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(blockDevice('dev-x', 'r', adminId)).resolves.toMatchObject({ success: true })
+    spy.mockRestore()
+    logged.mockRestore()
+  })
+})
+
+describe('a banned or deleted session owner', () => {
+  let adminId: string
+  beforeEach(async () => {
+    const admin = await User.collection.insertOne({
+      accountName: 'admin3', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    adminId = admin.insertedId.toString()
+  })
+
+  it('banning the owner ends their sessions for everyone, keeping the edits', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    await toggleBan(ownerId, true, 'r', null, false, false, adminId)
+    expect(await CollabSession.exists({ _id: sessionId, endedAt: null })).toBeNull()
+    expect(editor.stateless.some((m) => m.t === 'session-ended')).toBe(true)
+    expect((await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text).toBe('kept')
+    await waitFor(() => editor.failures.includes('session_ended'))
+  })
+
+  it('banning someone else leaves the session running', async () => {
+    const other = await User.collection.insertOne({ accountName: 'other3', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false } })
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await toggleBan(other.insertedId.toString(), true, 'r', null, false, false, adminId)
+    expect(await CollabSession.exists({ _id: sessionId, endedAt: null })).not.toBeNull()
+    expect(editor.failures).toEqual([])
+  })
+
+  // These set the owner's state directly: the session is still live, as if the end above had been missed.
+  const invite = async () => {
+    const token = 'owner-check-token'
+    await CollabSession.updateOne({ _id: sessionId }, { $push: { invites: { tokenHash: hashInviteToken(token), role: 'editor' } } })
+    return token
+  }
+  it.each([
+    ['banned', { ban: { active: true, reason: 'r', until: null } }],
+    ['deleted', { isDeleted: true, deletedAt: new Date() }],
+  ])('connect and join are refused when the owner is %s', async (_name, state) => {
+    const token = await invite()
+    await User.updateOne({ _id: ownerId }, { $set: state })
+    await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).rejects.toMatchObject({ code: 'session_ended' })
+    await expect(joinSession({ token, name: 'Ana', userId: null })).rejects.toMatchObject({ code: 'collab_session_ended' })
+    expect((await CollabSession.findById(sessionId).lean())!.members).toEqual([])
+  })
+
+  it('an account that no longer exists counts as deleted, and a lapsed ban does not count', async () => {
+    await User.updateOne({ _id: ownerId }, { $set: { ban: { active: true, reason: 'r', until: new Date(Date.now() - 1000) } } })
+    await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).resolves.toMatchObject({ subject: 'guest:ed' })
+    await User.deleteOne({ _id: ownerId })
+    await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).rejects.toMatchObject({ code: 'session_ended' })
+  })
+})
+
+describe('a revocation landing between auth and attach', () => {
+  let memberId: string
+  let adminId: string
+  const closesOf = (c: Client) => {
+    const codes: Array<{ code: number; reason: string }> = []
+    c.socket.on('close', ({ event }: { event: { code: number; reason: string } }) => codes.push({ code: event.code, reason: event.reason }))
+    return codes
+  }
+  async function memberCookie(): Promise<string> {
+    await Session.create({ userId: memberId, familyId: 'fam-m', refreshTokenHash: 'xm', expiresAt: new Date(Date.now() + 3600_000) })
+    return `accessToken=${jwtTools.signAccess({ sub: memberId, familyId: 'fam-m' })}`
+  }
+
+  beforeEach(async () => {
+    const member = await User.collection.insertOne({
+      accountName: 'member4', displayName: 'Member', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false },
+    })
+    memberId = member.insertedId.toString()
+    const admin = await User.collection.insertOne({
+      accountName: 'admin4', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    adminId = admin.insertedId.toString()
+    await CollabSession.updateOne({ _id: sessionId }, { $push: { members: { subject: `user:${memberId}`, role: 'editor', colorIndex: 2, name: 'Member' } } })
+  })
+
+  afterEach(async () => {
+    await Promise.all([BannedDevice.deleteMany({}), BannedIp.deleteMany({})])
+  })
+
+  it.each([
+    ['an account ban', () => toggleBan(memberId, true, 'r', null, false, false, adminId)],
+    ['an IP ban', () => blockIp('127.0.0.1', 'r', adminId)],
+    ['a device ban', () => blockDevice('dev-racing', 'r', adminId)],
+  ])('%s drops the connection before it sees any content', async (_name, revoke) => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(await memberCookie(), undefined, { parameters: { deviceId: 'dev-racing' } })
+    const closes = closesOf(racer)
+    // Auth has finished: this read is the document load that follows it.
+    await waitFor(() => spy.mock.calls.length > 0)
+    await revoke()
+    release()
+    spy.mockRestore()
+    await waitFor(() => closes.length > 0)
+    expect(closes[0].code).toBe(4409)
+    await waitFor(() => racer.failures.includes('forbidden'))
+    expect(racer.doc.getMap('lines').size).toBe(0)
+  })
+
+  it('a kick drops the connection before it sees any content, and the reconnect is refused', async () => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(guest('racer', editorInvite))
+    const closes = closesOf(racer)
+    await waitFor(() => spy.mock.calls.length > 0)
+    await kick(PUBLIC_ID, 'guest:racer', ownerId)
+    release()
+    spy.mockRestore()
+    await waitFor(() => closes.length > 0)
+    expect(closes[0].code).toBe(4409)
+    await waitFor(() => racer.failures.includes('forbidden'))
+    expect(racer.doc.getMap('lines').size).toBe(0)
+    expect((await CollabSession.findById(sessionId).lean())!.members.map((m) => m.subject)).not.toContain('guest:racer')
+  })
+
+  it('a role change does not leave the connection attached with its old role', async () => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(guest('racer', editorInvite))
+    const closes = closesOf(racer)
+    await waitFor(() => spy.mock.calls.length > 0)
+    await setRole(PUBLIC_ID, 'guest:racer', 'viewer', ownerId)
+    release()
+    spy.mockRestore()
+    await waitFor(() => closes.length > 0)
+    expect(closes[0].code).toBe(4409)
+    await waitFor(() => racer.provider.isSynced)
+    expect(racer.provider.authorizedScope).toBe('readonly')
+  })
+
+  it('moving a guest off its identity does not drop the promoted connection itself', async () => {
+    const tab = await connectSynced(guest('moved', editorInvite))
+    tab.headers.Cookie = await memberCookie()
+    const both = `${tab.headers.Cookie}; ${guest('moved', editorInvite)}`
+    const promoted = connect(both)
+    const closes = closesOf(promoted)
+    await waitFor(() => promoted.provider.isSynced)
+    await waitFor(() => tab.provider.isSynced && tab.stateless.filter((m) => m.t === 'hello').length === 2)
+    expect(closes).toEqual([])
+    expect(promoted.failures).toEqual([])
+  })
+
+  it('a revocation of someone else leaves the connection alone', async () => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(await memberCookie())
+    await waitFor(() => spy.mock.calls.length > 0)
+    await blockDevice('dev-other', 'r', adminId)
+    release()
+    spy.mockRestore()
+    await waitFor(() => racer.provider.isSynced)
+    expect(racer.failures).toEqual([])
+  })
+
+  it('a revocation that finished before auth began does not count', async () => {
+    await blockDevice('dev-old', 'r', adminId)
+    await BannedDevice.deleteMany({})
+    const c = connect(await memberCookie(), undefined, { parameters: { deviceId: 'dev-old' } })
+    await waitFor(() => c.provider.isSynced)
+    expect(c.failures).toEqual([])
+  })
+})
+
 describe('collab awareness and stateless limits', () => {
   it('an oversized awareness state is never relayed, and a normal one after it is', async () => {
     const speaker = await connectSynced(guest('sp', editorInvite))
@@ -1685,6 +1962,53 @@ describe('collab minors', () => {
     await expect(kick(PUBLIC_ID, 'guest:one-more', ownerId)).rejects.toMatchObject({ code: 'collab_kick_limit' })
     await expect(kick(PUBLIC_ID, 'guest:k3', ownerId)).resolves.toBeTruthy()
     expect((await CollabSession.findById(sessionId).lean())!.kicked).toHaveLength(200)
+  })
+
+  describe('kicking at the cap', () => {
+    const fillKicked = () => CollabSession.updateOne({ _id: sessionId }, { $set: { kicked: Array.from({ length: 200 }, (_, i) => `guest:k${i}`) } })
+    const closesOf = (c: Client) => {
+      const reasons: string[] = []
+      c.socket.on('close', ({ event }: { event: { reason: string } }) => reasons.push(event.reason))
+      return reasons
+    }
+
+    it('a current member is still removed, closed and refused on rejoin', async () => {
+      const member = await connectSynced(guest('present', editorInvite))
+      const closes = closesOf(member)
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:present', ownerId)).resolves.toBeTruthy()
+      await waitFor(() => closes.length > 0)
+      expect(closes[0]).toBe('kicked')
+      const s = (await CollabSession.findById(sessionId).lean())!
+      expect(s.members.map((m) => m.subject)).not.toContain('guest:present')
+      expect(s.kicked).toContain('guest:present')
+      await waitFor(() => member.failures.includes('forbidden'))
+    })
+
+    it('a member with no live connection is still removed', async () => {
+      await CollabSession.updateOne({ _id: sessionId }, { $push: { members: { subject: 'guest:offline', role: 'editor', colorIndex: 3, name: 'o' } } })
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:offline', ownerId)).resolves.toBeTruthy()
+      const s = (await CollabSession.findById(sessionId).lean())!
+      expect(s.members.map((m) => m.subject)).not.toContain('guest:offline')
+      expect(s.kicked).toContain('guest:offline')
+    })
+
+    it('a live connection whose member entry is gone is still closed', async () => {
+      const ghost = await connectSynced(guest('ghost', editorInvite))
+      const closes = closesOf(ghost)
+      await CollabSession.updateOne({ _id: sessionId }, { $pull: { members: { subject: 'guest:ghost' } } })
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:ghost', ownerId)).resolves.toBeTruthy()
+      await waitFor(() => closes.length > 0)
+      expect((await CollabSession.findById(sessionId).lean())!.kicked).toContain('guest:ghost')
+    })
+
+    it('an absent subject still gets collab_kick_limit, and nothing is written', async () => {
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:absent', ownerId)).rejects.toMatchObject({ code: 'collab_kick_limit' })
+      expect((await CollabSession.findById(sessionId).lean())!.kicked).toHaveLength(200)
+    })
   })
 
   it('endSession: read-only first, then the final store, then the notice, then the close', async () => {
