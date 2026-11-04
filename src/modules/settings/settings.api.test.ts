@@ -78,6 +78,12 @@ describe('newly persisted client settings', () => {
     expect(doc.autoStamp).toMatchObject({ confidenceThreshold: 0.9, fuzzyTolerance: 0.6, applyMode: 'all' });
   });
 
+  it('stores a palette theme id', async () => {
+    const u = uid();
+    await update(u, { interface: { theme: 'rose-pine-dawn' } });
+    expect(((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).interface.theme).toBe('rose-pine-dawn');
+  });
+
   it('a document written before these fields existed reads them back as undefined (GraphQL null), not an error', async () => {
     const u = uid();
     await Settings.collection.insertOne({ userId: new mongoose.Types.ObjectId(u), interface: { fontSize: 'small' } });

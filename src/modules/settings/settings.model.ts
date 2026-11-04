@@ -100,7 +100,9 @@ const exportSchema = sub({
 
 const interfaceSchema = sub({
   defaultLanguage: { type: String, maxlength: 10, match: /^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$/ },
-  theme: { type: String, enum: ['dark', 'light'] },
+  // `dark`, `light`, or a palette id from the client (client/src/shared/theme). Only the shape is checked here,
+  // so a new palette needs no server change; the client falls back to dark for an id it does not know.
+  theme: { type: String, maxlength: 32, match: /^[a-z0-9-]+$/ },
   fontSize: { type: String, enum: ['small', 'normal', 'large', 'xlarge'] },
   fontWeight: { type: String, enum: ['thinnest', 'lighter', 'light', 'normal', 'bold', 'bolder'] },
   spacing: { type: String, enum: ['compact', 'normal', 'relaxed'] },
