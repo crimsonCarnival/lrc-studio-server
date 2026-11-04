@@ -79,6 +79,7 @@ type TokenBucket = { tokens: number; at: number }
 type CollabContext = {
   ws: WebSocket
   ip?: string
+  deviceId?: string
   principal?: CollabPrincipal
   connId?: string
   awarenessTokens?: TokenBucket
@@ -111,6 +112,8 @@ export type CollabServer = {
   reauthUserEverywhere(userId: string): void
   /** Makes every connection from this IP re-authenticate, where network bans apply. */
   reauthIpEverywhere(ip: string): void
+  /** Makes every connection from these devices re-authenticate, where device bans apply. */
+  reauthDevicesEverywhere(deviceIds: string[]): void
   /** Connections on this process, which is all of them: production runs one instance. */
   hasConnections(docName: string): boolean
   broadcastLocks(docName: string): void
@@ -520,14 +523,15 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     async onAuthenticate({ documentName, requestHeaders, requestParameters, connectionConfig, context }) {
       await settling.get(documentName)?.catch(() => undefined)
+      // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
+      const deviceId = requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined
       try {
         if (discarded.has(documentName)) throw new CollabAuthError('session_ended')
         const principal = await resolvePrincipal({
           cookieHeader: requestHeaders.get('cookie') ?? '',
           docName: documentName,
           ip: context.ip,
-          // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
-          deviceId: requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined,
+          deviceId,
           sessionId: requestParameters.get('sessionId') ?? undefined,
         })
         if (discarded.has(documentName)) throw new CollabAuthError('session_ended')
@@ -540,6 +544,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         const now = Date.now()
         return {
           principal,
+          deviceId,
           connId: randomUUID(),
           awarenessTokens: { tokens: AWARENESS_RATE.burst, at: now },
           statelessTokens: { tokens: STATELESS_RATE.burst, at: now },
@@ -931,6 +936,11 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     reauthIpEverywhere(ip) {
       for (const c of connectionsEverywhere((ctx) => ctx.ip === ip)) drop(c, CLOSE.reauth, 'reauth')
+    },
+
+    reauthDevicesEverywhere(deviceIds) {
+      const banned = new Set(deviceIds)
+      for (const c of connectionsEverywhere((ctx) => !!ctx.deviceId && banned.has(ctx.deviceId))) drop(c, CLOSE.reauth, 'reauth')
     },
 
     endSession(docName) {

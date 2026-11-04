@@ -328,6 +328,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   }
 
   let ipBanned: string | null = null;
+  const devicesBanned: string[] = [];
   if (banStatus) {
     user.ban = { active: true, reason, until: bannedUntil ? new Date(bannedUntil) : null };
 
@@ -362,6 +363,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
           },
           { upsert: true }
         );
+        devicesBanned.push(deviceId);
       }
     }
   } else {
@@ -388,6 +390,7 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     withCollabServer((server) => {
       server.closeUserEverywhere(userId);
       if (ipBanned) server.reauthIpEverywhere(ipBanned);
+      if (devicesBanned.length > 0) server.reauthDevicesEverywhere(devicesBanned);
     });
   }
 
@@ -698,6 +701,7 @@ export async function blockDevice(deviceId: string, reason: string, adminId: str
     reason,
     bannedBy: adminId,
   });
+  withCollabServer((server) => server.reauthDevicesEverywhere([deviceId]));
   await logAdminAction({ adminId, action: 'block_device', targetName: deviceId, details: reason || null, ip: actorIp });
   return { success: true, bannedDevice };
 }

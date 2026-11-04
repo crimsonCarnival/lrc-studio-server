@@ -25,8 +25,10 @@ import {
 import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
 import { changePasswordAtomically } from '../auth/auth.tx.service.js'
-import { blockIp, deleteUser, toggleBan } from '../admin/admin.service.js'
+import { blockDevice, blockIp, deleteUser, toggleBan } from '../admin/admin.service.js'
 import BannedIp from '../admin/banned-ip.model.js'
+import BannedDevice from '../admin/banned-device.model.js'
+import UserDevice from '../auth/user-device.model.js'
 import { archiveDeletedUsers } from '../../jobs/archive-deleted-users.js'
 
 // Lets a test hold the server's disconnect-time awareness removal, to stand in for a peer whose
@@ -100,8 +102,8 @@ function connect(cookie: string, clientId?: number, opts: { url?: string; parame
   return client
 }
 
-async function connectSynced(cookie: string, clientId?: number): Promise<Client> {
-  const c = connect(cookie, clientId)
+async function connectSynced(cookie: string, clientId?: number, opts: { parameters?: Record<string, string> } = {}): Promise<Client> {
+  const c = connect(cookie, clientId, opts)
   await waitFor(() => c.provider.isSynced)
   return c
 }
@@ -1407,6 +1409,71 @@ describe('a guest who signs in, live', () => {
     const c = await connectSynced(`${access()}; ${guest('d1', editorInvite)}`)
     expect(c.provider.authorizedScope).toBe('readonly')
     expect(c.stateless.find((m) => m.t === 'hello')).toMatchObject({ subject: `user:${memberId}`, role: 'viewer', colorIndex: 4 })
+  })
+})
+
+describe('collab device bans', () => {
+  let memberId: string
+  let adminId: string
+  const closesOf = (c: Client) => {
+    const codes: Array<{ code: number; reason: string }> = []
+    c.socket.on('close', ({ event }: { event: { code: number; reason: string } }) => codes.push({ code: event.code, reason: event.reason }))
+    return codes
+  }
+  const onDevice = (name: string, deviceId: string) => connectSynced(guest(name, editorInvite), undefined, { parameters: { deviceId } })
+
+  beforeEach(async () => {
+    const member = await User.collection.insertOne({
+      accountName: 'member2', displayName: 'Member', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false },
+    })
+    memberId = member.insertedId.toString()
+    const admin = await User.collection.insertOne({
+      accountName: 'admin2', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    adminId = admin.insertedId.toString()
+  })
+
+  afterEach(async () => {
+    await Promise.all([BannedDevice.deleteMany({}), UserDevice.deleteMany({})])
+  })
+
+  it('blockDevice drops that device and refuses the reconnect; other devices stay', async () => {
+    const banned = await onDevice('ondevice', 'dev-banned')
+    const other = await onDevice('elsewhere', 'dev-fine')
+    const closes = closesOf(banned)
+    const otherCloses = closesOf(other)
+    await blockDevice('dev-banned', 'r', adminId)
+    await waitFor(() => closes.length > 0)
+    expect(closes[0]).toEqual({ code: 4409, reason: 'reauth' })
+    await waitFor(() => banned.failures.includes('forbidden'))
+    expect(otherCloses).toEqual([])
+    expect(other.failures).toEqual([])
+  })
+
+  it("toggleBan's device branch reaches another account's connection on that device", async () => {
+    await UserDevice.create({ userId: memberId, deviceId: 'dev-shared' })
+    const sharing = await onDevice('sharing', 'dev-shared')
+    const closes = closesOf(sharing)
+    await toggleBan(memberId, true, 'r', null, false, true, adminId)
+    await waitFor(() => closes.length > 0)
+    await waitFor(() => sharing.failures.includes('forbidden'))
+  })
+
+  it('a ban without the device branch leaves that device alone', async () => {
+    await UserDevice.create({ userId: memberId, deviceId: 'dev-shared' })
+    const sharing = await onDevice('sharing', 'dev-shared')
+    const closes = closesOf(sharing)
+    await toggleBan(memberId, true, 'r', null, false, false, adminId)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(closes).toEqual([])
+  })
+
+  it('a failure reaching sockets does not fail the ban', async () => {
+    const spy = vi.spyOn(getCollabServer(), 'reauthDevicesEverywhere').mockImplementation(() => { throw new Error('boom') })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(blockDevice('dev-x', 'r', adminId)).resolves.toMatchObject({ success: true })
+    spy.mockRestore()
+    logged.mockRestore()
   })
 })
 
