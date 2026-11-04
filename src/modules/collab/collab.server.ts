@@ -112,6 +112,12 @@ export type CollabServer = {
   /** Connections on this process, which is all of them: production runs one instance. */
   hasConnections(docName: string): boolean
   broadcastLocks(docName: string): void
+  /**
+   * Pushes a project's song fields (title, artist, album, cover) into the loaded doc, so its
+   * participants see an owner's save and the next store writes back the new values. Nothing
+   * to do for a doc that is not loaded: syncMetaFromProject brings it in line at load.
+   */
+  syncSongMeta(docName: string, project: SongSource): Promise<void>
 }
 
 export type MountedCollabServer = CollabServer & {
@@ -251,12 +257,13 @@ async function mediaFor(uploadId: unknown): Promise<CollabMeta['media']> {
     : { source: null, url: null, uploadId: null }
 }
 
-type SongSource = {
+export type SongSource = {
   title?: string | null
   metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null
   coverImage?: string | null
 }
 type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album' | 'cover'>
+const SONG_META_KEYS = ['title', 'artist', 'album', 'cover'] as const
 
 /** The doc's song fields as the seed derives them from a Project. */
 function songMeta(project: SongSource): SongMeta {
@@ -270,10 +277,10 @@ function songMeta(project: SongSource): SongMeta {
 }
 
 /**
- * A stored doc's song fields and media brought in line with the Project. While a session
- * is live the Project only changes through storeState's write-back (solo saves are refused
- * with collab_active), so a difference here means an edit made between sessions, which
- * must win over the stale doc instead of being written over by it.
+ * A stored doc's song fields and media brought in line with the Project. While the doc is
+ * loaded an owner's metadata save is pushed into it (syncSongMeta) before it is written, so
+ * a difference here means an edit made while the doc was not loaded, which must win over
+ * the stale doc instead of being written over by it.
  */
 async function syncMetaFromProject(docName: string, state: Uint8Array): Promise<Uint8Array> {
   const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata uploadId coverImage').lean<SongSource & { uploadId?: unknown }>()
@@ -879,6 +886,21 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     broadcastLocks,
+
+    async syncSongMeta(docName, project) {
+      if (discarded.has(docName)) return
+      const doc = await loadedDoc(docName)
+      if (!doc || discarded.has(docName)) return
+      const want = songMeta(project)
+      const meta = doc.getMap<unknown>('meta')
+      const stale = SONG_META_KEYS.filter((k) => (meta.get(k) ?? null) !== want[k])
+      if (stale.length === 0) return
+      // A local origin with no connection: broadcast to every client and stored like any change,
+      // but recordContributor and touchActivity both skip it (they need a connection).
+      doc.transact(() => {
+        for (const k of stale) meta.set(k, want[k])
+      }, { source: 'local', context: {} })
+    },
 
     closeSubject(docName, subject) {
       locks.releaseSubject(docName, subject)

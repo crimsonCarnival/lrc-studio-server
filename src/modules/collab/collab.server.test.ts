@@ -22,7 +22,7 @@ import { getCollabServer } from './collab.server.js'
 import {
   createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, startSession,
 } from './collab.service.js'
-import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
+import { collabSessionBlocks, deleteProjectAsModerator, patchProject } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
 import { changePasswordAtomically } from '../auth/auth.tx.service.js'
 import { blockIp, deleteUser, toggleBan } from '../admin/admin.service.js'
@@ -535,6 +535,58 @@ describe('collab metadata write-back', () => {
     expect(fresh.doc.getMap('meta').get('title')).toBe('Renamed Solo')
     expect(fresh.doc.getMap('meta').get('album')).toBe(null)
     expect(lineText(fresh.doc, 'l1')).toBe('kept')
+  })
+})
+
+describe('collab owner metadata saves during a live session', () => {
+  const metaOf = (c: Client) => c.doc.getMap('meta').toJSON() as Record<string, unknown>
+
+  it("the owner's save succeeds, reaches a connected client through the doc, and survives the next store", async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const res = await patchProject(PUBLIC_ID, {
+      title: 'Renamed',
+      metadata: { songName: 'Live Song', songArtist: 'Artist', songAlbum: 'Live Album', description: 'kept' },
+      coverImage: 'https://res.cloudinary.com/x/live.jpg',
+    }, ownerId)
+    expect('error' in res).toBe(false)
+    const stored = (await Project.findOne({ publicId: PUBLIC_ID }).lean())!
+    await waitFor(() => metaOf(editor).title === 'Live Song' && metaOf(editor).album === 'Live Album')
+    expect(metaOf(editor).cover).toBe('https://res.cloudinary.com/x/live.jpg')
+    expect(metaOf(editor).artist).toBe(stored.metadata!.songArtist || null)
+    await waitFor(() => metaOf(owner).title === 'Live Song')
+    // An edit makes the doc store: its write-back must carry the new values, not the seeded ones.
+    const versionBefore = stored.version!
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'after save')
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())?.sections?.[0]?.lines?.[0]?.text === 'after save')
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.version! > versionBefore)
+    const p = (await Project.findOne({ publicId: PUBLIC_ID }).lean())!
+    expect(p.title).toBe('Renamed')
+    expect(p.metadata!.songName).toBe('Live Song')
+    expect(p.metadata!.songAlbum).toBe('Live Album')
+    expect((p.metadata as { description?: string }).description).toBe('kept')
+  })
+
+  it('lyrics are still refused while the session is live', async () => {
+    await connectSynced(await ownerCookie())
+    const res = await patchProject(PUBLIC_ID, { lyrics: { sections: [] } }, ownerId)
+    expect(res).toMatchObject({ status: 409, code: 'collab_active' })
+  })
+
+  it('a save that writes nothing leaves the doc on the stored values', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const res = await patchProject(PUBLIC_ID, { metadata: { songName: 'Never', songArtist: 'Artist', songAlbum: 'Album' }, version: 999 }, ownerId)
+    expect(res).toMatchObject({ code: 'version_conflict' })
+    await new Promise((r) => setTimeout(r, 150))
+    expect(metaOf(editor).title).toBe('Song')
+  })
+
+  it('a server-side doc write is never credited as a collaborator', async () => {
+    await connectSynced(guest('ed', editorInvite))
+    await patchProject(PUBLIC_ID, { metadata: { songName: 'Credit?', songArtist: 'Artist', songAlbum: 'Album' } }, ownerId)
+    await new Promise((r) => setTimeout(r, 150))
+    const p = (await Project.findOne({ publicId: PUBLIC_ID }).lean()) as { collaborators?: unknown[] }
+    expect(p.collaborators ?? []).toEqual([])
   })
 })
 
@@ -1274,6 +1326,10 @@ describe('collab session epoch', () => {
       })
       await endSession(PUBLIC_ID, ownerId)
       expect(await collabSessionBlocks(PUBLIC_ID, { lyrics: {} } as never)).toMatchObject({ code: 'collab_active' })
+      // The final store writes the doc's title and album back too, so those wait as well.
+      expect(await collabSessionBlocks(PUBLIC_ID, { title: 'X' } as never)).toMatchObject({ code: 'collab_active' })
+      expect(await collabSessionBlocks(PUBLIC_ID, { metadata: { songName: 'X' } } as never)).toMatchObject({ code: 'collab_active' })
+      expect(await collabSessionBlocks(PUBLIC_ID, { coverImage: 'https://x.test/c.jpg' } as never)).toBeNull()
       spy.mockRestore()
       await waitFor(async () => !(await CollabDoc.exists({ name: DOC })))
       expect(await collabSessionBlocks(PUBLIC_ID, { lyrics: {} } as never)).toBeNull()
