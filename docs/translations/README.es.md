@@ -6,6 +6,19 @@ El backend de [LRC Studio](https://www.lrcstudio.app), una plataforma de sincron
 
 > Idiomas: [English (Inglés)](../../README.md)
 
+[![Fastify 5](https://img.shields.io/badge/Fastify_5-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![GraphQL](https://img.shields.io/badge/GraphQL-E10098?style=flat-square&logo=graphql&logoColor=white)](https://graphql.org/)
+[![Socket.IO](https://img.shields.io/badge/Socket.IO-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/)
+[![Yjs / Hocuspocus](https://img.shields.io/badge/Yjs_%2F_Hocuspocus-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://tiptap.dev/docs/hocuspocus/)
+[![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/)
+[![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=flat-square&logo=cloudinary&logoColor=white)](https://cloudinary.com/)
+[![WebAuthn / Passkeys](https://img.shields.io/badge/WebAuthn_%2F_Passkeys-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/)
+[![Argon2](https://img.shields.io/badge/Argon2-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2)
+[![yt-dlp](https://img.shields.io/badge/yt--dlp-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
+[![i18next](https://img.shields.io/badge/i18next-26A69A?style=flat-square&logo=i18next&logoColor=white)](https://www.i18next.com/)
+
 ## Tabla de Contenidos
 
 - [Arquitectura](#arquitectura)
@@ -36,6 +49,8 @@ El backend de [LRC Studio](https://www.lrcstudio.app), una plataforma de sincron
   - [Vistas Previas de Enlaces (Open Graph)](#vistas-previas-de-enlaces-open-graph)
   - [Gamificación](#gamificación)
   - [Tareas en Segundo Plano](#tareas-en-segundo-plano)
+- [Pila Tecnológica y Dependencias](#pila-tecnológica-y-dependencias)
+  - [Dependencias para el Usuario](#dependencias-para-el-usuario)
 - [Empezando](#empezando)
 - [Variables de Entorno](#variables-de-entorno)
 - [Scripts](#scripts)
@@ -432,6 +447,11 @@ Los clientes se unen a las salas `user:{userId}` y `project:{publicId}`.
 
 ### Autenticación y Sesiones
 
+[![Argon2](https://img.shields.io/badge/Argon2-Hash_de_Contraseñas-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2)
+[![SimpleWebAuthn](https://img.shields.io/badge/SimpleWebAuthn-Llaves_de_Acceso-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/)
+[![JWT](https://img.shields.io/badge/JWT-Tokens_de_Sesión-000000?style=flat-square&logo=jsonwebtokens&logoColor=white)](https://jwt.io/)
+[![UAParser.js](https://img.shields.io/badge/UAParser.js-Detección_de_Dispositivos-3B82F6?style=flat-square)](https://github.com/faisalman/ua-parser-js)
+
 Tres métodos: **contraseña** (Argon2), **llave de acceso** (WebAuthn con `@simplewebauthn/server`) y **Google OAuth** (ventana emergente → token de un solo uso → `POST /auth/exchange-ott`).
 
 Los tokens de acceso y de refresco son JWT entregados como cookies `httpOnly`. Cada refresco rota el token y almacena su hash; se permite una ventana breve de reintento mediante `previousRefreshTokenHash`. Reutilizar un token rotado después de esa ventana invalida toda la familia de sesiones (`familyId`) como detección de robo. Los clientes refrescan al 75 % de la vida del token de acceso y agrupan los refrescos concurrentes para que una carrera no parezca un robo.
@@ -447,6 +467,9 @@ Aplícalo a nivel de ruta con `fastify.requirePermission('badges.manage')`, `fas
 Los conjuntos de permisos por rol viven en `shared/permissions.ts` y pueden sobrescribirse en la BD solo para `mod` y `admin`; `user` y `superadmin` nunca son sobrescribibles. **El rol de superadministrador se concede exclusivamente con la variable `SUPERADMIN_EMAIL`** — nunca por una ruta HTTP ni por la interfaz. Solo concede, nunca degrada; revocar es un paso manual deliberado con `scripts/grant-role.ts`.
 
 ### Estampado Automático (ASR)
+
+[![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-ASR_en_la_Nube-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/)
+[![yt-dlp](https://img.shields.io/badge/yt--dlp-Extracción_de_Audio-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
 
 Transcribe el audio y lo alinea con la letra del usuario para poder marcar una canción sin hacerlo a mano.
 
@@ -466,6 +489,10 @@ Este módulo concentra la mayor parte de la superficie de entrada no confiable d
 
 ### Proveedores de Letras
 
+[![LRCLIB](https://img.shields.io/badge/LRCLIB-Letras_Sincronizadas-2563EB?style=flat-square)](https://lrclib.net/)
+[![Genius](https://img.shields.io/badge/Genius-Búsqueda_de_Letras-FFFF64?style=flat-square&logo=genius&logoColor=black)](https://genius.com/)
+[![Spotify API](https://img.shields.io/badge/Spotify_API-Metadatos_de_Pista-1ED760?style=flat-square&logo=spotify&logoColor=white)](https://developer.spotify.com/)
+
 `GET /lyrics/extract` ejecuta una cadena, con cada proveedor aislado para que un fallo ajeno no haga fallar la petición:
 
 | Orden | Proveedor | Requiere clave | Letras sincronizadas |
@@ -482,6 +509,12 @@ LyricFind está condicionado a `LYRICFIND_API_KEY` y es una operación nula sile
 
 ### Persistencia de Proyectos y Letras
 
+[![MongoDB](https://img.shields.io/badge/MongoDB-Base_de_Datos-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![Mongoose 9](https://img.shields.io/badge/Mongoose_9-ODM-880000?style=flat-square&logo=mongoose&logoColor=white)](https://mongoosejs.com/)
+[![Yjs](https://img.shields.io/badge/Yjs-Persistencia_CRDT-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://yjs.dev/)
+[![Hocuspocus Server](https://img.shields.io/badge/Hocuspocus-Servidor_WebSocket-2D3748?style=flat-square)](https://tiptap.dev/docs/hocuspocus/)
+[![Socket.IO](https://img.shields.io/badge/Socket.IO-Tiempo_Real-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/)
+
 Las letras se guardan como `sections[]` anidadas, cada una con sus `lines[]`. El cliente trabaja con un array plano y convierte en la frontera (`flatToSections` / `sectionsToFlat`). Nunca aceptes líneas planas directamente.
 
 `PATCH /projects/:id` acepta un reemplazo completo de `sections` o un parche posicional quirúrgico (`{ sectionIdx, lineIdx, line }`, opcionalmente hasta `{ wordIndex, word }`). Los campos posicionales **deben** declararse en `projects.schema.ts` — AJV se ejecuta con `removeAdditional`, así que un campo no declarado se elimina en silencio y el parche se convierte en una operación nula. Los límites de índice del esquema replican las constantes `MAX_*_INDEX` del servicio; mantenlos sincronizados.
@@ -489,6 +522,8 @@ Las letras se guardan como `sections[]` anidadas, cada una con sus `lines[]`. El
 Tras un parche correcto, el servidor emite `project:updated` a la sala `project:{id}` y `autosave:ack` al socket de origen.
 
 ### URLs de Proyectos y Slugs
+
+[![NanoID](https://img.shields.io/badge/NanoID-IDs_Compactos-4F46E5?style=flat-square)](https://github.com/ai/nanoid)
 
 | Página | URL |
 |---|---|
@@ -533,6 +568,8 @@ Cambiar el nombre de una cuenta guarda el anterior en `account_name_history`, de
 
 ### Vistas Previas de Enlaces (Open Graph)
 
+[![Fastify](https://img.shields.io/badge/Fastify-Inyección_de_Metadatos-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/)
+
 `GET /og/meta?path=` recibe una ruta de la aplicación web y devuelve los metadatos que renderiza el proxy para rastreadores del cliente; `GET /og/project/:id` renderiza los mismos metadatos como HTML. Ambos pasan por `og.meta.service.ts`.
 
 - **Rutas reconocidas:** `/`, `/explore`, `/leaderboard`, `/:accountName`, `/:accountName/lists/:id`, `/:accountName/projects/:slug-:id[/edit]`, además de las formas heredadas `/project/:id` y `/profile/...`. Cada segmento capturado se valida antes de llegar a una consulta.
@@ -542,11 +579,15 @@ Cambiar el nombre de una cuenta guarda el anterior en `account_name_history`, de
 
 ### Gamificación
 
+[![MongoDB Aggregation](https://img.shields.io/badge/MongoDB-Rachas_y_Mapas_de_Calor-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+
 XP y niveles, definiciones de insignias con tipos de condición, rangos de adicción definidos por administración y rachas de actividad seguidas con `streak.lastActiveDate`. Las rachas se reinician en los límites de día UTC y se avisa a los usuarios antes de perderlas.
 
 El mapa de calor lee `heatmap_days`, que guarda `projectsCreated` y `editedProjects` por usuario y día UTC. `editedProjects` cuenta **proyectos distintos que recibieron un cambio de contenido guardado**, tanto por autoguardado como por guardado manual — así que autoguardar un proyecto todo el día aporta 1. La deduplicación inserta en `heatmap_project_edits` (índice único en `{userId, projectId, day}`) y solo incrementa el contador cuando la inserción tiene éxito, lo que evita el doble conteo con guardados concurrentes del mismo proyecto. Estos contadores nunca llegan al feed público.
 
 ### Tareas en Segundo Plano
+
+[![Pulse](https://img.shields.io/badge/Pulse-Planificador_de_Tareas-8B5CF6?style=flat-square)](https://github.com/pulsecron/pulse)
 
 Programadas en `plugins/cron.ts` con `setInterval`/`setTimeout` en lugar de una librería de cron:
 
@@ -559,6 +600,51 @@ Programadas en `plugins/cron.ts` con `setInterval`/`setTimeout` en lugar de una 
 | `seedBuiltinBadges`, `seedAddictionLevels`, `syncRolePermissions`, `syncSuperadminEmailGrant` | Una vez al arrancar, todas idempotentes |
 
 Índices TTL: actividades 365 días, `heatmap_days` 400 días, `heatmap_project_edits` 2 días, registros de administración 90 días, IPs/dispositivos baneados 2 años, sesiones en `expiresAt`.
+
+## Pila Tecnológica y Dependencias
+
+| Capa | Tecnología | Insignia / Chip |
+|---|---|---|
+| Entorno de ejecución | [Node.js 24](https://nodejs.org/) | [![Node.js](https://img.shields.io/badge/Node.js_24-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/) |
+| Lenguaje | [TypeScript](https://www.typescriptlang.org/) | [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) |
+| Framework HTTP | [Fastify 5](https://fastify.dev/) | [![Fastify 5](https://img.shields.io/badge/Fastify_5-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/) |
+| Base de datos | [MongoDB](https://www.mongodb.com/) + [Mongoose 9](https://mongoosejs.com/) | [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/) |
+| Servidor GraphQL | [Mercurius](https://mercurius.dev/) | [![Mercurius](https://img.shields.io/badge/Mercurius-E10098?style=flat-square&logo=graphql&logoColor=white)](https://mercurius.dev/) |
+| WebSockets | [Socket.IO](https://socket.io/) | [![Socket.IO](https://img.shields.io/badge/Socket.IO-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/) |
+| Motor colaborativo | [Hocuspocus Server](https://tiptap.dev/docs/hocuspocus/) + [Yjs](https://yjs.dev/) | [![Yjs](https://img.shields.io/badge/Yjs-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://yjs.dev/) |
+| Medios en la nube | [Cloudinary](https://cloudinary.com/) | [![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=flat-square&logo=cloudinary&logoColor=white)](https://cloudinary.com/) |
+| Transcripción IA | [Groq Whisper](https://groq.com/) | [![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/) |
+| Seguridad de contraseñas | [Argon2](https://github.com/ranisalt/node-argon2) | [![Argon2](https://img.shields.io/badge/Argon2-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2) |
+| Llaves de acceso | [SimpleWebAuthn](https://simplewebauthn.dev/) | [![SimpleWebAuthn](https://img.shields.io/badge/SimpleWebAuthn-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/) |
+| Planificador de tareas | [Pulse](https://github.com/pulsecron/pulse) | [![Pulse](https://img.shields.io/badge/Pulse-8B5CF6?style=flat-square)](https://github.com/pulsecron/pulse) |
+| Pruebas | [Vitest](https://vitest.dev/) + [mongodb-memory-server](https://github.com/nodkz/mongodb-memory-server) | [![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/) |
+
+### Dependencias para el Usuario
+
+Un desglose estructurado de las dependencias del backend que potencian directamente las funciones orientadas al usuario:
+
+| Subsistema | Funcionalidad | Dependencia | Insignia / Chip | Propósito |
+|---|---|---|---|---|
+| **API Principal** | API REST de Alto Rendimiento | `fastify` 5 | [![Fastify 5](https://img.shields.io/badge/Fastify_5-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/) | Rutas de mutación REST, guardas de autenticación, trabajos ASR y subidas |
+| **API Social** | Lecturas y Feeds Sociales | `mercurius`, `graphql` | [![GraphQL](https://img.shields.io/badge/GraphQL-E10098?style=flat-square&logo=graphql&logoColor=white)](https://graphql.org/) | Servidor GraphQL de alto rendimiento para feed, explorar, perfiles y listas |
+| **Tiempo Real** | Eventos en Tiempo Real | `socket.io` | [![Socket.IO](https://img.shields.io/badge/Socket.IO-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/) | Actualizaciones de proyectos, presencia de espectadores, avisos y progreso ASR |
+| **Tiempo Real** | Escalado Multi-Instancia | `@socket.io/mongo-adapter` | [![MongoDB Adapter](https://img.shields.io/badge/Socket.IO-Mongo_Adapter-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://socket.io/docs/v4/mongo-adapter/) | Difusión de mensajes WebSocket entre instancias con change streams de Mongo |
+| **Base de Datos** | Persistencia de Datos | `mongoose` 9, `mongodb` | [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/) | Modelos documentales para usuarios, proyectos, revisiones, estadísticas e insignias |
+| **Sincronización Colaborativa** | Servidor Colaborativo | `@hocuspocus/server` | [![Hocuspocus Server](https://img.shields.io/badge/Hocuspocus_Server-2D3748?style=flat-square)](https://tiptap.dev/docs/hocuspocus/) | Servidor WebSocket para sincronizar cambios CRDT de documentos en tiempo real |
+| **Sincronización Colaborativa** | Documentos Compartidos CRDT | `yjs`, `y-protocols` | [![Yjs](https://img.shields.io/badge/Yjs-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://yjs.dev/) | Estructura de datos sin conflictos para edición concurrente de canciones |
+| **Transcripción con IA** | Voz a Texto Whisper | Groq Whisper API | [![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/) | Transcripción en la nube Whisper large-v3 para Estampado Automático |
+| **IA y Medios** | Extracción de Audio de YouTube | `yt-dlp` | [![yt-dlp](https://img.shields.io/badge/yt--dlp-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp) | Extracción de audio en el servidor para reproducción y transcripción de YouTube |
+| **Almacenamiento** | Subidas y Medios en la Nube | `cloudinary` | [![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=flat-square&logo=cloudinary&logoColor=white)](https://cloudinary.com/) | Subidas directas firmadas de pistas de audio, portadas y avatares |
+| **Autenticación** | Llaves de Acceso / WebAuthn | `@simplewebauthn/server` | [![SimpleWebAuthn](https://img.shields.io/badge/SimpleWebAuthn-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/) | Autenticación criptográfica para registro e inicio de sesión biométrico |
+| **Autenticación** | Seguridad de Contraseñas | `argon2` | [![Argon2](https://img.shields.io/badge/Argon2-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2) | Hashing de contraseñas Argon2id de alta memoria para máxima seguridad |
+| **Autenticación** | Tokens de Sesión | `jsonwebtoken` | [![JWT](https://img.shields.io/badge/JWT-000000?style=flat-square&logo=jsonwebtokens&logoColor=white)](https://jwt.io/) | Sesiones sin estado en cookies httpOnly con rotación de tokens de refresco |
+| **Autenticación** | Detección de Dispositivos | `ua-parser-js` | [![UAParser.js](https://img.shields.io/badge/UAParser.js-3B82F6?style=flat-square)](https://github.com/faisalman/ua-parser-js) | Identificación de navegador, SO y dispositivo para gestión de sesiones |
+| **Moderación** | Desinfección XSS | `sanitize-html` | [![Sanitize-HTML](https://img.shields.io/badge/Sanitize--HTML-059669?style=flat-square)](https://github.com/apostrophecms/sanitize-html) | Desinfección estricta contra XSS en biografías, comentarios y descripciones |
+| **Arquitectura de URLs** | Slugs e IDs Legibles | `nanoid` | [![NanoID](https://img.shields.io/badge/NanoID-4F46E5?style=flat-square)](https://github.com/ai/nanoid) | Generación de slugs cosméticos e IDs públicos resistentes a colisiones |
+| **Tareas en Segundo Plano** | Automatización Programada | `@pulsecron/pulse` | [![Pulse](https://img.shields.io/badge/Pulse-8B5CF6?style=flat-square)](https://github.com/pulsecron/pulse) | Planificador de tareas para rachas, recálculo de tendencias y limpieza |
+| **Internacionalización** | Mensajes Localizados | `i18next` | [![i18next](https://img.shields.io/badge/i18next-26A69A?style=flat-square&logo=i18next&logoColor=white)](https://www.i18next.com/) | Mensajes de error, notificaciones y correos traducidos en el servidor |
+| **Descubrimiento Musical** | API de Letras Sincronizadas | LRCLIB | [![LRCLIB](https://img.shields.io/badge/LRCLIB-2563EB?style=flat-square)](https://lrclib.net/) | Proveedor principal que devuelve letras LRC ya sincronizadas |
+| **Descubrimiento Musical** | Búsqueda y Metadatos | APIs de Genius y Spotify | [![Genius](https://img.shields.io/badge/Genius-FFFF64?style=flat-square&logo=genius&logoColor=black)](https://genius.com/) | Búsqueda de letras de reserva y resolución de metadatos de pistas |
 
 ## Empezando
 
