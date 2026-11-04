@@ -334,6 +334,34 @@ describe('a guest who signs in', () => {
     expect((await membersOf(p.session._id))[0].absorbedGuests).toEqual(kept)
   })
 
+  describe('races', () => {
+    it('two tabs promoting at once leave one row and one credit', async () => {
+      const u = await mkUser()
+      await Project.collection.insertOne({ publicId: PUBLIC_ID, collaborators: [{ subject: G, userId: null, guestName: 'Ana', firstContributedAt: new Date() }], removedCollaborators: [] })
+      const p = await mkSession({ members: [guestEntry()] })
+      const cookieHeader = await both(u, p)
+      const results = await Promise.all([resolvePrincipal({ cookieHeader, docName: DOC }), resolvePrincipal({ cookieHeader, docName: DOC })])
+      for (const r of results) expect(r).toMatchObject({ subject: `user:${u}`, role: 'editor', colorIndex: 5 })
+      const members = await membersOf(p.session._id)
+      expect(members.map((m) => m.subject)).toEqual([`user:${u}`])
+      expect(members[0].absorbedGuests).toEqual([G])
+      expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.collaborators.map((c) => c.subject)).toEqual([`user:${u}`])
+    })
+
+    it.each([
+      ['the guest', [G]],
+      ['the account', ['ACCOUNT']],
+    ])('a kick of %s landing between the read and the rename wins', async (_name, targets) => {
+      const u = await mkUser()
+      const p = await mkSession({ members: [guestEntry()] })
+      const cookieHeader = await both(u, p)
+      const spy = kickAfterRead(targets.map((t) => (t === 'ACCOUNT' ? `user:${u}` : t)))
+      await expect(resolvePrincipal({ cookieHeader, docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+      spy.mockRestore()
+      expect((await membersOf(p.session._id)).map((m) => m.subject)).not.toContain(`user:${u}`)
+    })
+  })
+
   it('a stale read cannot re-add a subject kicked meanwhile', async () => {
     const p = await mkSession()
     const cookieHeader = guestCookie({ guestId: 'g1', name: 'Ana', sessionId: p.session.id, inviteId: p.editorInvite })
