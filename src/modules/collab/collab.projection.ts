@@ -13,7 +13,7 @@ const LINE_FIELDS = [
   'secondaryWords', 'type', 'label', 'depth', 'singers', 'mode', 'source', 'confidence', 'adLibOf',
 ] as const
 
-const META_FIELDS = ['editorMode', 'title', 'artist', 'album', 'media'] as const
+const META_FIELDS = ['editorMode', 'title', 'artist', 'album', 'cover', 'media'] as const
 
 export function seedDocFromProject(doc: Y.Doc, sections: unknown[], meta: CollabMeta): void {
   const secs = sections as SectionEntry[]
@@ -68,6 +68,7 @@ export function docToMeta(doc: Y.Doc): CollabMeta {
     title: (m.get('title') as string | null | undefined) ?? null,
     artist: (m.get('artist') as string | null | undefined) ?? null,
     album: (m.get('album') as string | null | undefined) ?? null,
+    cover: (m.get('cover') as string | null | undefined) ?? null,
     media,
   }
 }

@@ -125,6 +125,16 @@ export type CollabServer = {
   /** Connections on this process, which is all of them: production runs one instance. */
   hasConnections(docName: string): boolean
   broadcastLocks(docName: string): void
+  /**
+   * Pushes a project's song fields (title, artist, album, cover) into the loaded doc, so its
+   * participants see an owner's save and the next store writes back the new values. Nothing
+   * to do for a doc that is not loaded: syncMetaFromProject brings it in line at load.
+   */
+  syncSongMeta(docName: string, project: SongSource): Promise<void>
+  /** Sends the session's member list, read from the DB, to every connection of the doc. */
+  broadcastMembers(docName: string): Promise<void>
+  /** Tells every connection the session's invites or guest access changed; owners refetch. */
+  broadcastSessionSettings(docName: string): void
 }
 
 export type MountedCollabServer = CollabServer & {
@@ -214,7 +224,7 @@ async function fetchState(docName: string): Promise<Uint8Array | null> {
     }
   }
 
-  const project = await Project.findOne({ publicId }).select('title metadata uploadId').lean()
+  const project = await Project.findOne({ publicId }).select('title metadata uploadId coverImage').lean()
   if (!project) return null
   const meta: CollabMeta = {
     editorMode: lyrics?.editorMode ?? 'lrc',
@@ -264,23 +274,33 @@ async function mediaFor(uploadId: unknown): Promise<CollabMeta['media']> {
     : { source: null, url: null, uploadId: null }
 }
 
-type SongSource = { title?: string | null; metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null }
-type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album'>
+export type SongSource = {
+  title?: string | null
+  metadata?: { songName?: string | null; songArtist?: string | null; songAlbum?: string | null } | null
+  coverImage?: string | null
+}
+type SongMeta = Pick<CollabMeta, 'title' | 'artist' | 'album' | 'cover'>
+const SONG_META_KEYS = ['title', 'artist', 'album', 'cover'] as const
 
 /** The doc's song fields as the seed derives them from a Project. */
 function songMeta(project: SongSource): SongMeta {
   const md = project.metadata ?? {}
-  return { title: md.songName || project.title || null, artist: md.songArtist || null, album: md.songAlbum || null }
+  return {
+    title: md.songName || project.title || null,
+    artist: md.songArtist || null,
+    album: md.songAlbum || null,
+    cover: project.coverImage || null,
+  }
 }
 
 /**
- * A stored doc's song fields and media brought in line with the Project. While a session
- * is live the Project only changes through storeState's write-back (solo saves are refused
- * with collab_active), so a difference here means an edit made between sessions, which
- * must win over the stale doc instead of being written over by it.
+ * A stored doc's song fields and media brought in line with the Project. While the doc is
+ * loaded an owner's metadata save is pushed into it (syncSongMeta) before it is written, so
+ * a difference here means an edit made while the doc was not loaded, which must win over
+ * the stale doc instead of being written over by it.
  */
 async function syncMetaFromProject(docName: string, state: Uint8Array): Promise<Uint8Array> {
-  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata uploadId').lean<SongSource & { uploadId?: unknown }>()
+  const project = await Project.findOne({ publicId: publicIdOf(docName) }).select('title metadata uploadId coverImage').lean<SongSource & { uploadId?: unknown }>()
   if (!project) return state
   const want = { ...songMeta(project), media: await mediaFor(project.uploadId) }
   const doc = new Y.Doc()
@@ -308,7 +328,9 @@ const cleanText = (v: unknown, max: number): string => (typeof v === 'string' ? 
  * seed read them from (songName when set, else title; songAlbum), sanitised and
  * capped like the Project schema, with the slug kept in step. Artist is not
  * written: songArtist is derived from structured credits and never free text.
- * Media is not editable in a session.
+ * Media and cover are not editable in a session (the owner saves those through
+ * updateProject). A title or album the doc does not hold as a string (null,
+ * absent) leaves the stored field alone: the seed writes null for an empty one.
  */
 function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unknown> {
   const md = project.metadata ?? {}
@@ -322,8 +344,10 @@ function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unkn
     const next = cleanTitle(meta.title)
     if (next && next !== project.title) $set.title = title = next
   }
-  const album = cleanText(meta.album, ALBUM_MAX)
-  if (album !== (md.songAlbum ?? '')) $set['metadata.songAlbum'] = album
+  if (typeof meta.album === 'string') {
+    const album = cleanText(meta.album, ALBUM_MAX)
+    if (album !== (md.songAlbum ?? '')) $set['metadata.songAlbum'] = album
+  }
   if ('title' in $set || 'metadata.songName' in $set) {
     const nextMd = { songName, songArtist: md.songArtist ?? '' }
     if (!hasProjectIdentity(title, nextMd)) {
@@ -712,6 +736,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         colorIndex: principal.colorIndex, role: principal.role, sessionId: principal.sessionId,
       }))
       connection.sendStateless(locksMessage(documentName))
+      if (principal.membersChanged) void broadcastMembersOf(documentName)
     },
 
     // The 5 MiB ws frame cap bounds one message, not the doc: without this, editors
@@ -804,6 +829,21 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
   function broadcastLocks(docName: string): void {
     hocuspocus.documents.get(docName)?.broadcastStateless(locksMessage(docName))
+  }
+
+  // No inviteId: that is the owner's view only, and this goes to every participant.
+  async function broadcastMembers(docName: string): Promise<void> {
+    if (!hocuspocus.documents.has(docName)) return
+    const s = await CollabSession.findOne({ publicId: publicIdOf(docName), endedAt: null })
+      .select('members').lean<{ members: Array<{ subject: string; name: string; role: string; colorIndex: number; avatarUrl?: string | null }> }>()
+    if (!s) return
+    const members = s.members.map((m) => ({ subject: m.subject, name: m.name, role: m.role, colorIndex: m.colorIndex, avatarUrl: m.avatarUrl ?? null }))
+    hocuspocus.documents.get(docName)?.broadcastStateless(JSON.stringify({ t: 'members', members }))
+  }
+
+  /** Fire and forget from a hook: a failed read only leaves lists stale until the next change. */
+  function broadcastMembersOf(docName: string): Promise<void> {
+    return broadcastMembers(docName).catch((err: unknown) => log.error({ err, docName }, 'collab: broadcasting members failed'))
   }
 
   function connectionsOf(docName: string, match: (c: CollabContext) => boolean): Connection[] {
@@ -918,6 +958,26 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     broadcastLocks,
+    broadcastMembers,
+
+    broadcastSessionSettings(docName) {
+      hocuspocus.documents.get(docName)?.broadcastStateless(JSON.stringify({ t: 'session-settings' }))
+    },
+
+    async syncSongMeta(docName, project) {
+      if (discarded.has(docName)) return
+      const doc = await loadedDoc(docName)
+      if (!doc || discarded.has(docName)) return
+      const want = songMeta(project)
+      const meta = doc.getMap<unknown>('meta')
+      const stale = SONG_META_KEYS.filter((k) => (meta.get(k) ?? null) !== want[k])
+      if (stale.length === 0) return
+      // A local origin with no connection: broadcast to every client and stored like any change,
+      // but recordContributor and touchActivity both skip it (they need a connection).
+      doc.transact(() => {
+        for (const k of stale) meta.set(k, want[k])
+      }, { source: 'local', context: {} })
+    },
 
     closeSubject(docName, subject) {
       revocations.revoke(`subject:${subject}`)

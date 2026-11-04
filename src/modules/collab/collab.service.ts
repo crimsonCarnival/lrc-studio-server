@@ -142,6 +142,20 @@ async function liveSession(publicId: string): Promise<SessionDoc> {
   return s
 }
 
+/**
+ * Participants' member lists follow a membership change without a refetch. Fire and forget, after the
+ * DB write: the change already happened, and a failed broadcast only leaves lists stale until the next one.
+ */
+function pushMembers(publicId: string): Promise<void> {
+  return mountedCollabServer()?.broadcastMembers(docNameOf(publicId))
+    .catch((err: unknown) => console.error('[collab] broadcasting members failed', { publicId, err })) ?? Promise.resolve()
+}
+
+/** Owners' other tabs refetch invites and guest access. */
+function pushSessionSettings(publicId: string): void {
+  withCollabServer((server) => server.broadcastSessionSettings(docNameOf(publicId)))
+}
+
 /** Live connections of these subjects re-authenticate; the ones no longer admitted are refused there. */
 function reconnect(publicId: string, subjects: string[]): void {
   const server = getCollabServer()
@@ -249,6 +263,7 @@ export async function createInvite(publicId: string, role: string, userId: strin
     { $push: { invites: { tokenHash: hashInviteToken(token), role } } },
   )
   if (res.modifiedCount === 0) throw new CollabError('collab_invite_limit', 409)
+  pushSessionSettings(publicId)
   return token
 }
 
@@ -258,6 +273,7 @@ export async function revokeInvite(publicId: string, inviteId: string, userId: s
   const invite = s.invites.find((i) => i._id.toString() === inviteId)
   if (!invite) throw notFound()
   await revokeInviteIn(s, inviteId)
+  pushSessionSettings(publicId)
   return true
 }
 
@@ -277,6 +293,9 @@ export async function setRole(publicId: string, subject: string, role: string, u
   const s = await liveSession(publicId)
   if (!s.members.some((m) => m.subject === subject)) throw notFound()
   await CollabSession.updateOne({ _id: s._id, 'members.subject': subject }, { $set: { 'members.$.role': role } })
+  // Awaited (it never rejects) so the list goes out before the reconnect: the affected client then
+  // shows its new role at once, and ws flushes this frame ahead of the close.
+  await pushMembers(publicId)
   reconnect(publicId, [subject])
   return true
 }
@@ -312,7 +331,11 @@ export async function kick(publicId: string, subject: string, userId: string | n
   for (const guest of absorbed) {
     if (s.members.some((m) => m.subject === guest) || server.hasSubject(docNameOf(publicId), guest)) server.closeSubject(docNameOf(publicId), guest)
   }
-  if (inviteId) await revokeInviteIn(s, inviteId)
+  void pushMembers(publicId)
+  if (inviteId) {
+    await revokeInviteIn(s, inviteId)
+    pushSessionSettings(publicId)
+  }
   return { revokedInviteId: inviteId }
 }
 
@@ -321,6 +344,7 @@ export async function setGuestAccess(publicId: string, allowGuests: boolean, use
   const s = await liveSession(publicId)
   await CollabSession.updateOne({ _id: s._id }, { $set: { allowGuests } })
   if (!allowGuests) reconnect(publicId, s.members.filter((m) => m.subject.startsWith('guest:')).map((m) => m.subject))
+  pushSessionSettings(publicId)
   return true
 }
 
@@ -390,6 +414,7 @@ async function upsertMember(s: SessionDoc, entry: Omit<MemberEntry, 'colorIndex'
     if (raced) return raced.role
     throw fresh?.kicked.includes(entry.subject) ? new CollabError('collab_kicked', 403) : new CollabError('collab_session_full', 403)
   }
+  void pushMembers(s.publicId)
   return entry.role
 }
 

@@ -20,9 +20,10 @@ import Upload from '../uploads/upload.model.js'
 import { loadEnv } from '../../config/env.js'
 import { getCollabServer } from './collab.server.js'
 import {
-  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, setRole, startSession,
+  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, revokeInvite,
+  setGuestAccess, setRole, startSession,
 } from './collab.service.js'
-import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
+import { collabSessionBlocks, deleteProjectAsModerator, patchProject } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
 import { changePasswordAtomically } from '../auth/auth.tx.service.js'
 import { blockDevice, blockIp, deleteUser, toggleBan } from '../admin/admin.service.js'
@@ -494,6 +495,37 @@ describe('collab metadata write-back', () => {
     expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songName).toBe('')
   })
 
+  it('an album the doc holds as null or not at all leaves the stored album alone', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const meta = editor.doc.getMap('meta')
+    editor.doc.transact(() => {
+      meta.set('album', null)
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'stored')
+    })
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())?.sections?.[0]?.lines?.[0]?.text === 'stored')
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.version! > 1)
+    expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songAlbum).toBe('Album')
+    editor.doc.transact(() => {
+      meta.delete('album')
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'stored again')
+    })
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())?.sections?.[0]?.lines?.[0]?.text === 'stored again')
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.version! > 2)
+    expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songAlbum).toBe('Album')
+  })
+
+  it('seeds meta.cover from the project cover, and a stored doc picks up a new one', async () => {
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { coverImage: 'https://res.cloudinary.com/x/one.jpg' } })
+    const first = await connectSynced(guest('ed', editorInvite))
+    expect(first.doc.getMap('meta').get('cover')).toBe('https://res.cloudinary.com/x/one.jpg')
+    close(first)
+    await new Promise((r) => setTimeout(r, 150))
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { coverImage: '' } })
+    const fresh = await connectSynced(guest('ed', editorInvite))
+    expect(fresh.doc.getMap('meta').get('cover')).toBe(null)
+  })
+
   it('a stored doc picks up project metadata changed between sessions', async () => {
     const first = await connectSynced(guest('ed', editorInvite))
     first.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
@@ -506,6 +538,105 @@ describe('collab metadata write-back', () => {
     expect(fresh.doc.getMap('meta').get('title')).toBe('Renamed Solo')
     expect(fresh.doc.getMap('meta').get('album')).toBe(null)
     expect(lineText(fresh.doc, 'l1')).toBe('kept')
+  })
+})
+
+describe('collab owner metadata saves during a live session', () => {
+  const metaOf = (c: Client) => c.doc.getMap('meta').toJSON() as Record<string, unknown>
+
+  it("the owner's save succeeds, reaches a connected client through the doc, and survives the next store", async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const res = await patchProject(PUBLIC_ID, {
+      title: 'Renamed',
+      metadata: { songName: 'Live Song', songArtist: 'Artist', songAlbum: 'Live Album', description: 'kept' },
+      coverImage: 'https://res.cloudinary.com/x/live.jpg',
+    }, ownerId)
+    expect('error' in res).toBe(false)
+    const stored = (await Project.findOne({ publicId: PUBLIC_ID }).lean())!
+    await waitFor(() => metaOf(editor).title === 'Live Song' && metaOf(editor).album === 'Live Album')
+    expect(metaOf(editor).cover).toBe('https://res.cloudinary.com/x/live.jpg')
+    expect(metaOf(editor).artist).toBe(stored.metadata!.songArtist || null)
+    await waitFor(() => metaOf(owner).title === 'Live Song')
+    // An edit makes the doc store: its write-back must carry the new values, not the seeded ones.
+    const versionBefore = stored.version!
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'after save')
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())?.sections?.[0]?.lines?.[0]?.text === 'after save')
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.version! > versionBefore)
+    const p = (await Project.findOne({ publicId: PUBLIC_ID }).lean())!
+    expect(p.title).toBe('Renamed')
+    expect(p.metadata!.songName).toBe('Live Song')
+    expect(p.metadata!.songAlbum).toBe('Live Album')
+    expect((p.metadata as { description?: string }).description).toBe('kept')
+  })
+
+  it('lyrics are still refused while the session is live', async () => {
+    await connectSynced(await ownerCookie())
+    const res = await patchProject(PUBLIC_ID, { lyrics: { sections: [] } }, ownerId)
+    expect(res).toMatchObject({ status: 409, code: 'collab_active' })
+  })
+
+  it('a save that writes nothing leaves the doc on the stored values', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const res = await patchProject(PUBLIC_ID, { metadata: { songName: 'Never', songArtist: 'Artist', songAlbum: 'Album' }, version: 999 }, ownerId)
+    expect(res).toMatchObject({ code: 'version_conflict' })
+    await new Promise((r) => setTimeout(r, 150))
+    expect(metaOf(editor).title).toBe('Song')
+  })
+
+  it('a server-side doc write is never credited as a collaborator', async () => {
+    await connectSynced(guest('ed', editorInvite))
+    await patchProject(PUBLIC_ID, { metadata: { songName: 'Credit?', songArtist: 'Artist', songAlbum: 'Album' } }, ownerId)
+    await new Promise((r) => setTimeout(r, 150))
+    const p = (await Project.findOne({ publicId: PUBLIC_ID }).lean()) as { collaborators?: unknown[] }
+    expect(p.collaborators ?? []).toEqual([])
+  })
+})
+
+describe('collab live membership and settings', () => {
+  const lastMembers = (c: Client) =>
+    c.stateless.filter((m) => m.t === 'members').at(-1)?.members as Array<Record<string, unknown>> | undefined
+  const settingsCount = (c: Client) => c.stateless.filter((m) => m.t === 'session-settings').length
+
+  it('setRole sends every connection the member list with the new role, before the reconnect', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await setRole(PUBLIC_ID, 'guest:ed', 'viewer', ownerId)
+    await waitFor(() => lastMembers(owner)?.find((m) => m.subject === 'guest:ed')?.role === 'viewer')
+    await waitFor(() => lastMembers(editor)?.find((m) => m.subject === 'guest:ed')?.role === 'viewer')
+    const entry = lastMembers(owner)!.find((m) => m.subject === 'guest:ed')!
+    expect(Object.keys(entry).sort()).toEqual(['avatarUrl', 'colorIndex', 'name', 'role', 'subject'])
+    await waitFor(() => editor.provider.authorizedScope === 'readonly')
+  })
+
+  it('a first connection and a join each send the list with the new member', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    await connectSynced(guest('ed', editorInvite))
+    await waitFor(() => !!lastMembers(owner)?.some((m) => m.subject === 'guest:ed'))
+    const token = await createInvite(PUBLIC_ID, 'editor', ownerId)
+    await joinSession({ token, name: 'Ana', userId: null })
+    await waitFor(() => !!lastMembers(owner)?.some((m) => m.name === 'Ana'))
+  })
+
+  it('a kick sends the list without the kicked member, besides the kicked notice', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    await connectSynced(guest('ed', editorInvite))
+    await waitFor(() => !!lastMembers(owner)?.some((m) => m.subject === 'guest:ed'))
+    await kick(PUBLIC_ID, 'guest:ed', ownerId)
+    await waitFor(() => owner.stateless.some((m) => m.t === 'kicked' && m.subject === 'guest:ed'))
+    await waitFor(() => !lastMembers(owner)!.some((m) => m.subject === 'guest:ed'))
+  })
+
+  it('creating and revoking an invite and toggling guest access each send session-settings', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await createInvite(PUBLIC_ID, 'viewer', ownerId)
+    await waitFor(() => settingsCount(owner) === 1 && settingsCount(editor) === 1)
+    await revokeInvite(PUBLIC_ID, viewerInvite, ownerId)
+    await waitFor(() => settingsCount(owner) === 2)
+    await setGuestAccess(PUBLIC_ID, false, ownerId)
+    await waitFor(() => settingsCount(owner) === 3)
+    expect(owner.stateless.filter((m) => m.t === 'session-settings').every((m) => Object.keys(m).length === 1)).toBe(true)
   })
 })
 
@@ -1245,6 +1376,10 @@ describe('collab session epoch', () => {
       })
       await endSession(PUBLIC_ID, ownerId)
       expect(await collabSessionBlocks(PUBLIC_ID, { lyrics: {} } as never)).toMatchObject({ code: 'collab_active' })
+      // The final store writes the doc's title and album back too, so those wait as well.
+      expect(await collabSessionBlocks(PUBLIC_ID, { title: 'X' } as never)).toMatchObject({ code: 'collab_active' })
+      expect(await collabSessionBlocks(PUBLIC_ID, { metadata: { songName: 'X' } } as never)).toMatchObject({ code: 'collab_active' })
+      expect(await collabSessionBlocks(PUBLIC_ID, { coverImage: 'https://x.test/c.jpg' } as never)).toBeNull()
       spy.mockRestore()
       await waitFor(async () => !(await CollabDoc.exists({ name: DOC })))
       expect(await collabSessionBlocks(PUBLIC_ID, { lyrics: {} } as never)).toBeNull()

@@ -19,8 +19,9 @@ import User from '../users/user.model.js';
 import CollabSession from '../collab/collab-session.model.js';
 import { createProject, patchProject, updateProject } from './projects.crud.service.js';
 
-// While a collab session is live, the Y.Doc is the source of truth for lyrics
-// and song metadata: its next store would silently overwrite a solo save.
+// While a collab session is live, the Y.Doc is the source of truth for lyrics:
+// its next store would silently overwrite a solo save. Song metadata is the
+// owner's to save, and is pushed into the live doc.
 
 let repl: MongoMemoryReplSet;
 
@@ -48,19 +49,26 @@ async function setup(): Promise<{ userId: string; publicId: string }> {
 const SECTIONS = [{ label: null, id: null, depth: null, timestamp: null, lines: [{ id: 'l1', text: 'solo' }] }];
 
 describe('solo saves during a live collab session', () => {
-  it('rejects lyrics and song-metadata writes with collab_active, allows visibility', async () => {
+  it('rejects lyrics writes with collab_active, allows song metadata, title and visibility', async () => {
     const { userId, publicId } = await setup();
     await CollabSession.create({ publicId, ownerId: userId });
 
-    for (const input of [{ lyrics: { sections: SECTIONS } }, { metadata: { songName: 'X' } }, { title: 'New' }]) {
-      const res = await patchProject(publicId, input, userId);
-      expect(res).toMatchObject({ status: 409, code: 'collab_active' });
-      const full = await updateProject(publicId, input, userId);
-      expect(full).toMatchObject({ status: 409, code: 'collab_active' });
-    }
+    const lyrics = { lyrics: { sections: SECTIONS } };
+    expect(await patchProject(publicId, lyrics, userId)).toMatchObject({ status: 409, code: 'collab_active' });
+    expect(await updateProject(publicId, lyrics, userId)).toMatchObject({ status: 409, code: 'collab_active' });
+    // Lyrics alongside metadata still refuses the whole save.
+    expect(await patchProject(publicId, { ...lyrics, title: 'Mixed' }, userId)).toMatchObject({ code: 'collab_active' });
+
+    // The owner's metadata saves go through; the live doc is updated first (see collab.server.test).
+    const patched = await patchProject(publicId, { title: 'New', metadata: { songName: 'S', description: 'd', tags: ['t'] } }, userId);
+    expect('error' in patched).toBe(false);
+    const full = await updateProject(publicId, { metadata: { songName: 'S2', songAlbum: 'A' } }, userId);
+    expect('error' in full).toBe(false);
     const visible = await patchProject(publicId, { public: true }, userId);
     expect('error' in visible).toBe(false);
-    expect((await Project.findOne({ publicId }).lean())!.title).toBe('T');
+    const p = (await Project.findOne({ publicId }).lean())!;
+    expect(p.title).toBe('New');
+    expect((p.metadata as { songName?: string }).songName).toBe('S2');
   });
 
   it('a non-owner still gets 403, not a hint that a session exists', async () => {

@@ -11,7 +11,7 @@ import Lyrics from '../lyrics/lyrics.model.js';
 import Upload from '../uploads/upload.model.js';
 import CollabSession from '../collab/collab-session.model.js';
 import { discardDeletedProject } from '../collab/collab.service.js';
-import { mountedCollabServer } from '../collab/collab.server.js';
+import { mountedCollabServer, type SongSource } from '../collab/collab.server.js';
 import User from '../users/user.model.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
@@ -409,17 +409,57 @@ export async function getProject(publicId: string, requestingUserId?: string | n
   return pub as unknown as ProjectPublic;
 }
 
-// Fields a live collab session owns: its Y.Doc projects lyrics and the song
-// title/album back on every store, so a solo save here would be overwritten
-// moments later. Visibility, cover, state and media stay writable.
-const COLLAB_OWNED_FIELDS = ['lyrics', 'metadata', 'title'] as const;
+// Fields a live collab session owns: its Y.Doc projects lyrics back on every
+// store, so a solo save here would be overwritten moments later. Title and
+// metadata stay writable by the owner: the save is pushed into the live doc
+// first (syncLiveSongMeta), so the doc's own write-back carries the new values.
+const COLLAB_OWNED_FIELDS = ['lyrics'] as const;
+// An ended session whose final store is still retrying writes the doc's title
+// and album back when it lands, and nothing can be pushed into it any more.
+const FLUSH_BLOCKED_FIELDS = ['lyrics', 'metadata', 'title'] as const;
+const SONG_FIELDS = ['title', 'metadata', 'coverImage'] as const;
+
+const collabActive = () =>
+  ({ error: 'A live collaborative session is editing this project', status: 409, code: 'collab_active' }) as ServiceResult;
 
 export async function collabSessionBlocks(publicId: string, data: UpdateProjectData): Promise<ServiceResult | null> {
+  if (!FLUSH_BLOCKED_FIELDS.some((k) => data[k] !== undefined)) return null;
+  if (mountedCollabServer()?.isFlushingEnd(`project:${publicId}`)) return collabActive();
   if (!COLLAB_OWNED_FIELDS.some((k) => data[k] !== undefined)) return null;
-  // An ended session whose final store is still retrying would write over the solo save when it lands.
-  if (!mountedCollabServer()?.isFlushingEnd(`project:${publicId}`) && !(await CollabSession.exists({ publicId, endedAt: null }))) return null;
-  return { error: 'A live collaborative session is editing this project', status: 409, code: 'collab_active' } as ServiceResult;
+  if (!(await CollabSession.exists({ publicId, endedAt: null }))) return null;
+  return collabActive();
 }
+
+/** The song fields a pending update leaves the project with. */
+function songSourceAfter(existing: SongSource, update: Record<string, unknown>): SongSource {
+  return {
+    title: 'title' in update ? (update.title as string) : existing.title,
+    metadata: ('metadata' in update ? update.metadata : plainMetadata(existing.metadata)) as SongSource['metadata'],
+    coverImage: 'coverImage' in update ? (update.coverImage as string) : existing.coverImage,
+  };
+}
+
+/**
+ * Keeps a loaded collab doc's song fields in step with the project. Called before the
+ * write, so a store landing in between writes the new values back rather than the old
+ * ones, and again after it with what was actually stored. Never throws: the save goes
+ * ahead either way, and the next load re-syncs the doc from the project.
+ */
+async function syncLiveSongMeta(publicId: string, project: SongSource): Promise<void> {
+  try {
+    await mountedCollabServer()?.syncSongMeta(`project:${publicId}`, project);
+  } catch (err) {
+    console.error('[collab] syncing song fields into the live doc failed', { publicId, err });
+  }
+}
+
+/** After a save that wrote nothing: puts the doc back on what the project still holds. */
+async function resyncLiveSongMeta(publicId: string): Promise<void> {
+  const current = await Project.findOne({ publicId }).select('title metadata coverImage').lean<SongSource>().catch(() => null);
+  if (current) await syncLiveSongMeta(publicId, current);
+}
+
+const touchesSong = (update: Record<string, unknown>): boolean => SONG_FIELDS.some((k) => k in update);
 
 export async function updateProject(
   publicId: string,
@@ -458,6 +498,8 @@ export async function updateProject(
   const identityError = applyProjectIdentity(project, projectUpdate);
   if (identityError) return identityError as ServiceResult;
   await linkMetadataArtists(userId, projectUpdate.metadata);
+  const songChanged = touchesSong(projectUpdate);
+  if (songChanged) await syncLiveSongMeta(publicId, songSourceAfter(project as unknown as SongSource, projectUpdate));
 
   // Stamped in the same write, so no extra round trip. Lyrics in the payload
   // count as an edit without diffing them: the client only sends them when its
@@ -487,7 +529,11 @@ export async function updateProject(
       { returnDocument: 'after' }
     ).populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist'),
     lyricsPromise,
-  ]);
+  ]).catch(async (err: unknown) => {
+    if (songChanged) await resyncLiveSongMeta(publicId);
+    throw err;
+  });
+  if (songChanged && updatedProject) await syncLiveSongMeta(publicId, updatedProject as unknown as SongSource);
 
   const pub: Record<string, unknown> = updatedProject!.toPublic();
   const rawUpload = pub.uploadId;
@@ -572,6 +618,8 @@ export async function patchProject(
   const identityError = applyProjectIdentity(project, projectUpdate);
   if (identityError) return identityError as ServiceResult;
   await linkMetadataArtists(userId, projectUpdate.metadata);
+  const songChanged = touchesSong(projectUpdate);
+  if (songChanged) await syncLiveSongMeta(publicId, songSourceAfter(project as unknown as SongSource, projectUpdate));
 
   // Same stamp as updateProject, set before `hasProjectUpdate` so a lyrics-only
   // patch still writes the project doc to record when its content last changed.
@@ -637,14 +685,19 @@ export async function patchProject(
     }
 
     return { ok: true as const, updatedProject, updatedLyrics };
-  }, { operation: 'patchProject', publicId, userId: userId ?? null });
+  }, { operation: 'patchProject', publicId, userId: userId ?? null }).catch(async (err: unknown) => {
+    if (songChanged) await resyncLiveSongMeta(publicId);
+    throw err;
+  });
 
   if (!result.ok) {
+    if (songChanged) await resyncLiveSongMeta(publicId);
     return result.reason === 'version_conflict'
       ? ({ error: 'Version conflict — reload and retry', status: 409, code: 'version_conflict' } as ServiceResult)
       : ({ error: 'Project not found', status: 404 } as ServiceResult);
   }
   const { updatedProject, updatedLyrics } = result;
+  if (songChanged) await syncLiveSongMeta(publicId, updatedProject as unknown as SongSource);
 
   const pub: Record<string, unknown> = updatedProject.toPublic();
   const rawUpload = pub.uploadId;
