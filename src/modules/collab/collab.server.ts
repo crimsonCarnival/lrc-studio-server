@@ -295,7 +295,8 @@ const cleanText = (v: unknown, max: number): string => (typeof v === 'string' ? 
  * seed read them from (songName when set, else title; songAlbum), sanitised and
  * capped like the Project schema, with the slug kept in step. Artist is not
  * written: songArtist is derived from structured credits and never free text.
- * Media is not editable in a session.
+ * Media is not editable in a session. A title or album the doc does not hold as a string (null,
+ * absent) leaves the stored field alone: the seed writes null for an empty one.
  */
 function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unknown> {
   const md = project.metadata ?? {}
@@ -309,8 +310,10 @@ function metaWriteBack(project: SongSource, meta: SongMeta): Record<string, unkn
     const next = cleanTitle(meta.title)
     if (next && next !== project.title) $set.title = title = next
   }
-  const album = cleanText(meta.album, ALBUM_MAX)
-  if (album !== (md.songAlbum ?? '')) $set['metadata.songAlbum'] = album
+  if (typeof meta.album === 'string') {
+    const album = cleanText(meta.album, ALBUM_MAX)
+    if (album !== (md.songAlbum ?? '')) $set['metadata.songAlbum'] = album
+  }
   if ('title' in $set || 'metadata.songName' in $set) {
     const nextMd = { songName, songArtist: md.songArtist ?? '' }
     if (!hasProjectIdentity(title, nextMd)) {

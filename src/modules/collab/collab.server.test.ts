@@ -492,6 +492,26 @@ describe('collab metadata write-back', () => {
     expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songName).toBe('')
   })
 
+  it('an album the doc holds as null or not at all leaves the stored album alone', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    const meta = editor.doc.getMap('meta')
+    editor.doc.transact(() => {
+      meta.set('album', null)
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'stored')
+    })
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())?.sections?.[0]?.lines?.[0]?.text === 'stored')
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.version! > 1)
+    expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songAlbum).toBe('Album')
+    editor.doc.transact(() => {
+      meta.delete('album')
+      editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'stored again')
+    })
+    await waitFor(async () => (await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())?.sections?.[0]?.lines?.[0]?.text === 'stored again')
+    await waitFor(async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.version! > 2)
+    expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.metadata!.songAlbum).toBe('Album')
+  })
+
   it('a stored doc picks up project metadata changed between sessions', async () => {
     const first = await connectSynced(guest('ed', editorInvite))
     first.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
