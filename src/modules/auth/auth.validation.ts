@@ -7,7 +7,7 @@ export const RESERVED_USERNAMES = new Set([
   'admin', 'api', 'assets', 'auth', 'change-password', 'explore', 'feed', 'guide',
   'home', 'join', 'leaderboard', 'library', 'lists', 'login', 'notifications', 'og',
   'profile', 'project', 'projects', 'register', 'reports', 'reset-password', 'search',
-  'session', 'settings', 'share', 'static', 'u', 'uploads', 'verify-email',
+  'session', 'sessions', 'settings', 'share', 'static', 'u', 'uploads', 'verify-email',
 ]);
 
 // Allows lowercase letters, digits, _ - . :  (3–30 chars)

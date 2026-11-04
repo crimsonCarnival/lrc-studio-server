@@ -34,7 +34,22 @@ export const collabSchema = `
     revokedInviteId: ID
   }
 
+  "A live session in the caller's session list, with the project it is about."
+  type CollabSessionSummary {
+    publicId: String!
+    title: String!
+    songName: String!
+    songArtist: String!
+    "The caller's role: owner, editor or viewer."
+    role: String!
+    memberCount: Int!
+    createdAt: String!
+    lastActivityAt: String!
+  }
+
   extend type Query {
+    "Live sessions the caller owns or is a signed-in member of."
+    myCollabSessions: [CollabSessionSummary!]!
     "The live session, for its owner or a signed-in member; null otherwise."
     collabSession(publicId: String!): CollabSession
   }

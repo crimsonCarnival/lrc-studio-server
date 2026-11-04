@@ -401,4 +401,17 @@ describe('collab moderation on live connections', () => {
     await M.endCollabSession(null, { publicId: PUBLIC_ID }, ctx(ownerId))
     await waitFor(() => client.failures.includes('session_ended'))
   })
+
+  it('myCollabSessions lists live sessions the caller owns or joined, never anyone elses', async () => {
+    await start()
+    const member = await mkUser()
+    const stranger = await mkUser()
+    await CollabSession.updateOne({ publicId: PUBLIC_ID, endedAt: null }, { $push: { members: { subject: `user:${member}`, role: 'editor', colorIndex: 2, name: 'Mem' } } })
+    const mine = await Q.myCollabSessions(null, null, ctx(ownerId))
+    expect(mine.map((x) => [x.publicId, x.role])).toEqual([[PUBLIC_ID, 'owner']])
+    const theirs = await Q.myCollabSessions(null, null, ctx(member))
+    expect(theirs.map((x) => [x.publicId, x.role])).toEqual([[PUBLIC_ID, 'editor']])
+    expect(await Q.myCollabSessions(null, null, ctx(stranger))).toEqual([])
+    expect(await codeOf(Q.myCollabSessions(null, null, ctx(null)))).toBe('unauthorized')
+  })
 })

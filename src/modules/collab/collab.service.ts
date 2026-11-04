@@ -79,6 +79,51 @@ function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
   }
 }
 
+export type CollabSessionSummary = {
+  publicId: string
+  title: string
+  songName: string
+  songArtist: string
+  /** The caller's role in it. */
+  role: CollabRole
+  memberCount: number
+  createdAt: string
+  lastActivityAt: string
+}
+
+/** Live sessions the caller owns or is a signed-in member of (not kicked), newest activity first. */
+export async function listMySessions(userId: string | null | undefined): Promise<CollabSessionSummary[]> {
+  if (!userId || !mongoose.isValidObjectId(userId)) throw new CollabError('unauthorized', 401)
+  const subject = `user:${userId}`
+  const sessions = await CollabSession.find({
+    endedAt: null,
+    $or: [{ ownerId: userId }, { members: { $elemMatch: { subject } } }],
+    kicked: { $ne: subject },
+  })
+    .sort({ lastActivityAt: -1 })
+    .limit(100)
+    .lean<Array<SessionDoc & { createdAt: Date; lastActivityAt: Date }>>()
+  if (sessions.length === 0) return []
+  const projects = await Project.find({ publicId: { $in: sessions.map((s) => s.publicId) } })
+    .select('publicId title metadata')
+    .lean<Array<{ publicId: string; title?: string; metadata?: { songName?: string; songArtist?: string } }>>()
+  const byId = new Map(projects.map((p) => [p.publicId, p]))
+  return sessions.map((s) => {
+    const p = byId.get(s.publicId)
+    const owner = String(s.ownerId) === userId
+    return {
+      publicId: s.publicId,
+      title: p?.title ?? '',
+      songName: p?.metadata?.songName ?? '',
+      songArtist: p?.metadata?.songArtist ?? '',
+      role: owner ? 'owner' : (s.members.find((m) => m.subject === subject)?.role ?? 'viewer'),
+      memberCount: s.members.length,
+      createdAt: s.createdAt.toISOString(),
+      lastActivityAt: s.lastActivityAt.toISOString(),
+    }
+  })
+}
+
 async function isProjectOwner(publicId: string, userId: string): Promise<boolean | null> {
   const project = await Project.findOne({ publicId }).select('userId').lean<{ userId?: unknown }>()
   if (!project) return null

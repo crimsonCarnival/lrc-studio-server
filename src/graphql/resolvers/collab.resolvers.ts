@@ -1,7 +1,7 @@
 import mercurius from 'mercurius';
 import { Context } from './context.js';
 import {
-  CollabError, createInvite, endSession, getSessionView, kick, removeProjectCollaborator, revokeInvite, setGuestAccess, setRole, startSession,
+  CollabError, createInvite, endSession, getSessionView, kick, listMySessions, removeProjectCollaborator, revokeInvite, setGuestAccess, setRole, startSession,
 } from '../../modules/collab/collab.service.js';
 
 // The client switches on `extensions.code` (collab_invalid_role, forbidden, ...).
@@ -21,6 +21,8 @@ type ById = { publicId: string };
 
 export const collabResolvers = {
   Query: {
+    myCollabSessions: (_: unknown, __: unknown, ctx: Context) =>
+      guarded(ctx, () => listMySessions(ctx.userId)),
     collabSession: (_: unknown, { publicId }: ById, ctx: Context) =>
       guarded(ctx, () => getSessionView(publicId, ctx.userId)),
   },
