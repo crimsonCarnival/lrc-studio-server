@@ -77,6 +77,7 @@ function connect(cookie: string, clientId?: number, opts: { url?: string; parame
   class HeaderedWebSocket extends WebSocket {
     constructor(address: string) {
       super(address, { headers })
+      this.on('error', () => {})
     }
   }
   // The provider has no parameters option: query params travel on the URL, as the client sends deviceId.
@@ -106,8 +107,8 @@ async function connectSynced(cookie: string, clientId?: number): Promise<Client>
 }
 
 function close(c: Client): void {
-  c.provider.destroy()
-  c.socket.destroy()
+  try { c.provider.destroy() } catch { /* ignore */ }
+  try { c.socket.destroy() } catch { /* ignore */ }
 }
 
 function lastLocks(c: Client): Record<string, { subject: string; holderConn: string }> | undefined {
@@ -605,6 +606,8 @@ describe('collab moderation hooks', () => {
     await CollabSession.updateOne({ _id: sessionId }, { $push: { kicked: 'guest:ed' } })
     getCollabServer().closeSubject(DOC, 'guest:ed')
     await waitFor(() => !!lastLocks(owner) && !lastLocks(owner)!.l1)
+    await waitFor(() => owner.stateless.some((m) => m.t === 'kicked' && m.subject === 'guest:ed'))
+    await waitFor(() => !owner.provider.awareness!.getStates().has(editor.doc.clientID))
     await waitFor(() => editor.failures.includes('forbidden'))
   })
 })

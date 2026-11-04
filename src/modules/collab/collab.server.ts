@@ -633,7 +633,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
           continue
         }
         doc.idOf.set(connId, clientId)
-        state.user = { name: principal.name, colorIndex: principal.colorIndex, role: principal.role, subject: principal.subject }
+        state.user = { name: principal.name, colorIndex: principal.colorIndex, role: principal.role, subject: principal.subject, avatarUrl: principal.avatarUrl ?? null }
       }
       for (const clientId of [...removedClients]) if (!allowed(clientId) || doc.idOf.get(connId) !== clientId) removedClients.delete(clientId)
     },
@@ -674,7 +674,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       if (!principal || !connId) return
       touchActivity(documentName)
       connection.sendStateless(JSON.stringify({
-        t: 'hello', conn: connId, subject: principal.subject, name: principal.name,
+        t: 'hello', conn: connId, subject: principal.subject, name: principal.name, avatarUrl: principal.avatarUrl ?? null,
         colorIndex: principal.colorIndex, role: principal.role, sessionId: principal.sessionId,
       }))
       connection.sendStateless(locksMessage(documentName))
@@ -869,6 +869,28 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     closeSubject(docName, subject) {
       locks.releaseSubject(docName, subject)
+      const doc = hocuspocus.documents.get(docName)
+      if (doc) {
+        const ids = awarenessIds.get(docName)
+        if (ids) {
+          const toRemove: number[] = []
+          for (const [clientId, owner] of ids.subjectOf.entries()) {
+            if (owner === subject) {
+              toRemove.push(clientId)
+              ids.subjectOf.delete(clientId)
+            }
+          }
+          for (const [connId, clientId] of ids.idOf.entries()) {
+            if (toRemove.includes(clientId)) {
+              ids.idOf.delete(connId)
+            }
+          }
+          if (toRemove.length > 0) {
+            removeAwarenessStates(doc.awareness, toRemove, null)
+          }
+        }
+        doc.broadcastStateless(JSON.stringify({ t: 'kicked', subject }))
+      }
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.kicked, 'kicked')
       broadcastLocks(docName)
     },

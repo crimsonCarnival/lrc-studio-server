@@ -15,6 +15,7 @@ export type CollabPrincipal = {
   role: CollabRole
   colorIndex: number
   sessionId: string
+  avatarUrl?: string | null
   /** The signed-in account behind this connection, even when it is connected as a guest. */
   accountId?: string
 }
@@ -62,7 +63,7 @@ export function verifyGuestToken(token: string): GuestClaims | null {
   }
 }
 
-type SignedInUser = { id: string; name: string; role: string }
+type SignedInUser = { id: string; name: string; role: string; avatarUrl: string | null }
 
 /**
  * The signed-in user behind the accessToken cookie, or null when there is no
@@ -79,12 +80,12 @@ async function signedInUser(token: string | undefined): Promise<SignedInUser | n
     return null
   }
   if (!sub) return null
-  const user = await User.findById(sub).select('isDeleted deletedAt ban appeal role accountName displayName')
+  const user = await User.findById(sub).select('isDeleted deletedAt ban appeal role accountName displayName avatarUrl')
   if (!user || user.isDeleted || user.deletedAt) return null
   await user.checkBanStatus()
   if (user.ban?.active) throw new CollabAuthError('forbidden')
   const name = (user.displayName || user.accountName || 'User').slice(0, MAX_NAME)
-  return { id: sub, name, role: user.role ?? 'user' }
+  return { id: sub, name, role: user.role ?? 'user', avatarUrl: user.avatarUrl ?? null }
 }
 
 /**
@@ -108,7 +109,7 @@ export function nextColour(members: Array<{ colorIndex: number }>): number {
   return (members.length % COLOURS) + 1
 }
 
-export type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string; inviteId?: string }
+export type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string; avatarUrl?: string | null; inviteId?: string }
 
 /**
  * Who a collab WebSocket is, for one document. Throws CollabAuthError:
@@ -180,9 +181,17 @@ export async function resolvePrincipal(input: {
   // duplicate every line. Checked after identity, so it tells a stranger nothing about the session.
   if (input.sessionId && input.sessionId !== sessionId) throw new CollabAuthError('session_ended')
 
-  const identity = { subject, name, role, sessionId, ...(user ? { accountId: user.id } : {}) }
+  const identity = { subject, name, role, sessionId, avatarUrl: user?.avatarUrl ?? null, ...(user ? { accountId: user.id } : {}) }
   const existing = members.find((m) => m.subject === subject)
-  if (existing) return { ...identity, colorIndex: existing.colorIndex }
+  if (existing) {
+    if (user && user.avatarUrl !== existing.avatarUrl) {
+      void CollabSession.updateOne(
+        { _id: session._id, 'members.subject': subject },
+        { $set: { 'members.$.avatarUrl': user.avatarUrl ?? null } },
+      ).catch(() => {})
+    }
+    return { ...identity, colorIndex: existing.colorIndex }
+  }
 
   // First connection: claim a colour and record the member. The filter keeps a
   // racing second tab of the same subject from adding a duplicate entry.
@@ -191,7 +200,7 @@ export async function resolvePrincipal(input: {
   const notFull = role === 'owner' ? {} : { [`members.${MAX_MEMBERS - 1}`]: { $exists: false } }
   const res = await CollabSession.updateOne(
     { _id: session._id, 'members.subject': { $ne: subject }, ...notFull },
-    { $push: { members: { subject, role, colorIndex, name, ...(inviteId ? { inviteId } : {}) } } },
+    { $push: { members: { subject, role, colorIndex, name, avatarUrl: user?.avatarUrl ?? null, ...(inviteId ? { inviteId } : {}) } } },
   )
   if (res.modifiedCount === 0) {
     const fresh = await CollabSession.findById(session._id).select('members').lean()

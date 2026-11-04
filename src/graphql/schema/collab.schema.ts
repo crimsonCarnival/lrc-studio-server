@@ -9,6 +9,7 @@ export const collabSchema = `
     colorIndex: Int!
     "Guests only, owner only: the invite they joined with. Kicking a guest revokes it."
     inviteId: ID
+    avatarUrl: String
   }
 
   type CollabInvite {

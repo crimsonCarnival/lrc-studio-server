@@ -51,7 +51,7 @@ type SessionDoc = {
   endedAt?: Date | null
 }
 
-export type CollabParticipantView = { subject: string; name: string; role: CollabRole; colorIndex: number; inviteId: string | null }
+export type CollabParticipantView = { subject: string; name: string; role: CollabRole; colorIndex: number; avatarUrl: string | null; inviteId: string | null }
 export type CollabInviteView = { id: string; role: string; revoked: boolean; createdAt: string }
 export type CollabSessionView = {
   id: string
@@ -70,7 +70,7 @@ function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
     allowGuests: s.allowGuests,
     // inviteId tells the owner which guests share a link before a kick revokes it.
     members: s.members.map((m) => ({
-      subject: m.subject, name: m.name, role: m.role, colorIndex: m.colorIndex,
+      subject: m.subject, name: m.name, role: m.role, colorIndex: m.colorIndex, avatarUrl: m.avatarUrl ?? null,
       inviteId: asOwner ? (m.inviteId ?? null) : null,
     })),
     invites: asOwner
