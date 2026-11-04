@@ -118,6 +118,10 @@ export type CollabServer = {
    * to do for a doc that is not loaded: syncMetaFromProject brings it in line at load.
    */
   syncSongMeta(docName: string, project: SongSource): Promise<void>
+  /** Sends the session's member list, read from the DB, to every connection of the doc. */
+  broadcastMembers(docName: string): Promise<void>
+  /** Tells every connection the session's invites or guest access changed; owners refetch. */
+  broadcastSessionSettings(docName: string): void
 }
 
 export type MountedCollabServer = CollabServer & {
@@ -698,6 +702,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         colorIndex: principal.colorIndex, role: principal.role, sessionId: principal.sessionId,
       }))
       connection.sendStateless(locksMessage(documentName))
+      if (principal.membersChanged) void broadcastMembersOf(documentName)
     },
 
     // The 5 MiB ws frame cap bounds one message, not the doc: without this, editors
@@ -790,6 +795,21 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
   function broadcastLocks(docName: string): void {
     hocuspocus.documents.get(docName)?.broadcastStateless(locksMessage(docName))
+  }
+
+  // No inviteId: that is the owner's view only, and this goes to every participant.
+  async function broadcastMembers(docName: string): Promise<void> {
+    if (!hocuspocus.documents.has(docName)) return
+    const s = await CollabSession.findOne({ publicId: publicIdOf(docName), endedAt: null })
+      .select('members').lean<{ members: Array<{ subject: string; name: string; role: string; colorIndex: number; avatarUrl?: string | null }> }>()
+    if (!s) return
+    const members = s.members.map((m) => ({ subject: m.subject, name: m.name, role: m.role, colorIndex: m.colorIndex, avatarUrl: m.avatarUrl ?? null }))
+    hocuspocus.documents.get(docName)?.broadcastStateless(JSON.stringify({ t: 'members', members }))
+  }
+
+  /** Fire and forget from a hook: a failed read only leaves lists stale until the next change. */
+  function broadcastMembersOf(docName: string): Promise<void> {
+    return broadcastMembers(docName).catch((err: unknown) => log.error({ err, docName }, 'collab: broadcasting members failed'))
   }
 
   function connectionsOf(docName: string, match: (c: CollabContext) => boolean): Connection[] {
@@ -886,6 +906,11 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     broadcastLocks,
+    broadcastMembers,
+
+    broadcastSessionSettings(docName) {
+      hocuspocus.documents.get(docName)?.broadcastStateless(JSON.stringify({ t: 'session-settings' }))
+    },
 
     async syncSongMeta(docName, project) {
       if (discarded.has(docName)) return

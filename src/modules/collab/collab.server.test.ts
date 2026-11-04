@@ -20,7 +20,8 @@ import Upload from '../uploads/upload.model.js'
 import { loadEnv } from '../../config/env.js'
 import { getCollabServer } from './collab.server.js'
 import {
-  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, startSession,
+  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, revokeInvite,
+  setGuestAccess, setRole, startSession,
 } from './collab.service.js'
 import { collabSessionBlocks, deleteProjectAsModerator, patchProject } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
@@ -587,6 +588,53 @@ describe('collab owner metadata saves during a live session', () => {
     await new Promise((r) => setTimeout(r, 150))
     const p = (await Project.findOne({ publicId: PUBLIC_ID }).lean()) as { collaborators?: unknown[] }
     expect(p.collaborators ?? []).toEqual([])
+  })
+})
+
+describe('collab live membership and settings', () => {
+  const lastMembers = (c: Client) =>
+    c.stateless.filter((m) => m.t === 'members').at(-1)?.members as Array<Record<string, unknown>> | undefined
+  const settingsCount = (c: Client) => c.stateless.filter((m) => m.t === 'session-settings').length
+
+  it('setRole sends every connection the member list with the new role, before the reconnect', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await setRole(PUBLIC_ID, 'guest:ed', 'viewer', ownerId)
+    await waitFor(() => lastMembers(owner)?.find((m) => m.subject === 'guest:ed')?.role === 'viewer')
+    await waitFor(() => lastMembers(editor)?.find((m) => m.subject === 'guest:ed')?.role === 'viewer')
+    const entry = lastMembers(owner)!.find((m) => m.subject === 'guest:ed')!
+    expect(Object.keys(entry).sort()).toEqual(['avatarUrl', 'colorIndex', 'name', 'role', 'subject'])
+    await waitFor(() => editor.provider.authorizedScope === 'readonly')
+  })
+
+  it('a first connection and a join each send the list with the new member', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    await connectSynced(guest('ed', editorInvite))
+    await waitFor(() => !!lastMembers(owner)?.some((m) => m.subject === 'guest:ed'))
+    const token = await createInvite(PUBLIC_ID, 'editor', ownerId)
+    await joinSession({ token, name: 'Ana', userId: null })
+    await waitFor(() => !!lastMembers(owner)?.some((m) => m.name === 'Ana'))
+  })
+
+  it('a kick sends the list without the kicked member, besides the kicked notice', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    await connectSynced(guest('ed', editorInvite))
+    await waitFor(() => !!lastMembers(owner)?.some((m) => m.subject === 'guest:ed'))
+    await kick(PUBLIC_ID, 'guest:ed', ownerId)
+    await waitFor(() => owner.stateless.some((m) => m.t === 'kicked' && m.subject === 'guest:ed'))
+    await waitFor(() => !lastMembers(owner)!.some((m) => m.subject === 'guest:ed'))
+  })
+
+  it('creating and revoking an invite and toggling guest access each send session-settings', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await createInvite(PUBLIC_ID, 'viewer', ownerId)
+    await waitFor(() => settingsCount(owner) === 1 && settingsCount(editor) === 1)
+    await revokeInvite(PUBLIC_ID, viewerInvite, ownerId)
+    await waitFor(() => settingsCount(owner) === 2)
+    await setGuestAccess(PUBLIC_ID, false, ownerId)
+    await waitFor(() => settingsCount(owner) === 3)
+    expect(owner.stateless.filter((m) => m.t === 'session-settings').every((m) => Object.keys(m).length === 1)).toBe(true)
   })
 })
 

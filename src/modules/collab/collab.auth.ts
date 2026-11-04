@@ -18,6 +18,8 @@ export type CollabPrincipal = {
   avatarUrl?: string | null
   /** The signed-in account behind this connection, even when it is connected as a guest. */
   accountId?: string
+  /** This connection added the member or changed its avatar: other participants' lists are stale. */
+  membersChanged?: boolean
 }
 export type CollabAuthCode = 'forbidden' | 'unauthorized' | 'session_ended'
 export type GuestClaims = { guestId: string; name: string; sessionId: string; inviteId: string }
@@ -184,11 +186,14 @@ export async function resolvePrincipal(input: {
   const identity = { subject, name, role, sessionId, avatarUrl: user?.avatarUrl ?? null, ...(user ? { accountId: user.id } : {}) }
   const existing = members.find((m) => m.subject === subject)
   if (existing) {
-    if (user && user.avatarUrl !== existing.avatarUrl) {
-      void CollabSession.updateOne(
+    // Awaited so the members broadcast that follows reads the new avatar. A failure only
+    // leaves the old avatar in other participants' lists; it never refuses the connection.
+    if (user && (user.avatarUrl ?? null) !== (existing.avatarUrl ?? null)) {
+      const updated = await CollabSession.updateOne(
         { _id: session._id, 'members.subject': subject },
         { $set: { 'members.$.avatarUrl': user.avatarUrl ?? null } },
-      ).catch(() => {})
+      ).then(() => true, () => false)
+      return { ...identity, colorIndex: existing.colorIndex, ...(updated ? { membersChanged: true } : {}) }
     }
     return { ...identity, colorIndex: existing.colorIndex }
   }
@@ -208,5 +213,5 @@ export async function resolvePrincipal(input: {
     if (raced) return { ...identity, colorIndex: raced.colorIndex }
     throw new CollabAuthError('forbidden')
   }
-  return { ...identity, colorIndex }
+  return { ...identity, colorIndex, membersChanged: true }
 }
