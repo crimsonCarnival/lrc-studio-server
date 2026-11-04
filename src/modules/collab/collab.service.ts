@@ -7,7 +7,7 @@ import { isValidPublicId } from '../../socket/project-viewers.js'
 import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import {
-  absorbGuest, assertNoNetworkBan, CollabAuthError, inviteExpired, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
+  absorbGuest, assertNoNetworkBan, CollabAuthError, inviteExpired, isSessionOwnerActive, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
 } from './collab.auth.js'
 import { getCollabServer, mountedCollabServer, withCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
@@ -220,11 +220,12 @@ export async function discardDeletedProject(publicId: string): Promise<void> {
 }
 
 /**
- * An account is going away: drop it from every session it is in, its own or anyone else's, and end
- * the ones it owns. Its projects stay (a deactivated account can come back), so that is a normal end
- * that keeps the edits, not a discard. Never throws: the account change has already happened.
+ * An account was banned or deleted: drop it from every session it is in, its own or anyone else's,
+ * and end the ones it owns. Its projects stay (a ban can lift, a deactivated account can come back),
+ * so that is a normal end that keeps the edits, not a discard. Never throws: the account change has
+ * already happened.
  */
-export async function disconnectDeletedAccount(userId: string): Promise<void> {
+export async function disconnectAccount(userId: string): Promise<void> {
   withCollabServer((server) => server.closeUserEverywhere(userId))
   try {
     const live = await CollabSession.find({ ownerId: userId, endedAt: null }).select('publicId').lean<Array<{ publicId: string }>>()
@@ -233,7 +234,7 @@ export async function disconnectDeletedAccount(userId: string): Promise<void> {
       await mountedCollabServer()?.endSession(docNameOf(publicId))
     }))
   } catch (err) {
-    console.error('[collab] ending a deleted account\'s sessions failed', { userId, err })
+    console.error('[collab] ending an account\'s sessions failed', { userId, err })
   }
 }
 
@@ -394,7 +395,7 @@ async function absorbGuestForJoin(...args: Parameters<typeof absorbGuest>): Retu
 export async function joinSession(input: JoinInput): Promise<JoinResult> {
   const s = await CollabSession.findOne({ 'invites.tokenHash': hashInviteToken(input.token) }).lean<SessionDoc>()
   if (!s) throw new CollabError('collab_link_invalid', 404)
-  if (s.endedAt) throw new CollabError('collab_session_ended', 403)
+  if (s.endedAt || !(await isSessionOwnerActive(s.ownerId))) throw new CollabError('collab_session_ended', 403)
   const invite = s.invites.find((i) => i.tokenHash === hashInviteToken(input.token))!
   if (invite.revokedAt || inviteExpired(invite)) throw new CollabError('collab_link_revoked', 403)
   const sessionId = s._id.toString()

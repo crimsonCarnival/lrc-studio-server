@@ -1477,6 +1477,59 @@ describe('collab device bans', () => {
   })
 })
 
+describe('a banned or deleted session owner', () => {
+  let adminId: string
+  beforeEach(async () => {
+    const admin = await User.collection.insertOne({
+      accountName: 'admin3', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    adminId = admin.insertedId.toString()
+  })
+
+  it('banning the owner ends their sessions for everyone, keeping the edits', async () => {
+    const editor = await connectSynced(guest('ed', editorInvite))
+    editor.doc.getMap<Y.Map<unknown>>('lines').get('l1')!.set('text', 'kept')
+    await waitFor(() => !editor.provider.hasUnsyncedChanges)
+    await toggleBan(ownerId, true, 'r', null, false, false, adminId)
+    expect(await CollabSession.exists({ _id: sessionId, endedAt: null })).toBeNull()
+    expect(editor.stateless.some((m) => m.t === 'session-ended')).toBe(true)
+    expect((await Lyrics.findOne({ publicId: PUBLIC_ID }).lean())!.sections[0].lines[0].text).toBe('kept')
+    await waitFor(() => editor.failures.includes('session_ended'))
+  })
+
+  it('banning someone else leaves the session running', async () => {
+    const other = await User.collection.insertOne({ accountName: 'other3', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false } })
+    const editor = await connectSynced(guest('ed', editorInvite))
+    await toggleBan(other.insertedId.toString(), true, 'r', null, false, false, adminId)
+    expect(await CollabSession.exists({ _id: sessionId, endedAt: null })).not.toBeNull()
+    expect(editor.failures).toEqual([])
+  })
+
+  // These set the owner's state directly: the session is still live, as if the end above had been missed.
+  const invite = async () => {
+    const token = 'owner-check-token'
+    await CollabSession.updateOne({ _id: sessionId }, { $push: { invites: { tokenHash: hashInviteToken(token), role: 'editor' } } })
+    return token
+  }
+  it.each([
+    ['banned', { ban: { active: true, reason: 'r', until: null } }],
+    ['deleted', { isDeleted: true, deletedAt: new Date() }],
+  ])('connect and join are refused when the owner is %s', async (_name, state) => {
+    const token = await invite()
+    await User.updateOne({ _id: ownerId }, { $set: state })
+    await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).rejects.toMatchObject({ code: 'session_ended' })
+    await expect(joinSession({ token, name: 'Ana', userId: null })).rejects.toMatchObject({ code: 'collab_session_ended' })
+    expect((await CollabSession.findById(sessionId).lean())!.members).toEqual([])
+  })
+
+  it('an account that no longer exists counts as deleted, and a lapsed ban does not count', async () => {
+    await User.updateOne({ _id: ownerId }, { $set: { ban: { active: true, reason: 'r', until: new Date(Date.now() - 1000) } } })
+    await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).resolves.toMatchObject({ subject: 'guest:ed' })
+    await User.deleteOne({ _id: ownerId })
+    await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).rejects.toMatchObject({ code: 'session_ended' })
+  })
+})
+
 describe('collab awareness and stateless limits', () => {
   it('an oversized awareness state is never relayed, and a normal one after it is', async () => {
     const speaker = await connectSynced(guest('sp', editorInvite))

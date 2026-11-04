@@ -3,7 +3,7 @@ import User from '../users/user.model.js';
 import { notifyAppealResult } from '../notifications/notifications.events.js';
 import Session from '../auth/session.model.js';
 import BannedIp from './banned-ip.model.js';
-import { disconnectDeletedAccount } from '../collab/collab.service.js';
+import { disconnectAccount } from '../collab/collab.service.js';
 import { withCollabServer } from '../collab/collab.server.js';
 import BannedDevice from './banned-device.model.js';
 import UserDevice from '../auth/user-device.model.js';
@@ -388,10 +388,10 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
   );
   if (banStatus) {
     withCollabServer((server) => {
-      server.closeUserEverywhere(userId);
       if (ipBanned) server.reauthIpEverywhere(ipBanned);
       if (devicesBanned.length > 0) server.reauthDevicesEverywhere(devicesBanned);
     });
+    await disconnectAccount(userId);
   }
 
   // Hide (or restore) everything this user owns. Awaited, not fire-and-forget:
@@ -593,7 +593,7 @@ export async function deleteUser(userId: string, adminId: string | null = null, 
     { _id: user._id },
     { $set: { deletedAt: user.deletedAt, isDeleted: user.isDeleted, ban: user.ban, appeal: user.appeal } }
   );
-  await disconnectDeletedAccount(userId);
+  await disconnectAccount(userId);
   await syncOwnerVisibility(user._id);
 
   if (adminId) {

@@ -109,6 +109,14 @@ export async function assertNoNetworkBan(user: SignedInUser | null, ip: string |
   if (deviceBanned || ipBanned) throw new CollabAuthError('forbidden')
 }
 
+/** False once the session's owner is banned, deleted or archived: nobody is admitted to it any more. */
+export async function isSessionOwnerActive(ownerId: unknown): Promise<boolean> {
+  const owner = await User.findById(ownerId).select('isDeleted deletedAt ban appeal accountName')
+  if (!owner || owner.isDeleted || owner.deletedAt) return false
+  await owner.checkBanStatus()
+  return !owner.ban?.active
+}
+
 /** Lowest colour 1–8 not taken by an existing member; wraps once all eight are used. */
 export function nextColour(members: Array<{ colorIndex: number }>): number {
   const used = new Set(members.map((m) => m.colorIndex))
@@ -252,6 +260,8 @@ export async function resolvePrincipal(input: {
   // A client from an earlier session holds Yjs items the re-seeded doc does not: merging them would
   // duplicate every line. Checked after identity, so it tells a stranger nothing about the session.
   if (input.sessionId && input.sessionId !== sessionId) throw new CollabAuthError('session_ended')
+  // Banning or deleting an owner ends their sessions; this holds even if that step failed.
+  if (!(await isSessionOwnerActive(session.ownerId))) throw new CollabAuthError('session_ended')
 
   // After every refusal above: a refused connection must not change who anyone is.
   const absorbed = user && guestSubject
