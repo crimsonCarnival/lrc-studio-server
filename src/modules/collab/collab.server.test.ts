@@ -888,6 +888,15 @@ describe('collab credits', () => {
   })
 })
 
+/** Holds the next CollabDoc.findOne (the read a load starts with) until release. */
+function holdNextDocRead() {
+  const real = CollabDoc.findOne.bind(CollabDoc) as (filter: unknown) => unknown
+  let release = () => {}
+  const gate = new Promise<void>((r) => { release = r })
+  const spy = vi.spyOn(CollabDoc, 'findOne').mockImplementationOnce(((filter: unknown) => gate.then(() => real(filter))) as never)
+  return { spy, release }
+}
+
 describe('collab project deletion', () => {
   it('closes live connections without storing, removes the stored doc and ends the session', async () => {
     const editor = await connectSynced(guest('ed', editorInvite))
@@ -925,15 +934,6 @@ describe('collab project deletion', () => {
     close(editor)
     await new Promise((r) => setTimeout(r, 150))
     expect(await CollabDoc.exists({ name: DOC })).not.toBeNull()
-  }
-
-  /** Holds the next CollabDoc.findOne (the read a load starts with) until release. */
-  function holdNextDocRead() {
-    const real = CollabDoc.findOne.bind(CollabDoc) as (filter: unknown) => unknown
-    let release = () => {}
-    const gate = new Promise<void>((r) => { release = r })
-    const spy = vi.spyOn(CollabDoc, 'findOne').mockImplementationOnce(((filter: unknown) => gate.then(() => real(filter))) as never)
-    return { spy, release }
   }
 
   const neverServed = (c: Client) => {
@@ -1527,6 +1527,74 @@ describe('a banned or deleted session owner', () => {
     await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).resolves.toMatchObject({ subject: 'guest:ed' })
     await User.deleteOne({ _id: ownerId })
     await expect(resolvePrincipal({ cookieHeader: guest('ed', editorInvite), docName: DOC })).rejects.toMatchObject({ code: 'session_ended' })
+  })
+})
+
+describe('a revocation landing between auth and attach', () => {
+  let memberId: string
+  let adminId: string
+  const closesOf = (c: Client) => {
+    const codes: Array<{ code: number; reason: string }> = []
+    c.socket.on('close', ({ event }: { event: { code: number; reason: string } }) => codes.push({ code: event.code, reason: event.reason }))
+    return codes
+  }
+  async function memberCookie(): Promise<string> {
+    await Session.create({ userId: memberId, familyId: 'fam-m', refreshTokenHash: 'xm', expiresAt: new Date(Date.now() + 3600_000) })
+    return `accessToken=${jwtTools.signAccess({ sub: memberId, familyId: 'fam-m' })}`
+  }
+
+  beforeEach(async () => {
+    const member = await User.collection.insertOne({
+      accountName: 'member4', displayName: 'Member', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false },
+    })
+    memberId = member.insertedId.toString()
+    const admin = await User.collection.insertOne({
+      accountName: 'admin4', passwordHash: 'x', isDeleted: false, role: 'superadmin', permissions: [], ban: { active: false },
+    })
+    adminId = admin.insertedId.toString()
+    await CollabSession.updateOne({ _id: sessionId }, { $push: { members: { subject: `user:${memberId}`, role: 'editor', colorIndex: 2, name: 'Member' } } })
+  })
+
+  afterEach(async () => {
+    await Promise.all([BannedDevice.deleteMany({}), BannedIp.deleteMany({})])
+  })
+
+  it.each([
+    ['an account ban', () => toggleBan(memberId, true, 'r', null, false, false, adminId)],
+    ['an IP ban', () => blockIp('127.0.0.1', 'r', adminId)],
+    ['a device ban', () => blockDevice('dev-racing', 'r', adminId)],
+  ])('%s drops the connection before it sees any content', async (_name, revoke) => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(await memberCookie(), undefined, { parameters: { deviceId: 'dev-racing' } })
+    const closes = closesOf(racer)
+    // Auth has finished: this read is the document load that follows it.
+    await waitFor(() => spy.mock.calls.length > 0)
+    await revoke()
+    release()
+    spy.mockRestore()
+    await waitFor(() => closes.length > 0)
+    expect(closes[0].code).toBe(4409)
+    await waitFor(() => racer.failures.includes('forbidden'))
+    expect(racer.doc.getMap('lines').size).toBe(0)
+  })
+
+  it('a revocation of someone else leaves the connection alone', async () => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(await memberCookie())
+    await waitFor(() => spy.mock.calls.length > 0)
+    await blockDevice('dev-other', 'r', adminId)
+    release()
+    spy.mockRestore()
+    await waitFor(() => racer.provider.isSynced)
+    expect(racer.failures).toEqual([])
+  })
+
+  it('a revocation that finished before auth began does not count', async () => {
+    await blockDevice('dev-old', 'r', adminId)
+    await BannedDevice.deleteMany({})
+    const c = connect(await memberCookie(), undefined, { parameters: { deviceId: 'dev-old' } })
+    await waitFor(() => c.provider.isSynced)
+    expect(c.failures).toEqual([])
   })
 })
 

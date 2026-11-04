@@ -11,7 +11,7 @@
  * In-memory state (single instance is confirmed; no multi-instance machinery):
  * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
  * the awareness/stateless rate buckets, dirty (failed stores awaiting retry),
- * discarded, discardAfterStore, settling, the activity throttle, and handled credits.
+ * discarded, discardAfterStore, settling, the revocation log, the activity throttle, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -29,6 +29,7 @@ import type { LineEntry } from '../../types/index.js'
 import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import { createLockTable } from './collab.locks.js'
+import { createRevocationLog, type RevocationCapture } from './collab.revocations.js'
 import { docToMeta, docToSections, sanitizeSectionsForLyrics, seedDocFromProject, validEditorMode } from './collab.projection.js'
 import { cleanTitle, hasProjectIdentity, PROJECT_SONG_NAME_MAX, slugFor } from '../projects/project-identity.js'
 import { stripHtml } from '../../utils/sanitize.js'
@@ -61,6 +62,9 @@ const AWARENESS_RATE = { perSec: 30, burst: 60 }
 const STATELESS_RATE = { perSec: 30, burst: 60 }
 /** Lines one connection may hold locked at once. */
 const MAX_LOCKS_PER_CONN = 20
+/** How long a revocation can catch an auth in flight, and how many are remembered. */
+const REVOCATION_TTL_MS = 60_000
+const MAX_REVOCATIONS = 10_000
 /** Minimum gap between lastActivityAt writes for one doc. The idle threshold is a day. */
 const ACTIVITY_THROTTLE_MS = 60_000
 
@@ -80,6 +84,8 @@ type CollabContext = {
   ws: WebSocket
   ip?: string
   deviceId?: string
+  /** Set by auth, cleared once the connection has attached: from then on the sweeps can see it. */
+  authCapture?: RevocationCapture
   principal?: CollabPrincipal
   connId?: string
   awarenessTokens?: TokenBucket
@@ -439,6 +445,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
+  const revocations = createRevocationLog({ ttlMs: REVOCATION_TTL_MS, maxEntries: MAX_REVOCATIONS })
   /** Last lastActivityAt write per loaded doc. */
   const activityWrittenAt = new Map<string, number>()
   /**
@@ -523,6 +530,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     async onAuthenticate({ documentName, requestHeaders, requestParameters, connectionConfig, context }) {
       await settling.get(documentName)?.catch(() => undefined)
+      // Before anything is read: whatever is revoked from here on, this auth may have missed.
+      const authCapture = revocations.capture()
       // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
       const deviceId = requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined
       try {
@@ -545,6 +554,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         return {
           principal,
           deviceId,
+          authCapture,
           connId: randomUUID(),
           awarenessTokens: { tokens: AWARENESS_RATE.burst, at: now },
           statelessTokens: { tokens: STATELESS_RATE.burst, at: now },
@@ -673,11 +683,22 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       else frozen.delete(documentName)
     },
 
+    // Hocuspocus drains a connection's queued messages, a client's first sync among them, before it
+    // runs `connected`. So what `connected` refuses for a revocation must also be refused here, or
+    // content goes out first.
+    async beforeSync({ connection, context }) {
+      if (!revokedSinceAuth(context)) return
+      drop(connection, CLOSE.reauth, 'reauth')
+      throw { code: CLOSE.reauth, reason: 'reauth' }
+    },
+
     // Covers the first load after a restart, where auth ran before the size was known.
     // It also greets the connection: guests have no other way to learn their own
     // identity or conn id, which the client compares against lock holders.
     async connected({ documentName, connection, context }) {
       if (discarded.has(documentName)) return drop(connection, CLOSE.session_ended, 'session-ended')
+      if (revokedSinceAuth(context)) return drop(connection, CLOSE.reauth, 'reauth')
+      context.authCapture = undefined
       if (frozen.has(documentName)) connection.readOnly = true
       const { principal, connId } = context
       if (!principal || !connId) return
@@ -792,6 +813,16 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   function drop(conn: Connection, code: number, reason: string): void {
     conn.close({ code, reason })
     ;(conn.context as CollabContext).ws.close(code, reason)
+  }
+
+  function revokedSinceAuth(ctx: CollabContext): boolean {
+    if (!ctx.authCapture) return false
+    const keys = [
+      ...(ctx.principal?.accountId ? [`user:${ctx.principal.accountId}`] : []),
+      ...(ctx.ip ? [`ip:${ctx.ip}`] : []),
+      ...(ctx.deviceId ? [`device:${ctx.deviceId}`] : []),
+    ]
+    return revocations.revokedSince(ctx.authCapture, keys)
   }
 
   /** The person keeps the awareness ids they had: otherwise a reconnecting tab would be refused its own id. */
@@ -927,19 +958,23 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     closeUserEverywhere(userId) {
+      revocations.revoke(`user:${userId}`)
       for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.forbidden, 'forbidden')
     },
 
     reauthUserEverywhere(userId) {
+      revocations.revoke(`user:${userId}`)
       for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.reauth, 'reauth')
     },
 
     reauthIpEverywhere(ip) {
+      revocations.revoke(`ip:${ip}`)
       for (const c of connectionsEverywhere((ctx) => ctx.ip === ip)) drop(c, CLOSE.reauth, 'reauth')
     },
 
     reauthDevicesEverywhere(deviceIds) {
       const banned = new Set(deviceIds)
+      for (const deviceId of banned) revocations.revoke(`device:${deviceId}`)
       for (const c of connectionsEverywhere((ctx) => !!ctx.deviceId && banned.has(ctx.deviceId))) drop(c, CLOSE.reauth, 'reauth')
     },
 
