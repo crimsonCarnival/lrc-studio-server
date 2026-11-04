@@ -22,6 +22,7 @@ import BannedIp from '../admin/banned-ip.model.js'
 import CollabSession from './collab-session.model.js'
 import CollabDoc from './collab-doc.model.js'
 import collabRoutes from './collab.routes.js'
+import { getCollabServer } from './collab.server.js'
 import { resolvePrincipal, signGuestToken } from './collab.auth.js'
 
 const ORIGIN = 'http://localhost:5173'
@@ -598,6 +599,26 @@ describe('POST /collab/join by a guest who signed in', () => {
       expect(kicked).toHaveLength(202)
       expect(kicked).toEqual(expect.arrayContaining([g.subject, `user:${u}`]))
     })
+  })
+
+  it('on a dead invite the member exists before the live tab is sent to re-authenticate', async () => {
+    await start()
+    const g = await asGuest(await invite('editor'))
+    const link = await invite('viewer')
+    await CollabSession.updateOne({ publicId: PUBLIC_ID }, { $set: { allowGuests: false } })
+    const u = await mkUser()
+    const cookie = `${await cookieFor(u)}; ${g.cookie}`
+    const order: string[] = []
+    const realUpdate = CollabSession.updateOne.bind(CollabSession) as (...a: unknown[]) => unknown
+    const updates = vi.spyOn(CollabSession, 'updateOne').mockImplementation(((...a: unknown[]) => {
+      if ((a[1] as { $push?: { members?: unknown } }).$push?.members) order.push('member added')
+      return realUpdate(...a)
+    }) as never)
+    const replaced = vi.spyOn(getCollabServer(), 'replaceSubject').mockImplementation(() => { order.push('tab moved') })
+    await join({ token: link }, cookie)
+    updates.mockRestore()
+    replaced.mockRestore()
+    expect(order).toEqual(['member added', 'tab moved'])
   })
 
   it('a signed-in join with no guest cookie sends no cookie change', async () => {

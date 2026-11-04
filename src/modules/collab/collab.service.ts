@@ -426,10 +426,11 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
     const tokenInvite = s.invites.find((i) => i._id.toString() === prior?.inviteId)
     const guestAccessValid = s.allowGuests && !!tokenInvite && !tokenInvite.revokedAt && !inviteExpired(tokenInvite)
     const absorbed = guestSubject ? await absorbGuestForJoin(s, guestSubject, { id: input.userId, name, avatarUrl: user?.avatarUrl ?? null, isOwner }, guestAccessValid) : null
-    if (absorbed?.replaced) withCollabServer((server) => server.replaceSubject(docNameOf(s.publicId), guestSubject!, subject))
     // A dead invite's guest entry was dropped with no member to record it on, so the new one carries it.
     const absorbedGuests = absorbed?.replaced && guestSubject ? [guestSubject] : undefined
     const role = isOwner ? 'owner' : (absorbed?.member?.role ?? await upsertMember(s, { subject, name, role: invite.role, ...(absorbedGuests ? { absorbedGuests } : {}) }))
+    // Last: a live tab re-authenticating as the account must find its member entry already there.
+    if (absorbed?.replaced) withCollabServer((server) => server.replaceSubject(docNameOf(s.publicId), guestSubject!, subject))
     return { publicId: s.publicId, role, ...(clearGuestCookie ? { clearGuestCookie } : {}) }
   }
 
