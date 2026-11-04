@@ -294,13 +294,17 @@ export async function kick(publicId: string, subject: string, userId: string | n
   const s = await liveSession(publicId)
   const member = s.members.find((m) => m.subject === subject)
   const inviteId = subject.startsWith('guest:') ? (member?.inviteId ?? null) : null
-  // At the cap a new subject is refused rather than dropped silently: the kick would not hold.
+  // The cap only ever refuses a subject who is neither a member nor connected: refusing anyone else
+  // would leave them in the session the owner just removed them from. It can pass the cap that way,
+  // bounded by how many people the owner actually kicks.
+  const server = getCollabServer()
+  const capped = { $or: [{ kicked: subject }, { 'members.subject': subject }, { [`kicked.${MAX_KICKED - 1}`]: { $exists: false } }] }
   const res = await CollabSession.updateOne(
-    { _id: s._id, $or: [{ kicked: subject }, { [`kicked.${MAX_KICKED - 1}`]: { $exists: false } }] },
+    { _id: s._id, ...(server.hasSubject(docNameOf(publicId), subject) ? {} : capped) },
     { $addToSet: { kicked: subject }, $pull: { members: { subject } } },
   )
   if (res.matchedCount === 0) throw new CollabError('collab_kick_limit', 409)
-  getCollabServer().closeSubject(docNameOf(publicId), subject)
+  server.closeSubject(docNameOf(publicId), subject)
   if (inviteId) await revokeInviteIn(s, inviteId)
   return { revokedInviteId: inviteId }
 }

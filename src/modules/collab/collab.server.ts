@@ -120,6 +120,8 @@ export type CollabServer = {
   reauthIpEverywhere(ip: string): void
   /** Makes every connection from these devices re-authenticate, where device bans apply. */
   reauthDevicesEverywhere(deviceIds: string[]): void
+  /** Whether this subject has a live connection to this doc. */
+  hasSubject(docName: string, subject: string): boolean
   /** Connections on this process, which is all of them: production runs one instance. */
   hasConnections(docName: string): boolean
   broadcastLocks(docName: string): void
@@ -951,6 +953,10 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     replaceSubject(docName, from, to) {
       rebindAwareness(docName, from, to)
       server.reconnectSubject(docName, from)
+    },
+
+    hasSubject(docName, subject) {
+      return connectionsOf(docName, (ctx) => ctx.principal?.subject === subject).length > 0
     },
 
     hasConnections(docName) {

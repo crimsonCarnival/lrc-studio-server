@@ -1788,6 +1788,53 @@ describe('collab minors', () => {
     expect((await CollabSession.findById(sessionId).lean())!.kicked).toHaveLength(200)
   })
 
+  describe('kicking at the cap', () => {
+    const fillKicked = () => CollabSession.updateOne({ _id: sessionId }, { $set: { kicked: Array.from({ length: 200 }, (_, i) => `guest:k${i}`) } })
+    const closesOf = (c: Client) => {
+      const reasons: string[] = []
+      c.socket.on('close', ({ event }: { event: { reason: string } }) => reasons.push(event.reason))
+      return reasons
+    }
+
+    it('a current member is still removed, closed and refused on rejoin', async () => {
+      const member = await connectSynced(guest('present', editorInvite))
+      const closes = closesOf(member)
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:present', ownerId)).resolves.toBeTruthy()
+      await waitFor(() => closes.length > 0)
+      expect(closes[0]).toBe('kicked')
+      const s = (await CollabSession.findById(sessionId).lean())!
+      expect(s.members.map((m) => m.subject)).not.toContain('guest:present')
+      expect(s.kicked).toContain('guest:present')
+      await waitFor(() => member.failures.includes('forbidden'))
+    })
+
+    it('a member with no live connection is still removed', async () => {
+      await CollabSession.updateOne({ _id: sessionId }, { $push: { members: { subject: 'guest:offline', role: 'editor', colorIndex: 3, name: 'o' } } })
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:offline', ownerId)).resolves.toBeTruthy()
+      const s = (await CollabSession.findById(sessionId).lean())!
+      expect(s.members.map((m) => m.subject)).not.toContain('guest:offline')
+      expect(s.kicked).toContain('guest:offline')
+    })
+
+    it('a live connection whose member entry is gone is still closed', async () => {
+      const ghost = await connectSynced(guest('ghost', editorInvite))
+      const closes = closesOf(ghost)
+      await CollabSession.updateOne({ _id: sessionId }, { $pull: { members: { subject: 'guest:ghost' } } })
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:ghost', ownerId)).resolves.toBeTruthy()
+      await waitFor(() => closes.length > 0)
+      expect((await CollabSession.findById(sessionId).lean())!.kicked).toContain('guest:ghost')
+    })
+
+    it('an absent subject still gets collab_kick_limit, and nothing is written', async () => {
+      await fillKicked()
+      await expect(kick(PUBLIC_ID, 'guest:absent', ownerId)).rejects.toMatchObject({ code: 'collab_kick_limit' })
+      expect((await CollabSession.findById(sessionId).lean())!.kicked).toHaveLength(200)
+    })
+  })
+
   it('endSession: read-only first, then the final store, then the notice, then the close', async () => {
     const editor = await connectSynced(guest('ed', editorInvite))
     const owner = await connectSynced(await ownerCookie())
