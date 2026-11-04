@@ -20,7 +20,7 @@ import Upload from '../uploads/upload.model.js'
 import { loadEnv } from '../../config/env.js'
 import { getCollabServer } from './collab.server.js'
 import {
-  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, startSession,
+  createInvite, endIdleSessions, endSession, getSessionView, hashInviteToken, joinSession, kick, removeProjectCollaborator, setRole, startSession,
 } from './collab.service.js'
 import { collabSessionBlocks, deleteProjectAsModerator } from '../projects/projects.crud.service.js'
 import { deactivateUser, logout, revokeAllSessions, revokeSession } from '../auth/auth.service.js'
@@ -1576,6 +1576,47 @@ describe('a revocation landing between auth and attach', () => {
     expect(closes[0].code).toBe(4409)
     await waitFor(() => racer.failures.includes('forbidden'))
     expect(racer.doc.getMap('lines').size).toBe(0)
+  })
+
+  it('a kick drops the connection before it sees any content, and the reconnect is refused', async () => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(guest('racer', editorInvite))
+    const closes = closesOf(racer)
+    await waitFor(() => spy.mock.calls.length > 0)
+    await kick(PUBLIC_ID, 'guest:racer', ownerId)
+    release()
+    spy.mockRestore()
+    await waitFor(() => closes.length > 0)
+    expect(closes[0].code).toBe(4409)
+    await waitFor(() => racer.failures.includes('forbidden'))
+    expect(racer.doc.getMap('lines').size).toBe(0)
+    expect((await CollabSession.findById(sessionId).lean())!.members.map((m) => m.subject)).not.toContain('guest:racer')
+  })
+
+  it('a role change does not leave the connection attached with its old role', async () => {
+    const { spy, release } = holdNextDocRead()
+    const racer = connect(guest('racer', editorInvite))
+    const closes = closesOf(racer)
+    await waitFor(() => spy.mock.calls.length > 0)
+    await setRole(PUBLIC_ID, 'guest:racer', 'viewer', ownerId)
+    release()
+    spy.mockRestore()
+    await waitFor(() => closes.length > 0)
+    expect(closes[0].code).toBe(4409)
+    await waitFor(() => racer.provider.isSynced)
+    expect(racer.provider.authorizedScope).toBe('readonly')
+  })
+
+  it('moving a guest off its identity does not drop the promoted connection itself', async () => {
+    const tab = await connectSynced(guest('moved', editorInvite))
+    tab.headers.Cookie = await memberCookie()
+    const both = `${tab.headers.Cookie}; ${guest('moved', editorInvite)}`
+    const promoted = connect(both)
+    const closes = closesOf(promoted)
+    await waitFor(() => promoted.provider.isSynced)
+    await waitFor(() => tab.provider.isSynced && tab.stateless.filter((m) => m.t === 'hello').length === 2)
+    expect(closes).toEqual([])
+    expect(promoted.failures).toEqual([])
   })
 
   it('a revocation of someone else leaves the connection alone', async () => {

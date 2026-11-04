@@ -292,10 +292,11 @@ export async function resolvePrincipal(input: {
   // First connection: claim a colour and record the member. The filter keeps a
   // racing second tab of the same subject from adding a duplicate entry.
   const colorIndex = nextColour(members)
-  // The owner is never kept out of their own session by the cap.
-  const notFull = role === 'owner' ? {} : { [`members.${MAX_MEMBERS - 1}`]: { $exists: false } }
+  // The owner is never kept out of their own session by the cap. For anyone else the session read
+  // above may be stale, so the write itself refuses a subject kicked since.
+  const admissible = role === 'owner' ? {} : { kicked: { $ne: subject }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } }
   const res = await CollabSession.updateOne(
-    { _id: session._id, 'members.subject': { $ne: subject }, ...notFull },
+    { _id: session._id, 'members.subject': { $ne: subject }, ...admissible },
     { $push: { members: { subject, role, colorIndex, name, avatarUrl: user?.avatarUrl ?? null, ...(inviteId ? { inviteId } : {}) } } },
   )
   if (res.modifiedCount === 0) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import crypto from 'crypto'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyCookie from '@fastify/cookie'
@@ -516,6 +516,24 @@ describe('POST /collab/join by a guest who signed in', () => {
       expect(res.json().role).toBe('viewer')
       expect((await members()).map((x) => x.subject)).toEqual([`user:${m}`])
     })
+  })
+
+  it('a kick landing after the read is not undone by the join', async () => {
+    await start()
+    const token = await invite('editor')
+    const u = await mkUser()
+    const real = CollabSession.findOne.bind(CollabSession) as (f: unknown) => { lean(): { exec(): Promise<unknown> } }
+    const cookie = await cookieFor(u)
+    const spy = vi.spyOn(CollabSession, 'findOne').mockImplementationOnce(((f: unknown) => ({
+      lean: () => real(f).lean().exec().then(async (doc) => {
+        await CollabSession.collection.updateOne({ publicId: PUBLIC_ID }, { $addToSet: { kicked: `user:${u}` } } as never)
+        return doc
+      }),
+    })) as never)
+    const res = await join({ token }, cookie)
+    spy.mockRestore()
+    expect([res.statusCode, res.json().code]).toEqual([403, 'collab_kicked'])
+    expect(await members()).toEqual([])
   })
 
   it('a signed-in join with no guest cookie sends no cookie change', async () => {

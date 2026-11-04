@@ -313,6 +313,24 @@ describe('a guest who signs in', () => {
     expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([G])
   })
 
+  /** A kick landing right after resolvePrincipal has read the session, so it works from a stale copy. */
+  function kickAfterRead(subjects: string[]) {
+    const real = CollabSession.findOne.bind(CollabSession) as (f: unknown) => { exec(): Promise<unknown> }
+    return vi.spyOn(CollabSession, 'findOne').mockImplementationOnce(((f: unknown) => real(f).exec().then(async (doc) => {
+      await CollabSession.collection.updateOne({ publicId: PUBLIC_ID }, { $addToSet: { kicked: { $each: subjects } }, $pull: { members: { subject: { $in: subjects } } } } as never)
+      return doc
+    })) as never)
+  }
+
+  it('a stale read cannot re-add a subject kicked meanwhile', async () => {
+    const p = await mkSession()
+    const cookieHeader = guestCookie({ guestId: 'g1', name: 'Ana', sessionId: p.session.id, inviteId: p.editorInvite })
+    const spy = kickAfterRead([G])
+    await expect(resolvePrincipal({ cookieHeader, docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+    spy.mockRestore()
+    expect(await membersOf(p.session._id)).toEqual([])
+  })
+
   it('moves the credit, and a failing credit write does not fail the sign-in', async () => {
     const u = await mkUser()
     await Project.collection.insertOne({ publicId: PUBLIC_ID, collaborators: [{ subject: G, userId: null, guestName: 'Ana', firstContributedAt: new Date() }], removedCollaborators: [] })

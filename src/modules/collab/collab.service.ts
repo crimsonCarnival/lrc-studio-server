@@ -373,15 +373,15 @@ async function upsertMember(s: SessionDoc, entry: Omit<MemberEntry, 'colorIndex'
     return existing.role
   }
   const res = await CollabSession.updateOne(
-    { _id: s._id, 'members.subject': { $ne: entry.subject }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } },
+    { _id: s._id, 'members.subject': { $ne: entry.subject }, kicked: { $ne: entry.subject }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } },
     { $push: { members: { ...entry, colorIndex: nextColour(s.members) } } },
   )
   if (res.modifiedCount === 0) {
-    // Lost a race to a second tab of the same subject, or the session is full.
-    const fresh = await CollabSession.findById(s._id).select('members').lean<{ members: MemberEntry[] }>()
+    // Lost a race to a second tab of the same subject or to a kick, or the session is full.
+    const fresh = await CollabSession.findById(s._id).select('members kicked').lean<{ members: MemberEntry[]; kicked: string[] }>()
     const raced = fresh?.members.find((m) => m.subject === entry.subject)
-    if (!raced) throw new CollabError('collab_session_full', 403)
-    return raced.role
+    if (raced) return raced.role
+    throw fresh?.kicked.includes(entry.subject) ? new CollabError('collab_kicked', 403) : new CollabError('collab_session_full', 403)
   }
   return entry.role
 }

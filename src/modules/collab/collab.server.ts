@@ -820,6 +820,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   function revokedSinceAuth(ctx: CollabContext): boolean {
     if (!ctx.authCapture) return false
     const keys = [
+      ...(ctx.principal ? [`subject:${ctx.principal.subject}`] : []),
       ...(ctx.principal?.accountId ? [`user:${ctx.principal.accountId}`] : []),
       ...(ctx.ip ? [`ip:${ctx.ip}`] : []),
       ...(ctx.deviceId ? [`device:${ctx.deviceId}`] : []),
@@ -919,6 +920,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     broadcastLocks,
 
     closeSubject(docName, subject) {
+      revocations.revoke(`subject:${subject}`)
       locks.releaseSubject(docName, subject)
       const doc = hocuspocus.documents.get(docName)
       if (doc) {
@@ -947,6 +949,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     reconnectSubject(docName, subject) {
+      revocations.revoke(`subject:${subject}`)
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.roleChanged, 'role-changed')
     },
 
