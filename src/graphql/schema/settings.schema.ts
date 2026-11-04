@@ -111,6 +111,8 @@ export const settingsSchema = `
     fontWeight: String
     spacing: String
     theme: String
+    "JSON of the user's own theme (client/src/shared/theme/custom-theme.ts), at most 600 characters."
+    customTheme: String
     previewAlignment: String
     focusContrast: String
     focusMode: String
@@ -288,6 +290,8 @@ export const settingsSchema = `
     fontWeight: String
     spacing: String
     theme: String
+    "JSON of the user's own theme (client/src/shared/theme/custom-theme.ts), at most 600 characters."
+    customTheme: String
     previewAlignment: String
     focusContrast: String
     focusMode: String
