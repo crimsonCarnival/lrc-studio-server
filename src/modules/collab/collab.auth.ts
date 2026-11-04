@@ -38,6 +38,11 @@ const MAX_NAME = 40
 const COLOURS = 8
 /** Members one session holds: it is one Mongo document, and these grow from anyone holding a link. */
 export const MAX_MEMBERS = 50
+/**
+ * Guest identities one member remembers, newest kept. A guest token lives 12 hours, so only someone
+ * minting this many guests in that window loses one, and they could mint a fresh one from the link anyway.
+ */
+const MAX_ABSORBED_GUESTS = 10
 /** How long an invite link works. A guest's cookie outlives it by at most its own 12 hours. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -124,7 +129,7 @@ export function nextColour(members: Array<{ colorIndex: number }>): number {
   return (members.length % COLOURS) + 1
 }
 
-export type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string; avatarUrl?: string | null; inviteId?: string }
+export type MemberEntry = { subject: string; role: CollabRole; colorIndex: number; name: string; avatarUrl?: string | null; inviteId?: string; absorbedGuests?: string[] }
 
 /**
  * A signed-in user presented a valid guest token for this session, so that guest is now this person.
@@ -147,6 +152,14 @@ export async function absorbGuest(
   if (!session.members.some((m) => m.subject === guestSubject)) return { member: current, replaced: false }
 
   const dropGuest = async (member?: MemberEntry) => {
+    // Two writes, this one first: Mongo refuses a $pull on members alongside an update inside it.
+    if (member) {
+      await CollabSession.updateOne(
+        { _id: session._id },
+        { $push: { 'members.$[m].absorbedGuests': { $each: [guestSubject], $slice: -MAX_ABSORBED_GUESTS } } },
+        { arrayFilters: [{ 'm.subject': subject, 'm.absorbedGuests': { $ne: guestSubject } }] },
+      )
+    }
     await CollabSession.updateOne({ _id: session._id }, { $pull: { members: { subject: guestSubject } } })
     await moveCredit(session.publicId, guestSubject, user.id, user.isOwner)
     return { member, replaced: true }
@@ -158,6 +171,7 @@ export async function absorbGuest(
     {
       $set: { 'members.$[m].subject': subject, 'members.$[m].name': user.name, 'members.$[m].avatarUrl': user.avatarUrl },
       $unset: { 'members.$[m].inviteId': 1 },
+      $push: { 'members.$[m].absorbedGuests': { $each: [guestSubject], $slice: -MAX_ABSORBED_GUESTS } },
     },
     { arrayFilters: [{ 'm.subject': guestSubject }], returnDocument: 'after' },
   ).select('members').lean<{ members: MemberEntry[] }>()

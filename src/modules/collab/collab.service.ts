@@ -294,6 +294,9 @@ export async function kick(publicId: string, subject: string, userId: string | n
   const s = await liveSession(publicId)
   const member = s.members.find((m) => m.subject === subject)
   const inviteId = subject.startsWith('guest:') ? (member?.inviteId ?? null) : null
+  // Guests this account absorbed go with it, or a leftover cookie re-enters after sign-out. Their
+  // links stay open: other people may hold them, and a signed-in kick has never revoked one.
+  const absorbed = member?.absorbedGuests ?? []
   // The cap only ever refuses a subject who is neither a member nor connected: refusing anyone else
   // would leave them in the session the owner just removed them from. It can pass the cap that way,
   // bounded by how many people the owner actually kicks.
@@ -301,10 +304,14 @@ export async function kick(publicId: string, subject: string, userId: string | n
   const capped = { $or: [{ kicked: subject }, { 'members.subject': subject }, { [`kicked.${MAX_KICKED - 1}`]: { $exists: false } }] }
   const res = await CollabSession.updateOne(
     { _id: s._id, ...(server.hasSubject(docNameOf(publicId), subject) ? {} : capped) },
-    { $addToSet: { kicked: subject }, $pull: { members: { subject } } },
+    { $addToSet: { kicked: { $each: [subject, ...absorbed] } }, $pull: { members: { subject: { $in: [subject, ...absorbed] } } } },
   )
   if (res.matchedCount === 0) throw new CollabError('collab_kick_limit', 409)
   server.closeSubject(docNameOf(publicId), subject)
+  // Only those actually present: closing also tells everyone that subject was kicked.
+  for (const guest of absorbed) {
+    if (s.members.some((m) => m.subject === guest) || server.hasSubject(docNameOf(publicId), guest)) server.closeSubject(docNameOf(publicId), guest)
+  }
   if (inviteId) await revokeInviteIn(s, inviteId)
   return { revokedInviteId: inviteId }
 }
@@ -420,7 +427,9 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
     const guestAccessValid = s.allowGuests && !!tokenInvite && !tokenInvite.revokedAt && !inviteExpired(tokenInvite)
     const absorbed = guestSubject ? await absorbGuestForJoin(s, guestSubject, { id: input.userId, name, avatarUrl: user?.avatarUrl ?? null, isOwner }, guestAccessValid) : null
     if (absorbed?.replaced) withCollabServer((server) => server.replaceSubject(docNameOf(s.publicId), guestSubject!, subject))
-    const role = isOwner ? 'owner' : (absorbed?.member?.role ?? await upsertMember(s, { subject, name, role: invite.role }))
+    // A dead invite's guest entry was dropped with no member to record it on, so the new one carries it.
+    const absorbedGuests = absorbed?.replaced && guestSubject ? [guestSubject] : undefined
+    const role = isOwner ? 'owner' : (absorbed?.member?.role ?? await upsertMember(s, { subject, name, role: invite.role, ...(absorbedGuests ? { absorbedGuests } : {}) }))
     return { publicId: s.publicId, role, ...(clearGuestCookie ? { clearGuestCookie } : {}) }
   }
 

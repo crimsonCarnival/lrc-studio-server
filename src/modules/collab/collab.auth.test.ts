@@ -322,6 +322,18 @@ describe('a guest who signs in', () => {
     })) as never)
   }
 
+  it('remembers absorbed guests up to a bound, newest kept, without duplicates', async () => {
+    const u = await mkUser()
+    const older = Array.from({ length: 10 }, (_, i) => `guest:old${i}`)
+    const p = await mkSession({ members: [guestEntry(), { subject: `user:${u}`, role: 'editor', colorIndex: 2, name: 'M', absorbedGuests: older }] })
+    await resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })
+    const kept = (await membersOf(p.session._id))[0].absorbedGuests!
+    expect(kept).toEqual([...older.slice(1), G])
+    await CollabSession.updateOne({ _id: p.session._id }, { $push: { members: guestEntry() } })
+    await resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })
+    expect((await membersOf(p.session._id))[0].absorbedGuests).toEqual(kept)
+  })
+
   it('a stale read cannot re-add a subject kicked meanwhile', async () => {
     const p = await mkSession()
     const cookieHeader = guestCookie({ guestId: 'g1', name: 'Ana', sessionId: p.session.id, inviteId: p.editorInvite })

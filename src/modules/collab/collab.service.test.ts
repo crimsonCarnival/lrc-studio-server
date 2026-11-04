@@ -22,7 +22,7 @@ import BannedIp from '../admin/banned-ip.model.js'
 import CollabSession from './collab-session.model.js'
 import CollabDoc from './collab-doc.model.js'
 import collabRoutes from './collab.routes.js'
-import { signGuestToken } from './collab.auth.js'
+import { resolvePrincipal, signGuestToken } from './collab.auth.js'
 
 const ORIGIN = 'http://localhost:5173'
 const PUBLIC_ID = 'svcproj001'
@@ -534,6 +534,70 @@ describe('POST /collab/join by a guest who signed in', () => {
     spy.mockRestore()
     expect([res.statusCode, res.json().code]).toEqual([403, 'collab_kicked'])
     expect(await members()).toEqual([])
+  })
+
+  describe('kicking an account that absorbed a guest', () => {
+    const kickUser = (u: string) => M.kickCollabParticipant(null, { publicId: PUBLIC_ID, subject: `user:${u}` }, ctx(ownerId))
+    const session = async () => (await CollabSession.findOne({ publicId: PUBLIC_ID }).lean())!
+
+    it('the leftover cookie is refused after sign-out, and the link stays open for everyone else', async () => {
+      await start()
+      const token = await invite('editor')
+      const g = await asGuest(token)
+      const u = await mkUser()
+      await join({ token }, `${await cookieFor(u)}; ${g.cookie}`)
+      expect((await members())[0].absorbedGuests).toEqual([g.subject])
+      expect(await kickUser(u)).toEqual({ revokedInviteId: null })
+      expect((await session()).kicked.sort()).toEqual([g.subject, `user:${u}`].sort())
+      const back = await join({ token, name: 'Ana' }, g.cookie)
+      expect([back.statusCode, back.json().code]).toEqual([403, 'collab_kicked'])
+      await expect(resolvePrincipal({ cookieHeader: g.cookie, docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+      expect((await join({ token, name: 'Bob' })).statusCode).toBe(200)
+    })
+
+    it('holds for someone who was already a member, and for a dead invite', async () => {
+      await start()
+      const token = await invite('editor')
+      const m = await mkUser()
+      const cookie = await cookieFor(m)
+      await join({ token }, cookie)
+      const g1 = await asGuest(token)
+      await join({ token }, `${cookie}; ${g1.cookie}`)
+      expect((await members()).find((x) => x.subject === `user:${m}`)!.absorbedGuests).toEqual([g1.subject])
+
+      const u = await mkUser()
+      const g2 = await asGuest(token)
+      const link = await invite('viewer')
+      await CollabSession.updateOne({ publicId: PUBLIC_ID }, { $set: { allowGuests: false } })
+      await join({ token: link }, `${await cookieFor(u)}; ${g2.cookie}`)
+      expect((await members()).find((x) => x.subject === `user:${u}`)!.absorbedGuests).toEqual([g2.subject])
+    })
+
+    it('a guest row the leftover cookie re-created goes too, and its live tab is closed', async () => {
+      await start()
+      const token = await invite('editor')
+      const g = await asGuest(token)
+      const u = await mkUser()
+      await join({ token }, `${await cookieFor(u)}; ${g.cookie}`)
+      await join({ token, name: 'Ana' }, g.cookie)
+      const tab = await connectSynced(g.cookie)
+      await kickUser(u)
+      expect(await members()).toEqual([])
+      await waitFor(() => tab.failures.includes('forbidden'))
+    })
+
+    it('the cap never refuses them', async () => {
+      await start()
+      const token = await invite('editor')
+      const g = await asGuest(token)
+      const u = await mkUser()
+      await join({ token }, `${await cookieFor(u)}; ${g.cookie}`)
+      await CollabSession.updateOne({ publicId: PUBLIC_ID }, { $set: { kicked: Array.from({ length: 200 }, (_, i) => `guest:k${i}`) } })
+      await expect(kickUser(u)).resolves.toBeTruthy()
+      const { kicked } = await session()
+      expect(kicked).toHaveLength(202)
+      expect(kicked).toEqual(expect.arrayContaining([g.subject, `user:${u}`]))
+    })
   })
 
   it('a signed-in join with no guest cookie sends no cookie change', async () => {
