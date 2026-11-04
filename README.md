@@ -6,6 +6,19 @@ The backend for [LRC Studio](https://www.lrcstudio.app), a lyrics synchronizatio
 
 > Translations: [Español (Spanish)](docs/translations/README.es.md)
 
+[![Fastify 5](https://img.shields.io/badge/Fastify_5-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![GraphQL](https://img.shields.io/badge/GraphQL-E10098?style=flat-square&logo=graphql&logoColor=white)](https://graphql.org/)
+[![Socket.IO](https://img.shields.io/badge/Socket.IO-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/)
+[![Yjs / Hocuspocus](https://img.shields.io/badge/Yjs_%2F_Hocuspocus-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://tiptap.dev/docs/hocuspocus/)
+[![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/)
+[![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=flat-square&logo=cloudinary&logoColor=white)](https://cloudinary.com/)
+[![WebAuthn / Passkeys](https://img.shields.io/badge/WebAuthn_%2F_Passkeys-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/)
+[![Argon2](https://img.shields.io/badge/Argon2-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2)
+[![yt-dlp](https://img.shields.io/badge/yt--dlp-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
+[![i18next](https://img.shields.io/badge/i18next-26A69A?style=flat-square&logo=i18next&logoColor=white)](https://www.i18next.com/)
+
 ## Table of Contents
 
 - [Architecture](#architecture)
@@ -36,6 +49,8 @@ The backend for [LRC Studio](https://www.lrcstudio.app), a lyrics synchronizatio
   - [Link Previews (Open Graph)](#link-previews-open-graph)
   - [Gamification](#gamification)
   - [Background Jobs](#background-jobs)
+- [Tech Stack & Dependencies](#tech-stack--dependencies)
+  - [User-Facing Dependencies](#user-facing-dependencies)
 - [Getting Started](#getting-started)
 - [Environment Variables](#environment-variables)
 - [Scripts](#scripts)
@@ -432,6 +447,11 @@ Clients join `user:{userId}` and `project:{publicId}` rooms.
 
 ### Authentication & Sessions
 
+[![Argon2](https://img.shields.io/badge/Argon2-Password_Hashing-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2)
+[![SimpleWebAuthn](https://img.shields.io/badge/SimpleWebAuthn-Passkeys_%26_WebAuthn-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/)
+[![JWT](https://img.shields.io/badge/JWT-Session_Tokens-000000?style=flat-square&logo=jsonwebtokens&logoColor=white)](https://jwt.io/)
+[![UAParser.js](https://img.shields.io/badge/UAParser.js-Device_Detection-3B82F6?style=flat-square)](https://github.com/faisalman/ua-parser-js)
+
 Three methods: **password** (Argon2), **passkey** (WebAuthn via `@simplewebauthn/server`), and **Google OAuth** (popup → one-time token → `POST /auth/exchange-ott`).
 
 Access and refresh tokens are both JWTs delivered as `httpOnly` cookies. Every refresh rotates the token and stores its hash; a short replay window is allowed via `previousRefreshTokenHash`. Replaying a rotated token after that window invalidates the whole session `familyId` as theft detection. Clients refresh at 75% of access-token lifetime and coalesce concurrent refreshes so races don't look like theft.
@@ -447,6 +467,9 @@ Enforce at the route level with `fastify.requirePermission('badges.manage')`, `f
 Role presets live in `shared/permissions.ts` and can be overridden per role in the DB for `mod` and `admin` only; `user` and `superadmin` are never DB-overridable. **Superadmin is granted exclusively by the `SUPERADMIN_EMAIL` env var** — never through any HTTP route or UI. It is grant-only and never demotes; revocation is a deliberate manual step via `scripts/grant-role.ts`.
 
 ### Auto Stamp (ASR)
+
+[![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-Cloud_ASR-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/)
+[![yt-dlp](https://img.shields.io/badge/yt--dlp-Audio_Extraction-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
 
 Transcribes audio and aligns it to the user's lyrics so a song can be timed without manual marking.
 
@@ -466,6 +489,10 @@ This module carries most of the server's untrusted-input surface, so its guards 
 
 ### Lyrics Providers
 
+[![LRCLIB](https://img.shields.io/badge/LRCLIB-Synced_Lyrics-2563EB?style=flat-square)](https://lrclib.net/)
+[![Genius](https://img.shields.io/badge/Genius-Lyrics_Search-FFFF64?style=flat-square&logo=genius&logoColor=black)](https://genius.com/)
+[![Spotify API](https://img.shields.io/badge/Spotify_API-Track_Metadata-1ED760?style=flat-square&logo=spotify&logoColor=white)](https://developer.spotify.com/)
+
 `GET /lyrics/extract` runs a chain, each provider isolated so one failing upstream falls through instead of failing the request:
 
 | Order | Provider | Key required | Synced lyrics |
@@ -482,6 +509,12 @@ LyricFind is gated on `LYRICFIND_API_KEY` and is a silent no-op without one, sin
 
 ### Projects & Lyrics Persistence
 
+[![MongoDB](https://img.shields.io/badge/MongoDB-Document_Database-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![Mongoose 9](https://img.shields.io/badge/Mongoose_9-ODM-880000?style=flat-square&logo=mongoose&logoColor=white)](https://mongoosejs.com/)
+[![Yjs](https://img.shields.io/badge/Yjs-CRDT_Persistence-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://yjs.dev/)
+[![Hocuspocus Server](https://img.shields.io/badge/Hocuspocus-WebSocket_Collab-2D3748?style=flat-square)](https://tiptap.dev/docs/hocuspocus/)
+[![Socket.IO](https://img.shields.io/badge/Socket.IO-Real--Time_Sync-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/)
+
 Lyrics are stored as nested `sections[]`, each holding `lines[]`. The client works with a flat array and converts at the boundary (`flatToSections` / `sectionsToFlat`). Never accept flat lines directly.
 
 `PATCH /projects/:id` accepts either a full `sections` replacement or a surgical positional patch (`{ sectionIdx, lineIdx, line }`, optionally down to `{ wordIndex, word }`). Positional fields **must** be declared in `projects.schema.ts` — AJV runs with `removeAdditional`, so an undeclared field is silently stripped and the patch becomes a no-op. Index bounds in the schema mirror the service's `MAX_*_INDEX` constants; keep them in sync.
@@ -489,6 +522,8 @@ Lyrics are stored as nested `sections[]`, each holding `lines[]`. The client wor
 After a successful patch the server emits `project:updated` to the `project:{id}` room and `autosave:ack` to the originating socket.
 
 ### Project URLs & Slugs
+
+[![NanoID](https://img.shields.io/badge/NanoID-Collision--Resistant_IDs-4F46E5?style=flat-square)](https://github.com/ai/nanoid)
 
 | Page | URL |
 |---|---|
@@ -533,6 +568,8 @@ Renaming an account records the old name in `account_name_history`, so old links
 
 ### Link Previews (Open Graph)
 
+[![Fastify](https://img.shields.io/badge/Fastify-Metadata_Injection-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/)
+
 `GET /og/meta?path=` takes a web-app path and returns the metadata the client's crawler proxy renders; `GET /og/project/:id` renders the same metadata as HTML. Both go through `og.meta.service.ts`.
 
 - **Paths understood:** `/`, `/explore`, `/leaderboard`, `/:accountName`, `/:accountName/lists/:id`, `/:accountName/projects/:slug-:id[/edit]`, plus the legacy `/project/:id` and `/profile/...` forms. Every captured segment is shape-validated before it reaches a query.
@@ -542,11 +579,15 @@ Renaming an account records the old name in `account_name_history`, so old links
 
 ### Gamification
 
+[![MongoDB Aggregation](https://img.shields.io/badge/MongoDB-Streaks_&_Heatmaps-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+
 XP and levels, badge definitions with condition types, admin-defined addiction level tiers, and activity streaks tracked via `streak.lastActiveDate`. Streaks reset on UTC day boundaries and users are warned before one lapses.
 
 The activity heatmap reads `heatmap_days`, which holds `projectsCreated` and `editedProjects` per user per UTC day. `editedProjects` counts **distinct projects that received a saved content change**, from autosave and manual save alike — so ticking autosave on one project all day contributes 1. Deduplication inserts into `heatmap_project_edits` (unique on `{userId, projectId, day}`) and only increments the counter when that insert succeeds, which keeps concurrent saves of the same project from double-counting. These counters never reach the public activity feed.
 
 ### Background Jobs
+
+[![Pulse](https://img.shields.io/badge/Pulse-Job_Scheduler-8B5CF6?style=flat-square)](https://github.com/pulsecron/pulse)
 
 Scheduled in `plugins/cron.ts` with `setInterval`/`setTimeout` rather than a cron library:
 
@@ -559,6 +600,51 @@ Scheduled in `plugins/cron.ts` with `setInterval`/`setTimeout` rather than a cro
 | `seedBuiltinBadges`, `seedAddictionLevels`, `syncRolePermissions`, `syncSuperadminEmailGrant` | Once at startup, all idempotent |
 
 TTL indexes: activities 365 days, `heatmap_days` 400 days, `heatmap_project_edits` 2 days, admin logs 90 days, banned IPs/devices 2 years, sessions on `expiresAt`.
+
+## Tech Stack & Dependencies
+
+| Layer | Technology | Badge / Chip |
+|---|---|---|
+| Runtime | [Node.js 24](https://nodejs.org/) | [![Node.js](https://img.shields.io/badge/Node.js_24-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/) |
+| Language | [TypeScript](https://www.typescriptlang.org/) | [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) |
+| HTTP Framework | [Fastify 5](https://fastify.dev/) | [![Fastify 5](https://img.shields.io/badge/Fastify_5-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/) |
+| Database | [MongoDB](https://www.mongodb.com/) + [Mongoose 9](https://mongoosejs.com/) | [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/) |
+| GraphQL Server | [Mercurius](https://mercurius.dev/) | [![Mercurius](https://img.shields.io/badge/Mercurius-E10098?style=flat-square&logo=graphql&logoColor=white)](https://mercurius.dev/) |
+| WebSockets | [Socket.IO](https://socket.io/) | [![Socket.IO](https://img.shields.io/badge/Socket.IO-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/) |
+| Collaborative Engine | [Hocuspocus Server](https://tiptap.dev/docs/hocuspocus/) + [Yjs](https://yjs.dev/) | [![Yjs](https://img.shields.io/badge/Yjs-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://yjs.dev/) |
+| Cloud Media | [Cloudinary](https://cloudinary.com/) | [![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=flat-square&logo=cloudinary&logoColor=white)](https://cloudinary.com/) |
+| AI Transcription | [Groq Whisper](https://groq.com/) | [![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/) |
+| Password Security | [Argon2](https://github.com/ranisalt/node-argon2) | [![Argon2](https://img.shields.io/badge/Argon2-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2) |
+| Passkey Auth | [SimpleWebAuthn](https://simplewebauthn.dev/) | [![SimpleWebAuthn](https://img.shields.io/badge/SimpleWebAuthn-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/) |
+| Job Scheduler | [Pulse](https://github.com/pulsecron/pulse) | [![Pulse](https://img.shields.io/badge/Pulse-8B5CF6?style=flat-square)](https://github.com/pulsecron/pulse) |
+| Testing | [Vitest](https://vitest.dev/) + [mongodb-memory-server](https://github.com/nodkz/mongodb-memory-server) | [![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/) |
+
+### User-Facing Dependencies
+
+A structured breakdown of backend dependencies that directly power user-facing capabilities:
+
+| Subsystem | Feature | Dependency | Badge / Chip | Role |
+|---|---|---|---|---|
+| **Core API** | High-Speed REST API | `fastify` 5 | [![Fastify 5](https://img.shields.io/badge/Fastify_5-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev/) | REST mutation endpoints, authentication guards, ASR jobs, and uploads |
+| **Social API** | Social Feeds & Reads | `mercurius`, `graphql` | [![GraphQL](https://img.shields.io/badge/GraphQL-E10098?style=flat-square&logo=graphql&logoColor=white)](https://graphql.org/) | High-performance GraphQL server for feed, explore, user profiles, and playlists |
+| **Real-Time** | Real-Time Events & Sync | `socket.io` | [![Socket.IO](https://img.shields.io/badge/Socket.IO-010101?style=flat-square&logo=socketdotio&logoColor=white)](https://socket.io/) | Live project updates, viewer presence, instant notifications, and ASR progress |
+| **Real-Time** | Horizontal Multi-Instance | `@socket.io/mongo-adapter` | [![MongoDB Adapter](https://img.shields.io/badge/Socket.IO-Mongo_Adapter-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://socket.io/docs/v4/mongo-adapter/) | Cross-instance WebSocket message broadcasting via Mongo change streams |
+| **Database** | Persistent Storage | `mongoose` 9, `mongodb` | [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/) | Document models for users, projects, revisions, stats, badges, and audit logs |
+| **Collaborative Sync** | Collaborative Server | `@hocuspocus/server` | [![Hocuspocus Server](https://img.shields.io/badge/Hocuspocus_Server-2D3748?style=flat-square)](https://tiptap.dev/docs/hocuspocus/) | WebSocket server synchronizing CRDT document updates in real time |
+| **Collaborative Sync** | CRDT Shared Documents | `yjs`, `y-protocols` | [![Yjs](https://img.shields.io/badge/Yjs-D14A04?style=flat-square&logo=ycombinator&logoColor=white)](https://yjs.dev/) | Conflict-free replicated document model for concurrent project editing |
+| **AI Transcription** | Whisper Speech-to-Text | Groq Whisper API | [![Groq Whisper](https://img.shields.io/badge/Groq_Whisper-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/) | Cloud Whisper large-v3 transcription powering Auto Stamp |
+| **AI & Media** | YouTube Audio Stream | `yt-dlp` | [![yt-dlp](https://img.shields.io/badge/yt--dlp-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp) | Server-side YouTube audio extraction for editor playback & transcription |
+| **Media Storage** | Cloud Media Uploads | `cloudinary` | [![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=flat-square&logo=cloudinary&logoColor=white)](https://cloudinary.com/) | Signed direct uploads for audio tracks, project covers, and user avatars |
+| **Authentication** | Passkeys / WebAuthn | `@simplewebauthn/server` | [![SimpleWebAuthn](https://img.shields.io/badge/SimpleWebAuthn-3423A6?style=flat-square&logo=webauthn&logoColor=white)](https://simplewebauthn.dev/) | Cryptographic authentication for passkey registration and biometric login |
+| **Authentication** | Password Security | `argon2` | [![Argon2](https://img.shields.io/badge/Argon2-2B2D42?style=flat-square&logo=1password&logoColor=white)](https://github.com/ranisalt/node-argon2) | Memory-hard Argon2id password hashing for robust credential protection |
+| **Authentication** | Session Tokens | `jsonwebtoken` | [![JWT](https://img.shields.io/badge/JWT-000000?style=flat-square&logo=jsonwebtokens&logoColor=white)](https://jwt.io/) | HttpOnly cookie-based stateless session and refresh token rotation |
+| **Authentication** | Device Detection | `ua-parser-js` | [![UAParser.js](https://img.shields.io/badge/UAParser.js-3B82F6?style=flat-square)](https://github.com/faisalman/ua-parser-js) | Browser, OS, and device identification for session overview & security alerts |
+| **Content Moderation** | XSS Sanitization | `sanitize-html` | [![Sanitize-HTML](https://img.shields.io/badge/Sanitize--HTML-059669?style=flat-square)](https://github.com/apostrophecms/sanitize-html) | Strict XSS sanitization for user bios, comments, and project descriptions |
+| **URL Architecture** | Readable Slugs & IDs | `nanoid` | [![NanoID](https://img.shields.io/badge/NanoID-4F46E5?style=flat-square)](https://github.com/ai/nanoid) | Collision-resistant cosmetic slug and public ID generation for project links |
+| **Background Jobs** | Scheduled Automation | `@pulsecron/pulse` | [![Pulse](https://img.shields.io/badge/Pulse-8B5CF6?style=flat-square)](https://github.com/pulsecron/pulse) | Background job scheduler for streaks, ranking recalculation, and cleanup |
+| **Internationalization** | Localized Messages | `i18next` | [![i18next](https://img.shields.io/badge/i18next-26A69A?style=flat-square&logo=i18next&logoColor=white)](https://www.i18next.com/) | Server-side localized error messages, notifications, and emails |
+| **Music Discovery** | Synced Lyrics API | LRCLIB | [![LRCLIB](https://img.shields.io/badge/LRCLIB-2563EB?style=flat-square)](https://lrclib.net/) | Primary provider returning pre-synchronized LRC lyrics |
+| **Music Discovery** | Metadata & Search | Genius & Spotify APIs | [![Genius](https://img.shields.io/badge/Genius-FFFF64?style=flat-square&logo=genius&logoColor=black)](https://genius.com/) | Fallback lyrics search and rich track metadata resolution |
 
 ## Getting Started
 
