@@ -103,6 +103,8 @@ export type CollabServer = {
   /** For a deleted project: closes every connection without storing anything and deletes the stored doc. */
   discardSession(docName: string): Promise<void>
   reconnectSubject(docName: string, subject: string): void
+  /** A guest signed in and is now this account: its live connections re-authenticate as the account. */
+  replaceSubject(docName: string, from: string, to: string): void
   /** Closes every live connection of a signed-in user, in every doc (ban, account deletion). */
   closeUserEverywhere(userId: string): void
   /** Makes every connection of a signed-in user re-authenticate (a revoked login session is refused there). */
@@ -532,6 +534,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
         // A new session reached a doc still waiting on its predecessor's final store: it carries on
         // from that doc (the same Yjs items), and the stored state stays.
         if (!settling.has(documentName)) discardAfterStore.delete(documentName)
+        // Before this connection's queued awareness runs: a tab keeps its clientID across the sign-in.
+        if (principal.replacedSubject) rebindAwareness(documentName, principal.replacedSubject, principal.subject)
         if (principal.role === 'viewer' || frozen.has(documentName)) connectionConfig.readOnly = true
         const now = Date.now()
         return {
@@ -672,6 +676,8 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       if (frozen.has(documentName)) connection.readOnly = true
       const { principal, connId } = context
       if (!principal || !connId) return
+      // So no row stays online as the guest this connection's account just absorbed.
+      if (principal.replacedSubject) server.reconnectSubject(documentName, principal.replacedSubject)
       touchActivity(documentName)
       connection.sendStateless(JSON.stringify({
         t: 'hello', conn: connId, subject: principal.subject, name: principal.name, avatarUrl: principal.avatarUrl ?? null,
@@ -781,6 +787,13 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   function drop(conn: Connection, code: number, reason: string): void {
     conn.close({ code, reason })
     ;(conn.context as CollabContext).ws.close(code, reason)
+  }
+
+  /** The person keeps the awareness ids they had: otherwise a reconnecting tab would be refused its own id. */
+  function rebindAwareness(docName: string, from: string, to: string): void {
+    const ids = awarenessIds.get(docName)
+    if (!ids) return
+    for (const [clientId, owner] of ids.subjectOf) if (owner === from) ids.subjectOf.set(clientId, to)
   }
 
   function connectionsEverywhere(match: (c: CollabContext) => boolean): Connection[] {
@@ -897,6 +910,11 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     reconnectSubject(docName, subject) {
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.roleChanged, 'role-changed')
+    },
+
+    replaceSubject(docName, from, to) {
+      rebindAwareness(docName, from, to)
+      server.reconnectSubject(docName, from)
     },
 
     hasConnections(docName) {

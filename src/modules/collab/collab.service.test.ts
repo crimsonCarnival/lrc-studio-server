@@ -22,6 +22,7 @@ import BannedIp from '../admin/banned-ip.model.js'
 import CollabSession from './collab-session.model.js'
 import CollabDoc from './collab-doc.model.js'
 import collabRoutes from './collab.routes.js'
+import { signGuestToken } from './collab.auth.js'
 
 const ORIGIN = 'http://localhost:5173'
 const PUBLIC_ID = 'svcproj001'
@@ -92,7 +93,7 @@ function setCookieValue(res: { cookies: Array<{ name: string; value: string }> }
   return `collabGuest=${c.value}`
 }
 
-type Client = { provider: HocuspocusProvider; socket: HocuspocusProviderWebsocket; doc: Y.Doc; failures: string[] }
+type Client = { provider: HocuspocusProvider; socket: HocuspocusProviderWebsocket; doc: Y.Doc; failures: string[]; headers: { Origin: string; Cookie: string } }
 const open: Client[] = []
 
 async function waitFor(cond: () => boolean | Promise<boolean>, ms = 5000): Promise<void> {
@@ -112,7 +113,7 @@ async function connectSynced(cookie: string): Promise<Client> {
   }
   const socket = new HocuspocusProviderWebsocket({ url: wsUrl, WebSocketPolyfill: HeaderedWebSocket, delay: 50, minDelay: 50 })
   const doc = new Y.Doc()
-  const c: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, failures: [] }
+  const c: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, failures: [], headers }
   c.provider = new HocuspocusProvider({
     name: DOC, document: doc, websocketProvider: socket,
     onAuthenticationFailed: ({ reason }) => c.failures.push(reason),
@@ -352,6 +353,129 @@ describe('POST /collab/join', () => {
     }
     expect(codes.slice(0, 20).every((c) => c !== 429)).toBe(true)
     expect(codes[20]).toBe(429)
+  })
+})
+
+describe('POST /collab/join by a guest who signed in', () => {
+  const cleared = (res: { cookies: Array<{ name: string; value: string; expires?: Date }> }) => {
+    const c = res.cookies.find((x) => x.name === 'collabGuest')
+    return !!c && c.value === '' && !!c.expires && c.expires.getTime() < Date.now()
+  }
+  async function asGuest(token: string): Promise<{ cookie: string; subject: string }> {
+    const before = new Set((await CollabSession.findOne({ publicId: PUBLIC_ID }).lean())!.members.map((m) => m.subject))
+    const cookie = setCookieValue(await join({ token, name: 'Ana' }))
+    const after = (await CollabSession.findOne({ publicId: PUBLIC_ID }).lean())!.members.map((m) => m.subject)
+    return { cookie, subject: after.find((m) => !before.has(m))! }
+  }
+  const members = async () => (await CollabSession.findOne({ publicId: PUBLIC_ID }).lean())!.members
+
+  it('renames the guest in place, keeps a demotion and clears the guest cookie', async () => {
+    await start()
+    const token = await invite('editor')
+    const g = await asGuest(token)
+    const colorIndex = (await members())[0].colorIndex
+    await M.setCollabRole(null, { publicId: PUBLIC_ID, subject: g.subject, role: 'viewer' }, ctx(ownerId))
+    const u = await mkUser()
+    const res = await join({ token }, `${await cookieFor(u)}; ${g.cookie}`)
+    expect(res.json()).toEqual({ ok: true, publicId: PUBLIC_ID, role: 'viewer' })
+    expect(cleared(res)).toBe(true)
+    const all = await members()
+    expect(all).toHaveLength(1)
+    expect(all[0]).toMatchObject({ subject: `user:${u}`, role: 'viewer', colorIndex, name: expect.stringContaining('Svc User') })
+    expect(all[0].inviteId).toBeUndefined()
+  })
+
+  it('the rename also carries the account avatar', async () => {
+    await start()
+    const token = await invite('editor')
+    const g = await asGuest(token)
+    const u = await mkUser()
+    await User.collection.updateOne({ _id: new mongoose.Types.ObjectId(u) }, { $set: { avatarUrl: 'https://cdn.test/a.png' } })
+    await join({ token }, `${await cookieFor(u)}; ${g.cookie}`)
+    expect((await members())[0].avatarUrl).toBe('https://cdn.test/a.png')
+  })
+
+  it('a kicked guest stays out after signing in, even with a fresh link', async () => {
+    await start()
+    const token = await invite('editor')
+    const g = await asGuest(token)
+    await M.kickCollabParticipant(null, { publicId: PUBLIC_ID, subject: g.subject }, ctx(ownerId))
+    const fresh = await invite('editor')
+    const u = await mkUser()
+    const res = await join({ token: fresh }, `${await cookieFor(u)}; ${g.cookie}`)
+    expect([res.statusCode, res.json().code]).toEqual([403, 'collab_kicked'])
+    expect(cleared(res)).toBe(false)
+    expect(await members()).toEqual([])
+    const owner = await join({ token: fresh }, `${await cookieFor(ownerId)}; ${g.cookie}`)
+    expect(owner.json().role).toBe('owner')
+  })
+
+  it('the owner and an existing member drop the guest entry and keep their role', async () => {
+    await start()
+    const token = await invite('editor')
+    const viewerToken = await invite('viewer')
+    const m = await mkUser()
+    await join({ token: viewerToken }, await cookieFor(m))
+
+    const g1 = await asGuest(token)
+    const asMember = await join({ token }, `${await cookieFor(m)}; ${g1.cookie}`)
+    expect(asMember.json().role).toBe('viewer')
+    expect(cleared(asMember)).toBe(true)
+    expect((await members()).map((x) => x.subject)).toEqual([`user:${m}`])
+
+    const g2 = await asGuest(token)
+    const asOwner = await join({ token }, `${await cookieFor(ownerId)}; ${g2.cookie}`)
+    expect(asOwner.json().role).toBe('owner')
+    expect(cleared(asOwner)).toBe(true)
+    expect((await members()).map((x) => x.subject)).toEqual([`user:${m}`])
+  })
+
+  it('moves the credit with the person', async () => {
+    await start()
+    const token = await invite('editor')
+    const g = await asGuest(token)
+    await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { collaborators: [{ subject: g.subject, userId: null, guestName: 'Ana', firstContributedAt: new Date() }] } })
+    const u = await mkUser()
+    await join({ token }, `${await cookieFor(u)}; ${g.cookie}`)
+    expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.collaborators.map((c) => c.subject)).toEqual([`user:${u}`])
+  })
+
+  it('a live guest tab is moved off the guest identity, leaving no guest row', async () => {
+    await start()
+    const token = await invite('editor')
+    const g = await asGuest(token)
+    const tab = await connectSynced(g.cookie)
+    const closes: string[] = []
+    tab.socket.on('close', ({ event }: { event: { reason: string } }) => closes.push(event.reason))
+    const u = await mkUser()
+    const signedIn = await cookieFor(u)
+    // The browser's next upgrade carries the new session and no guest cookie.
+    tab.headers.Cookie = signedIn
+    await join({ token }, `${signedIn}; ${g.cookie}`)
+    await waitFor(() => closes.length > 0)
+    expect(closes[0]).toBe('role-changed')
+    await waitFor(() => tab.provider.isSynced && tab.provider.isAuthenticated)
+    expect((await members()).map((x) => x.subject)).toEqual([`user:${u}`])
+  })
+
+  it("a guest token for another session is left alone: not cleared, and this session's guest entry untouched", async () => {
+    await start()
+    const token = await invite('editor')
+    const g = await asGuest(token)
+    const session = await CollabSession.findOne({ publicId: PUBLIC_ID }).lean()
+    const elsewhere = signGuestToken({ guestId: g.subject.slice('guest:'.length), name: 'Ana', sessionId: new mongoose.Types.ObjectId().toString(), inviteId: session!.invites[0]._id.toString() })
+    const u = await mkUser()
+    const res = await join({ token }, `${await cookieFor(u)}; collabGuest=${elsewhere}`)
+    expect(res.statusCode).toBe(200)
+    expect(cleared(res)).toBe(false)
+    expect((await members()).map((x) => x.subject).sort()).toEqual([g.subject, `user:${u}`].sort())
+  })
+
+  it('a signed-in join with no guest cookie sends no cookie change', async () => {
+    await start()
+    const token = await invite('editor')
+    const res = await join({ token }, await cookieFor(await mkUser()))
+    expect(res.cookies.find((c) => c.name === 'collabGuest')).toBeUndefined()
   })
 })
 

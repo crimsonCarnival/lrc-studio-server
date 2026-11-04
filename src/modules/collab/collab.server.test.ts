@@ -87,7 +87,7 @@ function connect(cookie: string, clientId?: number, opts: { url?: string; parame
   })
   const doc = new Y.Doc()
   if (clientId !== undefined) doc.clientID = clientId
-  const client: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, stateless: [], failures: [] }
+  const client: Client = { provider: null as unknown as HocuspocusProvider, socket, doc, stateless: [], failures: [], headers }
   client.provider = new HocuspocusProvider({
     name: DOC,
     document: doc,
@@ -1359,6 +1359,54 @@ describe('collab moderation reaches live sockets', () => {
     } finally {
       await BannedIp.deleteMany({})
     }
+  })
+})
+
+describe('a guest who signs in, live', () => {
+  let memberId: string
+  beforeEach(async () => {
+    const member = await User.collection.insertOne({
+      accountName: 'promoted', displayName: 'Promoted', passwordHash: 'x', isDeleted: false, role: 'user', permissions: [], ban: { active: false },
+    })
+    memberId = member.insertedId.toString()
+    await Session.create({ userId: memberId, familyId: 'fam-p', refreshTokenHash: 'xp', expiresAt: new Date(Date.now() + 3600_000) })
+  })
+  const access = () => `accessToken=${jwtTools.signAccess({ sub: memberId, familyId: 'fam-p' })}`
+  const closesOf = (c: Client) => {
+    const reasons: string[] = []
+    c.socket.on('close', ({ event }: { event: { reason: string } }) => reasons.push(event.reason))
+    return reasons
+  }
+
+  it('a new tab moves the old guest tab off; both end up as the account, with no guest row', async () => {
+    const owner = await connectSynced(await ownerCookie())
+    const tab = await connectSynced(guest('g1', editorInvite))
+    tab.provider.awareness!.setLocalState({ activeLineId: 'l1' })
+    await waitFor(() => (owner.provider.awareness!.getStates().get(tab.doc.clientID) as { user?: { subject?: string } } | undefined)?.user?.subject === 'guest:g1')
+    const closes = closesOf(tab)
+    const both = `${access()}; ${guest('g1', editorInvite)}`
+    // The browser's other tab now sends the same cookies.
+    tab.headers.Cookie = both
+    const second = await connectSynced(both)
+    await waitFor(() => closes.length > 0)
+    expect(closes[0]).toBe('role-changed')
+    expect(second.stateless.find((m) => m.t === 'hello')).toMatchObject({ subject: `user:${memberId}`, role: 'editor' })
+    await waitFor(() => tab.stateless.filter((m) => m.t === 'hello').length === 2)
+    expect(tab.stateless.filter((m) => m.t === 'hello').at(-1)).toMatchObject({ subject: `user:${memberId}` })
+    const subjects = (await CollabSession.findById(sessionId).lean())!.members.map((m) => m.subject)
+    expect(subjects.sort()).toEqual([`user:${memberId}`, `user:${ownerId}`].sort())
+    // The tab keeps its Yjs clientID across the reconnect: that id must follow the person, or their
+    // awareness would be refused for the life of the loaded doc.
+    tab.provider.awareness!.setLocalState({ activeLineId: 'l2' })
+    await waitFor(() => (owner.provider.awareness!.getStates().get(tab.doc.clientID) as { activeLineId?: string } | undefined)?.activeLineId === 'l2')
+    expect(owner.provider.awareness!.getStates().get(tab.doc.clientID)).toMatchObject({ user: { subject: `user:${memberId}`, colorIndex: expect.any(Number) } })
+  })
+
+  it('a demoted guest does not climb: the promoted connection is read-only', async () => {
+    await CollabSession.updateOne({ _id: sessionId }, { $push: { members: { subject: 'guest:d1', role: 'viewer', colorIndex: 4, name: 'd1' } } })
+    const c = await connectSynced(`${access()}; ${guest('d1', editorInvite)}`)
+    expect(c.provider.authorizedScope).toBe('readonly')
+    expect(c.stateless.find((m) => m.t === 'hello')).toMatchObject({ subject: `user:${memberId}`, role: 'viewer', colorIndex: 4 })
   })
 })
 

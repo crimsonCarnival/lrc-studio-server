@@ -3,7 +3,7 @@ import mongoose from 'mongoose'
 import { MongoMemoryServer } from 'mongodb-memory-server'
 import Project, { MAX_PROJECT_COLLABORATORS } from '../projects/project.model.js'
 import User from '../users/user.model.js'
-import { cleanGuestName, creditCollaborator, loadProjectCredits } from './collab-credits.service.js'
+import { cleanGuestName, creditCollaborator, loadProjectCredits, transferGuestCredit } from './collab-credits.service.js'
 import { removeProjectCollaborator } from './collab.service.js'
 import { deriveErrorCode } from '../../graphql/error-code.js'
 import { loaders } from '../../graphql/loaders.js'
@@ -148,5 +148,66 @@ describe('guest names', () => {
     await creditCollaborator(PUBLIC_ID, guestP('b', '\u202E\u2066'))
     expect((await credits()).map((c) => c.guestName)).toEqual(['Zed', null])
     expect((await collaboratorsField(null)).map((c) => c.name)).toEqual(['Zed'])
+  })
+})
+
+describe('transferGuestCredit', () => {
+  const G = 'guest:g1'
+  const removed = async () => (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.removedCollaborators ?? []
+  const seed = (set: Record<string, unknown>) => Project.collection.updateOne({ publicId: PUBLIC_ID }, { $set: set }, { upsert: true })
+
+  beforeEach(async () => {
+    await seed({ userId: new mongoose.Types.ObjectId(ownerId), collaborators: [], removedCollaborators: [] })
+  })
+
+  it('rewrites the credit to the account, keeping when it was first earned, without touching updatedAt', async () => {
+    const u = await mkUser()
+    const firstContributedAt = new Date('2026-01-02T00:00:00Z')
+    const updatedAt = new Date('2026-01-03T00:00:00Z')
+    await seed({ updatedAt, collaborators: [{ subject: G, userId: null, guestName: 'Ana', firstContributedAt }] })
+    await transferGuestCredit(PUBLIC_ID, G, u, false)
+    const [c, ...rest] = await credits()
+    expect(rest).toEqual([])
+    expect(c).toMatchObject({ subject: `user:${u}`, guestName: null, firstContributedAt })
+    expect(c.userId!.toString()).toBe(u)
+    expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.updatedAt).toEqual(updatedAt)
+  })
+
+  it('an account already credited just loses the guest credit', async () => {
+    const u = await mkUser()
+    await seed({ collaborators: [
+      { subject: G, userId: null, guestName: 'Ana', firstContributedAt: new Date() },
+      { subject: `user:${u}`, userId: new mongoose.Types.ObjectId(u), guestName: null, firstContributedAt: new Date() },
+    ] })
+    await transferGuestCredit(PUBLIC_ID, G, u, false)
+    expect((await credits()).map((c) => c.subject)).toEqual([`user:${u}`])
+  })
+
+  it('the owner just loses the guest credit, and is never credited', async () => {
+    await seed({ collaborators: [{ subject: G, userId: null, guestName: 'Ana', firstContributedAt: new Date() }] })
+    await transferGuestCredit(PUBLIC_ID, G, ownerId, true)
+    expect(await credits()).toEqual([])
+  })
+
+  it("the owner's removal of the guest follows the account: it can never be credited", async () => {
+    const u = await mkUser()
+    await seed({ removedCollaborators: [G] })
+    await transferGuestCredit(PUBLIC_ID, G, u, false)
+    expect(await removed()).toEqual([G, `user:${u}`])
+    await creditCollaborator(PUBLIC_ID, { subject: `user:${u}`, name: 'x' })
+    expect(await credits()).toEqual([])
+  })
+
+  it('the owner signing in is not added to the removed list', async () => {
+    await seed({ removedCollaborators: [G] })
+    await transferGuestCredit(PUBLIC_ID, G, ownerId, true)
+    expect(await removed()).toEqual([G])
+  })
+
+  it('a guest with no credit leaves the project alone', async () => {
+    const u = await mkUser()
+    await transferGuestCredit(PUBLIC_ID, G, u, false)
+    expect(await credits()).toEqual([])
+    expect(await removed()).toEqual([])
   })
 })

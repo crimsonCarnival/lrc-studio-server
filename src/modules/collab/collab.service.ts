@@ -7,7 +7,7 @@ import { isValidPublicId } from '../../socket/project-viewers.js'
 import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import {
-  assertNoNetworkBan, CollabAuthError, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
+  absorbGuest, assertNoNetworkBan, CollabAuthError, inviteExpired, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
 } from './collab.auth.js'
 import { getCollabServer, mountedCollabServer, withCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
@@ -29,8 +29,6 @@ const MAX_INVITES = 50
 const MAX_KICKED = 200
 const MAX_NAME = 40
 const INVITE_ROLES = new Set(['editor', 'viewer'])
-/** How long an invite link works. A guest's cookie outlives it by at most its own 12 hours. */
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 /** A session nobody has touched for this long ends, once nobody is connected either. */
 const SESSION_IDLE_MS = 24 * 60 * 60 * 1000
 const SUBJECT_RE = /^(user|guest):[A-Za-z0-9_-]{1,64}$/
@@ -60,8 +58,6 @@ export type CollabSessionView = {
   members: CollabParticipantView[]
   invites: CollabInviteView[]
 }
-
-const inviteExpired = (i: InviteEntry): boolean => Date.now() - new Date(i.createdAt).getTime() > INVITE_TTL_MS
 
 function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
   return {
@@ -348,7 +344,13 @@ export type JoinInput = {
   ip?: string
   deviceId?: string
 }
-export type JoinResult = { publicId: string; role: CollabRole; guestToken?: string }
+export type JoinResult = {
+  publicId: string
+  role: CollabRole
+  guestToken?: string
+  /** A signed-in join retired the guest cookie it arrived with. */
+  clearGuestCookie?: boolean
+}
 
 /**
  * Adds `subject` with the invite's role. An existing member's role is never
@@ -379,6 +381,16 @@ async function upsertMember(s: SessionDoc, entry: Omit<MemberEntry, 'colorIndex'
   return entry.role
 }
 
+/** absorbGuest refuses only a kick it lost a race to; here that reads as any other kick. */
+async function absorbGuestForJoin(...args: Parameters<typeof absorbGuest>): ReturnType<typeof absorbGuest> {
+  try {
+    return await absorbGuest(...args)
+  } catch (err) {
+    if (err instanceof CollabAuthError) throw new CollabError('collab_kicked', 403)
+    throw err
+  }
+}
+
 export async function joinSession(input: JoinInput): Promise<JoinResult> {
   const s = await CollabSession.findOne({ 'invites.tokenHash': hashInviteToken(input.token) }).lean<SessionDoc>()
   if (!s) throw new CollabError('collab_link_invalid', 404)
@@ -390,12 +402,18 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
 
   if (input.userId) {
     const subject = `user:${input.userId}`
-    if (String(s.ownerId) === input.userId) return { publicId: s.publicId, role: 'owner' }
-    if (s.kicked.includes(subject)) throw new CollabError('collab_kicked', 403)
-    const user = await User.findById(input.userId).select('displayName accountName').lean<{ displayName?: string; accountName?: string }>()
+    const isOwner = String(s.ownerId) === input.userId
+    const prior = input.guestCookie ? verifyGuestToken(input.guestCookie) : null
+    // A token only ever counts in its own session, and one for another session is left where it is.
+    const guestSubject = prior && prior.sessionId === sessionId ? `guest:${prior.guestId}` : null
+    const clearGuestCookie = !!input.guestCookie && (!prior || !!guestSubject)
+    if (!isOwner && (s.kicked.includes(subject) || (guestSubject && s.kicked.includes(guestSubject)))) throw new CollabError('collab_kicked', 403)
+    const user = await User.findById(input.userId).select('displayName accountName avatarUrl').lean<{ displayName?: string; accountName?: string; avatarUrl?: string | null }>()
     const name = (user?.displayName || user?.accountName || 'User').slice(0, MAX_NAME)
-    const role = await upsertMember(s, { subject, name, role: invite.role })
-    return { publicId: s.publicId, role }
+    const absorbed = guestSubject ? await absorbGuestForJoin(s, guestSubject, { id: input.userId, name, avatarUrl: user?.avatarUrl ?? null, isOwner }) : null
+    if (absorbed?.replaced) withCollabServer((server) => server.replaceSubject(docNameOf(s.publicId), guestSubject!, subject))
+    const role = isOwner ? 'owner' : (absorbed?.member?.role ?? await upsertMember(s, { subject, name, role: invite.role }))
+    return { publicId: s.publicId, role, ...(clearGuestCookie ? { clearGuestCookie } : {}) }
   }
 
   if (!s.allowGuests) throw new CollabError('collab_guests_disabled', 403)

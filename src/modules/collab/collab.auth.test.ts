@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import mongoose from 'mongoose'
 import jwt from 'jsonwebtoken'
 import { MongoMemoryServer } from 'mongodb-memory-server'
@@ -8,6 +8,7 @@ import User from '../users/user.model.js'
 import CollabSession from './collab-session.model.js'
 import BannedIp from '../admin/banned-ip.model.js'
 import BannedDevice from '../admin/banned-device.model.js'
+import Project from '../projects/project.model.js'
 import { resolvePrincipal, signGuestToken, verifyGuestToken } from './collab.auth.js'
 
 let mongo: MongoMemoryServer
@@ -202,6 +203,133 @@ describe('resolvePrincipal', () => {
     })
     expect(ninth.colorIndex).toBeGreaterThanOrEqual(1)
     expect(ninth.colorIndex).toBeLessThanOrEqual(8)
+  })
+})
+
+describe('a guest who signs in', () => {
+  const G = 'guest:g1'
+  const guestEntry = (over: Record<string, unknown> = {}) => ({ subject: G, role: 'editor', colorIndex: 5, name: 'Ana', inviteId: 'x', ...over })
+  const both = async (userId: string, p: { session: { id: string }; editorInvite: string }, sessionId = p.session.id) =>
+    `${await accessCookie(userId)}; ${guestCookie({ guestId: 'g1', name: 'Ana', sessionId, inviteId: p.editorInvite })}`
+  const membersOf = async (id: unknown) => (await CollabSession.findById(id).lean())!.members
+
+  beforeEach(() => Project.deleteMany({}))
+
+  it('renames the guest entry in place: same colour and role, no invite, the account name and avatar', async () => {
+    const u = await mkUser()
+    await User.collection.updateOne({ _id: new mongoose.Types.ObjectId(u) }, { $set: { avatarUrl: 'https://cdn.test/a.png' } })
+    const p = await mkSession({ members: [guestEntry()] })
+    const res = await resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })
+    expect(res).toMatchObject({ subject: `user:${u}`, role: 'editor', colorIndex: 5, accountId: u, replacedSubject: G, avatarUrl: 'https://cdn.test/a.png' })
+    const members = await membersOf(p.session._id)
+    expect(members).toHaveLength(1)
+    expect(members[0]).toMatchObject({ subject: `user:${u}`, role: 'editor', colorIndex: 5, name: expect.stringContaining('Collab User'), avatarUrl: 'https://cdn.test/a.png' })
+    expect(members[0].inviteId).toBeUndefined()
+  })
+
+  it('a demoted guest stays a viewer rather than climbing through the invite role', async () => {
+    const u = await mkUser()
+    const p = await mkSession({ members: [guestEntry({ role: 'viewer' })] })
+    const res = await resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })
+    expect(res).toMatchObject({ subject: `user:${u}`, role: 'viewer' })
+    expect((await membersOf(p.session._id))[0].role).toBe('viewer')
+  })
+
+  it('signing in does not evade a kick, unless it is the owner', async () => {
+    const u = await mkUser()
+    const member = await mkUser()
+    const p = await mkSession({ kicked: [G], members: [{ subject: `user:${member}`, role: 'editor', colorIndex: 1, name: 'M' }] })
+    await expect(resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+    await expect(resolvePrincipal({ cookieHeader: await both(member, p), docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+    expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([`user:${member}`])
+    await expect(resolvePrincipal({ cookieHeader: await both(p.ownerId, p), docName: DOC })).resolves.toMatchObject({ role: 'owner' })
+  })
+
+  it('the owner drops the guest entry and stays the owner', async () => {
+    const p = await mkSession({ members: [guestEntry()] })
+    const res = await resolvePrincipal({ cookieHeader: await both(p.ownerId, p), docName: DOC })
+    expect(res).toMatchObject({ subject: `user:${p.ownerId}`, role: 'owner', replacedSubject: G })
+    expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([`user:${p.ownerId}`])
+  })
+
+  it('someone already a member drops the guest entry and keeps their role and colour', async () => {
+    const u = await mkUser()
+    const p = await mkSession({ members: [guestEntry(), { subject: `user:${u}`, role: 'viewer', colorIndex: 2, name: 'M' }] })
+    const res = await resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })
+    expect(res).toMatchObject({ subject: `user:${u}`, role: 'viewer', colorIndex: 2, replacedSubject: G })
+    expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([`user:${u}`])
+  })
+
+  it('no guest entry: joins as a new member with the invite role, and nothing is replaced', async () => {
+    const u = await mkUser()
+    const p = await mkSession()
+    const res = await resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })
+    expect(res).toMatchObject({ subject: `user:${u}`, role: 'editor' })
+    expect(res.replacedSubject).toBeUndefined()
+    const members = await membersOf(p.session._id)
+    expect(members.map((m) => m.subject)).toEqual([`user:${u}`])
+    expect(members[0].inviteId).toBeUndefined()
+  })
+
+  it('a later connect with the leftover cookie changes nothing', async () => {
+    const u = await mkUser()
+    const p = await mkSession({ members: [guestEntry()] })
+    const cookieHeader = await both(u, p)
+    await resolvePrincipal({ cookieHeader, docName: DOC })
+    const again = await resolvePrincipal({ cookieHeader, docName: DOC })
+    expect(again).toMatchObject({ subject: `user:${u}`, colorIndex: 5 })
+    expect(again.replacedSubject).toBeUndefined()
+    expect(await membersOf(p.session._id)).toHaveLength(1)
+  })
+
+  it.each([
+    ['guests are off', { allowGuests: false }],
+    ['the invite is revoked', { invites: [{ tokenHash: 'h1', role: 'editor', revokedAt: new Date() }] }],
+    ['the invite is expired', { invites: [{ tokenHash: 'h1', role: 'editor', createdAt: new Date(Date.now() - 8 * 24 * 3600_000) }] }],
+  ])('refused, with the guest entry untouched, when %s', async (_name, over) => {
+    const u = await mkUser()
+    const invites = (over as { invites?: unknown[] }).invites ?? [{ tokenHash: 'h1', role: 'editor' }]
+    const p = await mkSession({ members: [guestEntry()], ...over, invites: [...invites, { tokenHash: 'h2', role: 'viewer' }] })
+    await expect(resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+    expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([G])
+  })
+
+  it('a valid token for another session affects nothing here, for members and strangers alike', async () => {
+    const u = await mkUser()
+    const stranger = await mkUser()
+    const p = await mkSession({ members: [guestEntry(), { subject: `user:${u}`, role: 'editor', colorIndex: 2, name: 'M' }] })
+    const elsewhere = new mongoose.Types.ObjectId().toString()
+    const res = await resolvePrincipal({ cookieHeader: await both(u, p, elsewhere), docName: DOC })
+    expect(res.replacedSubject).toBeUndefined()
+    expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([G, `user:${u}`])
+    await expect(resolvePrincipal({ cookieHeader: await both(stranger, p, elsewhere), docName: DOC })).rejects.toMatchObject({ code: 'forbidden' })
+    expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([G, `user:${u}`])
+  })
+
+  it('a tab from an earlier session is refused before anything is renamed', async () => {
+    const u = await mkUser()
+    const p = await mkSession({ members: [guestEntry()] })
+    await expect(resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC, sessionId: 'older' })).rejects.toMatchObject({ code: 'session_ended' })
+    expect((await membersOf(p.session._id)).map((m) => m.subject)).toEqual([G])
+  })
+
+  it('moves the credit, and a failing credit write does not fail the sign-in', async () => {
+    const u = await mkUser()
+    await Project.collection.insertOne({ publicId: PUBLIC_ID, collaborators: [{ subject: G, userId: null, guestName: 'Ana', firstContributedAt: new Date() }], removedCollaborators: [] })
+    const p = await mkSession({ members: [guestEntry()] })
+    await resolvePrincipal({ cookieHeader: await both(u, p), docName: DOC })
+    const after = (await Project.findOne({ publicId: PUBLIC_ID }).lean())!.collaborators
+    expect(after.map((c) => c.subject)).toEqual([`user:${u}`])
+
+    await CollabSession.deleteMany({})
+    const u2 = await mkUser()
+    const p2 = await mkSession({ members: [guestEntry()] })
+    const spy = vi.spyOn(Project, 'updateOne').mockImplementation(() => { throw new Error('boom') })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(resolvePrincipal({ cookieHeader: await both(u2, p2), docName: DOC })).resolves.toMatchObject({ subject: `user:${u2}` })
+    expect(logged).toHaveBeenCalled()
+    spy.mockRestore()
+    logged.mockRestore()
   })
 })
 
