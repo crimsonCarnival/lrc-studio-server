@@ -21,6 +21,9 @@ const memberSchema = new mongoose.Schema(
     // Guests only: the invite they joined with, so a kick can revoke it (a kicked
     // guest could otherwise mint a fresh guest id from the same link).
     inviteId: { type: String, default: undefined, maxlength: 24 },
+    // Accounts only: guests this account has absorbed by signing in. Kicking the account kicks these
+    // too, or a leftover guest cookie could walk back in after sign-out. Capped by MAX_ABSORBED_GUESTS.
+    absorbedGuests: { type: [String], default: undefined },
   },
   { _id: false },
 )

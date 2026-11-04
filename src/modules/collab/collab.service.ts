@@ -7,7 +7,7 @@ import { isValidPublicId } from '../../socket/project-viewers.js'
 import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import {
-  assertNoNetworkBan, CollabAuthError, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
+  absorbGuest, assertNoNetworkBan, CollabAuthError, inviteExpired, isSessionOwnerActive, MAX_MEMBERS, nextColour, signGuestToken, verifyGuestToken, type MemberEntry,
 } from './collab.auth.js'
 import { getCollabServer, mountedCollabServer, withCollabServer } from './collab.server.js'
 import type { CollabRole } from './collab.types.js'
@@ -29,8 +29,6 @@ const MAX_INVITES = 50
 const MAX_KICKED = 200
 const MAX_NAME = 40
 const INVITE_ROLES = new Set(['editor', 'viewer'])
-/** How long an invite link works. A guest's cookie outlives it by at most its own 12 hours. */
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 /** A session nobody has touched for this long ends, once nobody is connected either. */
 const SESSION_IDLE_MS = 24 * 60 * 60 * 1000
 const SUBJECT_RE = /^(user|guest):[A-Za-z0-9_-]{1,64}$/
@@ -60,8 +58,6 @@ export type CollabSessionView = {
   members: CollabParticipantView[]
   invites: CollabInviteView[]
 }
-
-const inviteExpired = (i: InviteEntry): boolean => Date.now() - new Date(i.createdAt).getTime() > INVITE_TTL_MS
 
 function toView(s: SessionDoc, asOwner: boolean): CollabSessionView {
   return {
@@ -224,11 +220,12 @@ export async function discardDeletedProject(publicId: string): Promise<void> {
 }
 
 /**
- * An account is going away: drop it from every session it is in, its own or anyone else's, and end
- * the ones it owns. Its projects stay (a deactivated account can come back), so that is a normal end
- * that keeps the edits, not a discard. Never throws: the account change has already happened.
+ * An account was banned or deleted: drop it from every session it is in, its own or anyone else's,
+ * and end the ones it owns. Its projects stay (a ban can lift, a deactivated account can come back),
+ * so that is a normal end that keeps the edits, not a discard. Never throws: the account change has
+ * already happened.
  */
-export async function disconnectDeletedAccount(userId: string): Promise<void> {
+export async function disconnectAccount(userId: string): Promise<void> {
   withCollabServer((server) => server.closeUserEverywhere(userId))
   try {
     const live = await CollabSession.find({ ownerId: userId, endedAt: null }).select('publicId').lean<Array<{ publicId: string }>>()
@@ -237,7 +234,7 @@ export async function disconnectDeletedAccount(userId: string): Promise<void> {
       await mountedCollabServer()?.endSession(docNameOf(publicId))
     }))
   } catch (err) {
-    console.error('[collab] ending a deleted account\'s sessions failed', { userId, err })
+    console.error('[collab] ending an account\'s sessions failed', { userId, err })
   }
 }
 
@@ -297,13 +294,24 @@ export async function kick(publicId: string, subject: string, userId: string | n
   const s = await liveSession(publicId)
   const member = s.members.find((m) => m.subject === subject)
   const inviteId = subject.startsWith('guest:') ? (member?.inviteId ?? null) : null
-  // At the cap a new subject is refused rather than dropped silently: the kick would not hold.
+  // Guests this account absorbed go with it, or a leftover cookie re-enters after sign-out. Their
+  // links stay open: other people may hold them, and a signed-in kick has never revoked one.
+  const absorbed = member?.absorbedGuests ?? []
+  // The cap only ever refuses a subject who is neither a member nor connected: refusing anyone else
+  // would leave them in the session the owner just removed them from. It can pass the cap that way,
+  // bounded by how many people the owner actually kicks.
+  const server = getCollabServer()
+  const capped = { $or: [{ kicked: subject }, { 'members.subject': subject }, { [`kicked.${MAX_KICKED - 1}`]: { $exists: false } }] }
   const res = await CollabSession.updateOne(
-    { _id: s._id, $or: [{ kicked: subject }, { [`kicked.${MAX_KICKED - 1}`]: { $exists: false } }] },
-    { $addToSet: { kicked: subject }, $pull: { members: { subject } } },
+    { _id: s._id, ...(server.hasSubject(docNameOf(publicId), subject) ? {} : capped) },
+    { $addToSet: { kicked: { $each: [subject, ...absorbed] } }, $pull: { members: { subject: { $in: [subject, ...absorbed] } } } },
   )
   if (res.matchedCount === 0) throw new CollabError('collab_kick_limit', 409)
-  getCollabServer().closeSubject(docNameOf(publicId), subject)
+  server.closeSubject(docNameOf(publicId), subject)
+  // Only those actually present: closing also tells everyone that subject was kicked.
+  for (const guest of absorbed) {
+    if (s.members.some((m) => m.subject === guest) || server.hasSubject(docNameOf(publicId), guest)) server.closeSubject(docNameOf(publicId), guest)
+  }
   if (inviteId) await revokeInviteIn(s, inviteId)
   return { revokedInviteId: inviteId }
 }
@@ -348,7 +356,13 @@ export type JoinInput = {
   ip?: string
   deviceId?: string
 }
-export type JoinResult = { publicId: string; role: CollabRole; guestToken?: string }
+export type JoinResult = {
+  publicId: string
+  role: CollabRole
+  guestToken?: string
+  /** A signed-in join retired the guest cookie it arrived with. */
+  clearGuestCookie?: boolean
+}
 
 /**
  * Adds `subject` with the invite's role. An existing member's role is never
@@ -366,23 +380,33 @@ async function upsertMember(s: SessionDoc, entry: Omit<MemberEntry, 'colorIndex'
     return existing.role
   }
   const res = await CollabSession.updateOne(
-    { _id: s._id, 'members.subject': { $ne: entry.subject }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } },
+    { _id: s._id, 'members.subject': { $ne: entry.subject }, kicked: { $ne: entry.subject }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } },
     { $push: { members: { ...entry, colorIndex: nextColour(s.members) } } },
   )
   if (res.modifiedCount === 0) {
-    // Lost a race to a second tab of the same subject, or the session is full.
-    const fresh = await CollabSession.findById(s._id).select('members').lean<{ members: MemberEntry[] }>()
+    // Lost a race to a second tab of the same subject or to a kick, or the session is full.
+    const fresh = await CollabSession.findById(s._id).select('members kicked').lean<{ members: MemberEntry[]; kicked: string[] }>()
     const raced = fresh?.members.find((m) => m.subject === entry.subject)
-    if (!raced) throw new CollabError('collab_session_full', 403)
-    return raced.role
+    if (raced) return raced.role
+    throw fresh?.kicked.includes(entry.subject) ? new CollabError('collab_kicked', 403) : new CollabError('collab_session_full', 403)
   }
   return entry.role
+}
+
+/** absorbGuest refuses only a kick it lost a race to; here that reads as any other kick. */
+async function absorbGuestForJoin(...args: Parameters<typeof absorbGuest>): ReturnType<typeof absorbGuest> {
+  try {
+    return await absorbGuest(...args)
+  } catch (err) {
+    if (err instanceof CollabAuthError) throw new CollabError('collab_kicked', 403)
+    throw err
+  }
 }
 
 export async function joinSession(input: JoinInput): Promise<JoinResult> {
   const s = await CollabSession.findOne({ 'invites.tokenHash': hashInviteToken(input.token) }).lean<SessionDoc>()
   if (!s) throw new CollabError('collab_link_invalid', 404)
-  if (s.endedAt) throw new CollabError('collab_session_ended', 403)
+  if (s.endedAt || !(await isSessionOwnerActive(s.ownerId))) throw new CollabError('collab_session_ended', 403)
   const invite = s.invites.find((i) => i.tokenHash === hashInviteToken(input.token))!
   if (invite.revokedAt || inviteExpired(invite)) throw new CollabError('collab_link_revoked', 403)
   const sessionId = s._id.toString()
@@ -390,12 +414,24 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
 
   if (input.userId) {
     const subject = `user:${input.userId}`
-    if (String(s.ownerId) === input.userId) return { publicId: s.publicId, role: 'owner' }
-    if (s.kicked.includes(subject)) throw new CollabError('collab_kicked', 403)
-    const user = await User.findById(input.userId).select('displayName accountName').lean<{ displayName?: string; accountName?: string }>()
+    const isOwner = String(s.ownerId) === input.userId
+    const prior = input.guestCookie ? verifyGuestToken(input.guestCookie) : null
+    // A token only ever counts in its own session, and one for another session is left where it is.
+    const guestSubject = prior && prior.sessionId === sessionId ? `guest:${prior.guestId}` : null
+    const clearGuestCookie = !!input.guestCookie && (!prior || !!guestSubject)
+    if (!isOwner && (s.kicked.includes(subject) || (guestSubject && s.kicked.includes(guestSubject)))) throw new CollabError('collab_kicked', 403)
+    const user = await User.findById(input.userId).select('displayName accountName avatarUrl').lean<{ displayName?: string; accountName?: string; avatarUrl?: string | null }>()
     const name = (user?.displayName || user?.accountName || 'User').slice(0, MAX_NAME)
-    const role = await upsertMember(s, { subject, name, role: invite.role })
-    return { publicId: s.publicId, role }
+    // The link in hand was checked above; this is the token's own invite, which may be another one.
+    const tokenInvite = s.invites.find((i) => i._id.toString() === prior?.inviteId)
+    const guestAccessValid = s.allowGuests && !!tokenInvite && !tokenInvite.revokedAt && !inviteExpired(tokenInvite)
+    const absorbed = guestSubject ? await absorbGuestForJoin(s, guestSubject, { id: input.userId, name, avatarUrl: user?.avatarUrl ?? null, isOwner }, guestAccessValid) : null
+    // A dead invite's guest entry was dropped with no member to record it on, so the new one carries it.
+    const absorbedGuests = absorbed?.replaced && guestSubject ? [guestSubject] : undefined
+    const role = isOwner ? 'owner' : (absorbed?.member?.role ?? await upsertMember(s, { subject, name, role: invite.role, ...(absorbedGuests ? { absorbedGuests } : {}) }))
+    // Last: a live tab re-authenticating as the account must find its member entry already there.
+    if (absorbed?.replaced) withCollabServer((server) => server.replaceSubject(docNameOf(s.publicId), guestSubject!, subject))
+    return { publicId: s.publicId, role, ...(clearGuestCookie ? { clearGuestCookie } : {}) }
   }
 
   if (!s.allowGuests) throw new CollabError('collab_guests_disabled', 403)

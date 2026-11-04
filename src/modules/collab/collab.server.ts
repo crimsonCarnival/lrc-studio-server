@@ -11,7 +11,7 @@
  * In-memory state (single instance is confirmed; no multi-instance machinery):
  * Hocuspocus' loaded documents, the lock table, docSize, frozen, awarenessIds,
  * the awareness/stateless rate buckets, dirty (failed stores awaiting retry),
- * discarded, discardAfterStore, settling, the activity throttle, and handled credits.
+ * discarded, discardAfterStore, settling, the revocation log, the activity throttle, and handled credits.
  */
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
@@ -29,6 +29,7 @@ import type { LineEntry } from '../../types/index.js'
 import CollabDoc from './collab-doc.model.js'
 import CollabSession from './collab-session.model.js'
 import { createLockTable } from './collab.locks.js'
+import { createRevocationLog, type RevocationCapture } from './collab.revocations.js'
 import { docToMeta, docToSections, sanitizeSectionsForLyrics, seedDocFromProject, validEditorMode } from './collab.projection.js'
 import { cleanTitle, hasProjectIdentity, PROJECT_SONG_NAME_MAX, slugFor } from '../projects/project-identity.js'
 import { stripHtml } from '../../utils/sanitize.js'
@@ -61,6 +62,9 @@ const AWARENESS_RATE = { perSec: 30, burst: 60 }
 const STATELESS_RATE = { perSec: 30, burst: 60 }
 /** Lines one connection may hold locked at once. */
 const MAX_LOCKS_PER_CONN = 20
+/** How long a revocation can catch an auth in flight, and how many are remembered. */
+const REVOCATION_TTL_MS = 60_000
+const MAX_REVOCATIONS = 10_000
 /** Minimum gap between lastActivityAt writes for one doc. The idle threshold is a day. */
 const ACTIVITY_THROTTLE_MS = 60_000
 
@@ -79,6 +83,9 @@ type TokenBucket = { tokens: number; at: number }
 type CollabContext = {
   ws: WebSocket
   ip?: string
+  deviceId?: string
+  /** Set by auth, cleared once the connection has attached: from then on the sweeps can see it. */
+  authCapture?: RevocationCapture
   principal?: CollabPrincipal
   connId?: string
   awarenessTokens?: TokenBucket
@@ -103,12 +110,18 @@ export type CollabServer = {
   /** For a deleted project: closes every connection without storing anything and deletes the stored doc. */
   discardSession(docName: string): Promise<void>
   reconnectSubject(docName: string, subject: string): void
+  /** A guest signed in and is now this account: its live connections re-authenticate as the account. */
+  replaceSubject(docName: string, from: string, to: string): void
   /** Closes every live connection of a signed-in user, in every doc (ban, account deletion). */
   closeUserEverywhere(userId: string): void
   /** Makes every connection of a signed-in user re-authenticate (a revoked login session is refused there). */
   reauthUserEverywhere(userId: string): void
   /** Makes every connection from this IP re-authenticate, where network bans apply. */
   reauthIpEverywhere(ip: string): void
+  /** Makes every connection from these devices re-authenticate, where device bans apply. */
+  reauthDevicesEverywhere(deviceIds: string[]): void
+  /** Whether this subject has a live connection to this doc. */
+  hasSubject(docName: string, subject: string): boolean
   /** Connections on this process, which is all of them: production runs one instance. */
   hasConnections(docName: string): boolean
   broadcastLocks(docName: string): void
@@ -434,6 +447,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
   const locks = createLockTable({ idleMs: LOCK_IDLE_MS })
   const sockets = new Set<WebSocket>()
   let onAllUnloaded: (() => void) | null = null
+  const revocations = createRevocationLog({ ttlMs: REVOCATION_TTL_MS, maxEntries: MAX_REVOCATIONS })
   /** Last lastActivityAt write per loaded doc. */
   const activityWrittenAt = new Map<string, number>()
   /**
@@ -518,24 +532,31 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
 
     async onAuthenticate({ documentName, requestHeaders, requestParameters, connectionConfig, context }) {
       await settling.get(documentName)?.catch(() => undefined)
+      // Before anything is read: whatever is revoked from here on, this auth may have missed.
+      const authCapture = revocations.capture()
+      // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
+      const deviceId = requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined
       try {
         if (discarded.has(documentName)) throw new CollabAuthError('session_ended')
         const principal = await resolvePrincipal({
           cookieHeader: requestHeaders.get('cookie') ?? '',
           docName: documentName,
           ip: context.ip,
-          // Browsers cannot set headers on a WebSocket, so the client passes it as a query param.
-          deviceId: requestParameters.get('deviceId') ?? requestHeaders.get('x-device-id') ?? undefined,
+          deviceId,
           sessionId: requestParameters.get('sessionId') ?? undefined,
         })
         if (discarded.has(documentName)) throw new CollabAuthError('session_ended')
         // A new session reached a doc still waiting on its predecessor's final store: it carries on
         // from that doc (the same Yjs items), and the stored state stays.
         if (!settling.has(documentName)) discardAfterStore.delete(documentName)
+        // Before this connection's queued awareness runs: a tab keeps its clientID across the sign-in.
+        if (principal.replacedSubject) rebindAwareness(documentName, principal.replacedSubject, principal.subject)
         if (principal.role === 'viewer' || frozen.has(documentName)) connectionConfig.readOnly = true
         const now = Date.now()
         return {
           principal,
+          deviceId,
+          authCapture,
           connId: randomUUID(),
           awarenessTokens: { tokens: AWARENESS_RATE.burst, at: now },
           statelessTokens: { tokens: STATELESS_RATE.burst, at: now },
@@ -664,14 +685,27 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
       else frozen.delete(documentName)
     },
 
+    // Hocuspocus drains a connection's queued messages, a client's first sync among them, before it
+    // runs `connected`. So what `connected` refuses for a revocation must also be refused here, or
+    // content goes out first.
+    async beforeSync({ connection, context }) {
+      if (!revokedSinceAuth(context)) return
+      drop(connection, CLOSE.reauth, 'reauth')
+      throw { code: CLOSE.reauth, reason: 'reauth' }
+    },
+
     // Covers the first load after a restart, where auth ran before the size was known.
     // It also greets the connection: guests have no other way to learn their own
     // identity or conn id, which the client compares against lock holders.
     async connected({ documentName, connection, context }) {
       if (discarded.has(documentName)) return drop(connection, CLOSE.session_ended, 'session-ended')
+      if (revokedSinceAuth(context)) return drop(connection, CLOSE.reauth, 'reauth')
+      context.authCapture = undefined
       if (frozen.has(documentName)) connection.readOnly = true
       const { principal, connId } = context
       if (!principal || !connId) return
+      // So no row stays online as the guest this connection's account just absorbed.
+      if (principal.replacedSubject) server.reconnectSubject(documentName, principal.replacedSubject)
       touchActivity(documentName)
       connection.sendStateless(JSON.stringify({
         t: 'hello', conn: connId, subject: principal.subject, name: principal.name, avatarUrl: principal.avatarUrl ?? null,
@@ -783,6 +817,24 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     ;(conn.context as CollabContext).ws.close(code, reason)
   }
 
+  function revokedSinceAuth(ctx: CollabContext): boolean {
+    if (!ctx.authCapture) return false
+    const keys = [
+      ...(ctx.principal ? [`subject:${ctx.principal.subject}`] : []),
+      ...(ctx.principal?.accountId ? [`user:${ctx.principal.accountId}`] : []),
+      ...(ctx.ip ? [`ip:${ctx.ip}`] : []),
+      ...(ctx.deviceId ? [`device:${ctx.deviceId}`] : []),
+    ]
+    return revocations.revokedSince(ctx.authCapture, keys)
+  }
+
+  /** The person keeps the awareness ids they had: otherwise a reconnecting tab would be refused its own id. */
+  function rebindAwareness(docName: string, from: string, to: string): void {
+    const ids = awarenessIds.get(docName)
+    if (!ids) return
+    for (const [clientId, owner] of ids.subjectOf) if (owner === from) ids.subjectOf.set(clientId, to)
+  }
+
   function connectionsEverywhere(match: (c: CollabContext) => boolean): Connection[] {
     return [...hocuspocus.documents.values()].flatMap((d) => d.getConnections()).filter((c) => match(c.context as CollabContext))
   }
@@ -868,6 +920,7 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     broadcastLocks,
 
     closeSubject(docName, subject) {
+      revocations.revoke(`subject:${subject}`)
       locks.releaseSubject(docName, subject)
       const doc = hocuspocus.documents.get(docName)
       if (doc) {
@@ -896,7 +949,17 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     reconnectSubject(docName, subject) {
+      revocations.revoke(`subject:${subject}`)
       for (const c of connectionsOf(docName, (ctx) => ctx.principal?.subject === subject)) drop(c, CLOSE.roleChanged, 'role-changed')
+    },
+
+    replaceSubject(docName, from, to) {
+      rebindAwareness(docName, from, to)
+      server.reconnectSubject(docName, from)
+    },
+
+    hasSubject(docName, subject) {
+      return connectionsOf(docName, (ctx) => ctx.principal?.subject === subject).length > 0
     },
 
     hasConnections(docName) {
@@ -904,15 +967,24 @@ export function createCollabServer(log: FastifyBaseLogger, opts: CollabServerOpt
     },
 
     closeUserEverywhere(userId) {
+      revocations.revoke(`user:${userId}`)
       for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.forbidden, 'forbidden')
     },
 
     reauthUserEverywhere(userId) {
+      revocations.revoke(`user:${userId}`)
       for (const c of connectionsEverywhere((ctx) => ctx.principal?.accountId === userId)) drop(c, CLOSE.reauth, 'reauth')
     },
 
     reauthIpEverywhere(ip) {
+      revocations.revoke(`ip:${ip}`)
       for (const c of connectionsEverywhere((ctx) => ctx.ip === ip)) drop(c, CLOSE.reauth, 'reauth')
+    },
+
+    reauthDevicesEverywhere(deviceIds) {
+      const banned = new Set(deviceIds)
+      for (const deviceId of banned) revocations.revoke(`device:${deviceId}`)
+      for (const c of connectionsEverywhere((ctx) => !!ctx.deviceId && banned.has(ctx.deviceId))) drop(c, CLOSE.reauth, 'reauth')
     },
 
     endSession(docName) {
