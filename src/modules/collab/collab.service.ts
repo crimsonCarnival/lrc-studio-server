@@ -411,7 +411,10 @@ export async function joinSession(input: JoinInput): Promise<JoinResult> {
     if (!isOwner && (s.kicked.includes(subject) || (guestSubject && s.kicked.includes(guestSubject)))) throw new CollabError('collab_kicked', 403)
     const user = await User.findById(input.userId).select('displayName accountName avatarUrl').lean<{ displayName?: string; accountName?: string; avatarUrl?: string | null }>()
     const name = (user?.displayName || user?.accountName || 'User').slice(0, MAX_NAME)
-    const absorbed = guestSubject ? await absorbGuestForJoin(s, guestSubject, { id: input.userId, name, avatarUrl: user?.avatarUrl ?? null, isOwner }) : null
+    // The link in hand was checked above; this is the token's own invite, which may be another one.
+    const tokenInvite = s.invites.find((i) => i._id.toString() === prior?.inviteId)
+    const guestAccessValid = s.allowGuests && !!tokenInvite && !tokenInvite.revokedAt && !inviteExpired(tokenInvite)
+    const absorbed = guestSubject ? await absorbGuestForJoin(s, guestSubject, { id: input.userId, name, avatarUrl: user?.avatarUrl ?? null, isOwner }, guestAccessValid) : null
     if (absorbed?.replaced) withCollabServer((server) => server.replaceSubject(docNameOf(s.publicId), guestSubject!, subject))
     const role = isOwner ? 'owner' : (absorbed?.member?.role ?? await upsertMember(s, { subject, name, role: invite.role }))
     return { publicId: s.publicId, role, ...(clearGuestCookie ? { clearGuestCookie } : {}) }

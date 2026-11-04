@@ -130,14 +130,17 @@ export type MemberEntry = { subject: string; role: CollabRole; colorIndex: numbe
  * A signed-in user presented a valid guest token for this session, so that guest is now this person.
  * The owner or an existing member keeps what they have and the guest entry goes. Anyone else takes the
  * guest entry over in place, with its role and colour: a demoted guest must not climb through the
- * invite's role. Callers refuse a kicked guest first. Returns the person's member entry, when there is
- * one, and whether a guest entry was actually absorbed. The filter repeats the rules, so a kick or a
- * second tab racing this cannot be overwritten.
+ * invite's role. That needs `guestAccessValid`: when the owner already cut the guest's access the role
+ * must not survive, so the entry just goes and the caller adds the person as a new member. Callers
+ * refuse a kicked guest first. Returns the person's member entry, when there is one, and whether a
+ * guest entry was actually absorbed. The filter repeats the rules, so a kick or a second tab racing
+ * this cannot be overwritten.
  */
 export async function absorbGuest(
   session: { _id: unknown; publicId: string; members: MemberEntry[] },
   guestSubject: string,
   user: { id: string; name: string; avatarUrl: string | null; isOwner: boolean },
+  guestAccessValid: boolean,
 ): Promise<{ member?: MemberEntry; replaced: boolean }> {
   const subject = `user:${user.id}`
   const current = session.members.find((m) => m.subject === subject)
@@ -148,7 +151,7 @@ export async function absorbGuest(
     await moveCredit(session.publicId, guestSubject, user.id, user.isOwner)
     return { member, replaced: true }
   }
-  if (user.isOwner || current) return dropGuest(current)
+  if (user.isOwner || current || !guestAccessValid) return dropGuest(current)
 
   const renamed = await CollabSession.findOneAndUpdate(
     { _id: session._id, kicked: { $nin: [guestSubject, subject] }, $and: [{ 'members.subject': guestSubject }, { 'members.subject': { $ne: subject } }] },
@@ -265,7 +268,8 @@ export async function resolvePrincipal(input: {
 
   // After every refusal above: a refused connection must not change who anyone is.
   const absorbed = user && guestSubject
-    ? await absorbGuest({ _id: session._id, publicId, members }, guestSubject, { id: user.id, name: user.name, avatarUrl: user.avatarUrl, isOwner })
+    // A non-member only gets here past the guest checks above, so a role that carries over is a valid one.
+    ? await absorbGuest({ _id: session._id, publicId, members }, guestSubject, { id: user.id, name: user.name, avatarUrl: user.avatarUrl, isOwner }, true)
     : null
   if (absorbed?.member && role !== 'owner') role = absorbed.member.role
 

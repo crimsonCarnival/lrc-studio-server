@@ -471,6 +471,53 @@ describe('POST /collab/join by a guest who signed in', () => {
     expect((await members()).map((x) => x.subject).sort()).toEqual([g.subject, `user:${u}`].sort())
   })
 
+  describe("when the guest's own access is gone", () => {
+    const deadAccess = [
+      ['its invite was revoked', { 'invites.0.revokedAt': new Date() }],
+      ['its invite expired', { 'invites.0.createdAt': new Date(Date.now() - 8 * 24 * 3600_000) }],
+      ['guests were turned off', { allowGuests: false }],
+    ] as const
+
+    it.each(deadAccess)('%s: the role comes from the link presented, and no guest row is left', async (_name, cut) => {
+      await start()
+      const g = await asGuest(await invite('editor'))
+      const viewerLink = await invite('viewer')
+      await Project.updateOne({ publicId: PUBLIC_ID }, { $set: { collaborators: [{ subject: g.subject, userId: null, guestName: 'Ana', firstContributedAt: new Date() }] } })
+      await CollabSession.updateOne({ publicId: PUBLIC_ID }, { $set: cut })
+      const u = await mkUser()
+      const res = await join({ token: viewerLink }, `${await cookieFor(u)}; ${g.cookie}`)
+      expect(res.json()).toEqual({ ok: true, publicId: PUBLIC_ID, role: 'viewer' })
+      expect(cleared(res)).toBe(true)
+      const all = await members()
+      expect(all.map((m) => [m.subject, m.role])).toEqual([[`user:${u}`, 'viewer']])
+      expect((await Project.findOne({ publicId: PUBLIC_ID }).lean())!.collaborators.map((c) => c.subject)).toEqual([`user:${u}`])
+    })
+
+    it('a kicked guest whose invite was revoked is still refused', async () => {
+      await start()
+      const g = await asGuest(await invite('editor'))
+      await M.kickCollabParticipant(null, { publicId: PUBLIC_ID, subject: g.subject }, ctx(ownerId))
+      expect((await CollabSession.findOne({ publicId: PUBLIC_ID }).lean())!.invites[0].revokedAt).toBeTruthy()
+      const viewerLink = await invite('viewer')
+      const res = await join({ token: viewerLink }, `${await cookieFor(await mkUser())}; ${g.cookie}`)
+      expect([res.statusCode, res.json().code]).toEqual([403, 'collab_kicked'])
+      expect(await members()).toEqual([])
+    })
+
+    it('with both guests off and a revoked invite, an existing member keeps their role and the guest row goes', async () => {
+      await start()
+      const g = await asGuest(await invite('editor'))
+      const editorLink = await invite('editor')
+      const m = await mkUser()
+      const cookie = await cookieFor(m)
+      await join({ token: await invite('viewer') }, cookie)
+      await CollabSession.updateOne({ publicId: PUBLIC_ID }, { $set: { allowGuests: false, 'invites.0.revokedAt': new Date() } })
+      const res = await join({ token: editorLink }, `${cookie}; ${g.cookie}`)
+      expect(res.json().role).toBe('viewer')
+      expect((await members()).map((x) => x.subject)).toEqual([`user:${m}`])
+    })
+  })
+
   it('a signed-in join with no guest cookie sends no cookie change', async () => {
     await start()
     const token = await invite('editor')
