@@ -122,6 +122,8 @@ export const settingsSchema = `
     lockLayout: Boolean
     mobileTab: String
     toastPosition: String
+    "Keep the chosen theme on this browser after signing out. Default true."
+    keepThemeOnSignOut: Boolean
   }
 
   type ShortcutsSettings {
@@ -301,6 +303,8 @@ export const settingsSchema = `
     lockLayout: Boolean
     mobileTab: String
     toastPosition: String
+    "Keep the chosen theme on this browser after signing out. Default true."
+    keepThemeOnSignOut: Boolean
   }
 
   input ShortcutsSettingsInput {
