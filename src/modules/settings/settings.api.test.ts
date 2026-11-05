@@ -78,6 +78,12 @@ describe('newly persisted client settings', () => {
     expect(doc.autoStamp).toMatchObject({ confidenceThreshold: 0.9, fuzzyTolerance: 0.6, applyMode: 'all' });
   });
 
+  it('stores keepThemeOnSignOut', async () => {
+    const u = uid();
+    await update(u, { interface: { keepThemeOnSignOut: false } });
+    expect(((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).interface.keepThemeOnSignOut).toBe(false);
+  });
+
   it('stores a palette theme id', async () => {
     const u = uid();
     await update(u, { interface: { theme: 'rose-pine-dawn' } });
