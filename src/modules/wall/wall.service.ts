@@ -12,6 +12,7 @@ import { blockUser } from '../blocks/block.service.js';
 import { isValidReaction } from '../reactions/reaction.emoji.js';
 import { logAdminAction } from '../admin/admin.service.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
+import { getAddictionTitles } from '../stats/content-stats.service.js';
 import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { getBlockedSet, isBlockedEitherWay } from '../blocks/block.service.js';
 import { hasPermission, rankOf } from '../../shared/permissions.js';
@@ -52,6 +53,8 @@ export interface WallAuthor {
   staffRole: string | null;
   /** Whether others may tag this author (the client pre-tags a reply only when they may). */
   allowsTags: boolean;
+  /** Title of the author's addiction level (shown as "Melomaniac Level"); null where it is not loaded. */
+  addictionTitle: { en: string; es: string } | null;
 }
 
 export interface WallCommentView {
@@ -156,13 +159,14 @@ async function visibleWall(viewerId: string | null, owner: LeanUser): Promise<bo
   return (await getPreferences(ownerId)).wallEnabled !== false;
 }
 
-const authorView = (u: LeanUser, allowsTags: boolean): WallAuthor => ({
+const authorView = (u: LeanUser, allowsTags: boolean, addictionTitle: WallAuthor['addictionTitle'] = null): WallAuthor => ({
   id: u._id.toString(),
   accountName: u.accountName ?? '',
   displayName: u.displayName ?? null,
   avatarUrl: u.avatarUrl ?? null,
   staffRole: u.role && u.role !== 'user' ? u.role : null,
   allowsTags,
+  addictionTitle,
 });
 
 const isModerator = async (viewerId: string | null): Promise<boolean> => {
@@ -251,12 +255,13 @@ async function buildViews(
   }
 
   const authorIds = [...new Set(all.map(c => c.authorId.toString()))];
-  const [authors, untaggablePrefs, viewer, blockedSet, resolved] = await Promise.all([
+  const [authors, untaggablePrefs, viewer, blockedSet, resolved, titleById] = await Promise.all([
     User.find({ _id: { $in: authorIds.map(oid) } }).select('accountName displayName avatarUrl role isDeleted').lean<LeanUser[]>(),
     UserPreferences.find({ userId: { $in: authorIds.map(oid) }, allowTags: false }).select('userId').lean(),
     viewerId ? User.findById(viewerId).select('permissions').lean<LeanUser>() : null,
     getBlockedSet(viewerId),
     resolveTags(all.map(c => c.body), viewerId),
+    getAddictionTitles(authorIds),
   ]);
   const authorById = new Map(authors.map(a => [a._id.toString(), a]));
   const untaggable = new Set(untaggablePrefs.map(p => p.userId.toString()));
@@ -344,7 +349,7 @@ async function buildViews(
         editedAt: null,
         depth: c.depth,
         // Who wrote a deleted comment is not shown, nor sent.
-        author: { id: '', accountName: '', displayName: null, avatarUrl: null, staffRole: null, allowsTags: false },
+        author: { id: '', accountName: '', displayName: null, avatarUrl: null, staffRole: null, allowsTags: false, addictionTitle: null },
         canDelete: false,
         canEdit: false,
         pinned: false,
@@ -371,7 +376,7 @@ async function buildViews(
       createdAt: c.createdAt.toISOString(),
       editedAt: c.editedAt?.toISOString() ?? null,
       depth: c.depth,
-      author: authorView(author, !untaggable.has(c.authorId.toString())),
+      author: authorView(author, !untaggable.has(c.authorId.toString()), titleById.get(c.authorId.toString()) ?? null),
       canDelete: isAuthor || viewerIsOwner || viewerIsStaff,
       canEdit: isAuthor && now - c.createdAt.getTime() < EDIT_WINDOW_MS,
       pinned: !!c.pinnedAt,

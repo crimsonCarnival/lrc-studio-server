@@ -216,3 +216,37 @@ function countSyncedLines(lyric: LyricShape): number {
   }
   return count;
 }
+
+/**
+ * The addiction level title of each user, for lists that show many people at once (wall
+ * comments). Same inputs as getUserContentStats, minus the per-project lyrics scan: the
+ * stored counters plus one grouped project count for the whole batch. Users that no longer
+ * exist are left out.
+ */
+export async function getAddictionTitles(userIds: string[]): Promise<Map<string, { en: string; es: string }>> {
+  const titles = new Map<string, { en: string; es: string }>();
+  if (userIds.length === 0) return titles;
+  const ids = userIds.map(id => new mongoose.Types.ObjectId(id));
+  const [users, counts] = await Promise.all([
+    User.find({ _id: { $in: ids } }).select('stats social').lean(),
+    Project.aggregate<{ _id: mongoose.Types.ObjectId; total: number; public: number }>([
+      { $match: { userId: { $in: ids } } },
+      { $group: { _id: '$userId', total: { $sum: 1 }, public: { $sum: { $cond: ['$public', 1, 0] } } } },
+    ]),
+  ]);
+  const countsById = new Map(counts.map(c => [c._id.toString(), c]));
+  for (const u of users) {
+    const c = countsById.get(u._id.toString());
+    const { title } = await getAddictionLevel({
+      syncedLines: u.stats?.syncedLines ?? 0,
+      karaokeLines: u.stats?.karaokeLines ?? 0,
+      musicSyncedMinutes: u.stats?.minutesSynced ?? 0,
+      publicProjects: c?.public ?? 0,
+      starsReceived: u.social?.totalStarsReceived ?? 0,
+      wordsTimestamped: u.stats?.wordsSynced ?? 0,
+      totalProjects: c?.total ?? 0,
+    });
+    titles.set(u._id.toString(), title);
+  }
+  return titles;
+}

@@ -7,6 +7,8 @@ export const wallSchema = `
     staffRole: String
     "False when this author switched tagging off."
     allowsTags: Boolean!
+    "Title of their addiction level (the app calls it Melomaniac Level). Only loaded on wall comments."
+    addictionTitle: LocalizedString
   }
 
   "A person tagged in a comment, as @[u:<id>] in its body."

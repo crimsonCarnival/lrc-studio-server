@@ -15,6 +15,8 @@ import {
   reportWallComment as reportComment, listWallReports as listReports, resolveWallReport as resolveReport,
 } from '../reports/reports.legacy.js';
 import Project from '../projects/project.model.js';
+import AddictionLevel from '../stats/addiction-level.model.js';
+import { invalidateLevelCache } from '../stats/addiction-level.service.js';
 import {
   addComment, deleteComment, editComment, getComment, getLikers, getReplies, getWall,
   setLike, setPin, setSubscription, WallError, REPLY_PREVIEW, EDIT_WINDOW_MS,
@@ -65,6 +67,27 @@ describe('wall comments and replies', () => {
     expect(wall.total).toBe(1);
     // The answer sits right below the comment it answers, ahead of the older 'later'.
     expect(wall.comments[0].replies[0].replies.map(r => r.id)).toEqual([nested.id, answer.id, later.id]);
+  });
+
+  it("carries each author's addiction level title, worked out from their own stats and projects", async () => {
+    await AddictionLevel.deleteMany({});
+    await AddictionLevel.create([
+      { id: 'rookie', order: 0, title: { en: 'Rookie', es: 'Novato' }, requirements: {} },
+      { id: 'regular', order: 1, title: { en: 'Regular', es: 'Habitual' }, requirements: { totalProjects: 2 } },
+    ]);
+    invalidateLevelCache();
+    await mkUser('sam');
+    const novice = await mkUser('ann'), seasoned = await mkUser('bob');
+    await Project.collection.insertMany(['p1', 'p2'].map(publicId => ({ publicId, userId: new mongoose.Types.ObjectId(seasoned), public: false })));
+    await addComment(novice, 'sam', 'first');
+    await addComment(seasoned, 'sam', 'second');
+
+    const wall = await getWall(null, 'sam');
+    const titleOf = (name: string) => wall.comments.find(c => c.author.accountName === name)?.author.addictionTitle;
+    expect(titleOf('ann')).toEqual({ en: 'Rookie', es: 'Novato' });
+    expect(titleOf('bob')).toEqual({ en: 'Regular', es: 'Habitual' });
+    await AddictionLevel.deleteMany({});
+    invalidateLevelCache();
   });
 
   it('links the notification to the newest comment', async () => {
