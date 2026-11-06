@@ -56,7 +56,7 @@ const URI_RE = /^[a-z][a-z0-9+.-]*:\/\/(.*)$/is;
  * not validate yields `<unparseable target>`.
  */
 export function describeMongoTarget(uri: string): string {
-  const bad = '<unparseable target>';
+  const bad = UNPARSEABLE_TARGET;
   // Fail closed: an `@` after the first `?` may mean the `?` sits inside the userinfo.
   if (hasAtAfterQuery(uri)) return bad;
   const m = URI_RE.exec(uri.split('?')[0]);
@@ -67,6 +67,19 @@ export function describeMongoTarget(uri: string): string {
   const db = slash === -1 ? '' : afterUser.slice(slash + 1).split('/')[0];
   if (!hosts || !hosts.split(',').every((h) => HOST_RE.test(h)) || !DB_RE.test(db)) return bad;
   return `${hosts}/${db || '(default db)'}`;
+}
+
+export const UNPARSEABLE_TARGET = '<unparseable target>';
+
+/**
+ * Decides whether the run may start. Writes need a target the operator can see,
+ * so `--apply` is refused when the target cannot be described; a dry run only warns.
+ */
+export function checkTarget(apply: boolean, target: string): { proceed: boolean; warning?: string } {
+  if (target !== UNPARSEABLE_TARGET) return { proceed: true };
+  return apply
+    ? { proceed: false, warning: 'Refusing --apply: the database target could not be parsed, so it cannot be shown before writing. Nothing was written.' }
+    : { proceed: true, warning: 'Warning: the database target could not be parsed or shown.' };
 }
 
 /** Safe message of anything that can be thrown (strings, objects, null), with secrets redacted. */

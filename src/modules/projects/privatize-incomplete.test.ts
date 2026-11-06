@@ -7,7 +7,7 @@ vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Erro
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Notification from '../notifications/notification.model.js';
-import { privatizeIncomplete, parseArgs, describeMongoTarget, redactSecrets } from './privatize-incomplete.service.js';
+import { privatizeIncomplete, parseArgs, describeMongoTarget, redactSecrets, checkTarget } from './privatize-incomplete.service.js';
 
 let mongo: MongoMemoryServer;
 beforeAll(async () => {
@@ -307,5 +307,20 @@ describe('redactSecrets', () => {
   });
   it('strips any mongodb uri even without a known one', () => {
     expect(redactSecrets('boom mongodb://a:b@h/db end')).toBe('boom <redacted-uri> end');
+  });
+});
+
+describe('checkTarget', () => {
+  it('lets a parseable target through for both modes', () => {
+    expect(checkTarget(true, 'host/db')).toEqual({ proceed: true });
+    expect(checkTarget(false, 'host/db')).toEqual({ proceed: true });
+  });
+  it('refuses --apply on an unparseable target, warns but proceeds on a dry run', () => {
+    const apply = checkTarget(true, '<unparseable target>');
+    expect(apply.proceed).toBe(false);
+    expect(apply.warning).toMatch(/Nothing was written/);
+    const dry = checkTarget(false, '<unparseable target>');
+    expect(dry.proceed).toBe(true);
+    expect(dry.warning).toBeTruthy();
   });
 });

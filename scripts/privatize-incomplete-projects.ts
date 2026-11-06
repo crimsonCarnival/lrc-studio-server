@@ -42,6 +42,7 @@ import {
   describeMongoTarget,
   PRIVATIZE_USAGE,
   errorText,
+  checkTarget,
 } from '../src/modules/projects/privatize-incomplete.service.js';
 
 const args = parseArgs(process.argv.slice(2));
@@ -58,7 +59,14 @@ if (!MONGO_URI) {
 }
 
 async function main(): Promise<void> {
-  console.log(`🎯  Target: ${describeMongoTarget(MONGO_URI)}  (${APPLY ? 'APPLY' : 'DRY RUN — no writes, no notifications; pass --apply to write'})`);
+  const target = describeMongoTarget(MONGO_URI);
+  console.log(`🎯  Target: ${target}  (${APPLY ? 'APPLY' : 'DRY RUN — no writes, no notifications; pass --apply to write'})`);
+  const gate = checkTarget(APPLY, target);
+  if (gate.warning) console.error(gate.warning);
+  if (!gate.proceed) {
+    process.exitCode = 1;
+    return;
+  }
   await mongoose.connect(MONGO_URI);
   console.log('✅  Connected to MongoDB');
   const { matched, changed, skippedChanged, failed, notifyFailed } = await privatizeIncomplete({ dryRun: !APPLY, log: (m) => console.log(m) });

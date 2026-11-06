@@ -231,6 +231,7 @@ export const projectSchema = `
     uploadId: ID
     type: String
     readOnly: Boolean
+    # @deprecated ignored; projects are always created private. Kept for old and new clients.
     public: Boolean
     metadata: ProjectMetadataInput
     coverImage: String
