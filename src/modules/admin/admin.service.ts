@@ -13,7 +13,7 @@ import AdminLog from './admin-log.model.js';
 import type { AdminLogEntry } from '../../types/index.js';
 import { createOnce, notifyRoleChanged, notifyXpChanged, notifyUnban } from '../notifications/notifications.service.js';
 import { sendBanEmail } from '../email/email.service.js';
-import Settings from '../settings/settings.model.js';
+import { loadEmailPrefs } from '../email/email-prefs.js';
 import { getIO } from '../../socket/socket.manager.js';
 import type { IUser } from '../users/user.model.js';
 import { PERMISSIONS, ROLE_PRESETS, ROLE_RANK, rankOf, isValidRole, type Permission, type Role } from '../../shared/permissions.js';
@@ -407,10 +407,9 @@ export async function toggleBan(userId: string, banStatus: boolean, reason: stri
     createOnce({ userId, type: 'ban', sticky: false, body: reason || null }).catch(() => {});
     const userEmail = user.email;
     if (userEmail) {
-      Settings.findOne({ userId }).select('interface').lean().then((settings: { interface?: { defaultLanguage?: string; theme?: string } } | null) => {
-        const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
-        return sendBanEmail(userEmail, reason || null, user.displayName || user.accountName, prefs);
-      }).catch(() => {});
+      loadEmailPrefs(userId)
+        .then((prefs) => sendBanEmail(userEmail, reason || null, user.displayName || user.accountName, prefs))
+        .catch(() => {});
     }
     try { getIO().to(`user:${userId}`).emit('user:banned', { reason }); } catch { /* socket not ready */ }
   }

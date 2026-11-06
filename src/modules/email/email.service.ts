@@ -1,4 +1,4 @@
-import { getEmailTheme, type EmailTheme } from './email-themes.js';
+import { resolveEmailTheme, type EmailTheme } from './email-themes.js';
 import { t, resolveEmailLang, type EmailLang } from './email.i18n.js';
 
 const BREVO_API = 'https://api.brevo.com/v3/smtp/email';
@@ -6,6 +6,8 @@ const BREVO_API = 'https://api.brevo.com/v3/smtp/email';
 export interface EmailPrefs {
   lang?: string | null;
   theme?: string | null;
+  /** JSON of the user's own theme; only read when `theme` is 'custom'. */
+  customTheme?: string | null;
 }
 
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
@@ -135,7 +137,7 @@ export async function sendPasswordResetEmail(
 ): Promise<void> {
   const appName = process.env.APP_NAME || 'LRC Studio';
   const lang = resolveEmailLang(prefs?.lang);
-  const th = getEmailTheme(prefs?.theme);
+  const th = resolveEmailTheme(prefs?.theme, prefs?.customTheme);
 
   const html = renderEmail({
     th, lang, appName,
@@ -161,7 +163,7 @@ export async function sendVerificationEmail(
 ): Promise<void> {
   const appName = process.env.APP_NAME || 'LRC Studio';
   const lang = resolveEmailLang(prefs?.lang);
-  const th = getEmailTheme(prefs?.theme);
+  const th = resolveEmailTheme(prefs?.theme, prefs?.customTheme);
 
   const html = renderEmail({
     th, lang, appName,
@@ -187,7 +189,7 @@ export async function sendBanEmail(
 ): Promise<void> {
   const appName = process.env.APP_NAME || 'LRC Studio';
   const lang = resolveEmailLang(prefs?.lang);
-  const th = getEmailTheme(prefs?.theme);
+  const th = resolveEmailTheme(prefs?.theme, prefs?.customTheme);
 
   const reasonBlock = reason
     ? `<div class="danger">${reason}</div>`
@@ -213,7 +215,7 @@ export async function sendPasswordChangedEmail(
 ): Promise<void> {
   const appName = process.env.APP_NAME || 'LRC Studio';
   const lang = resolveEmailLang(prefs?.lang);
-  const th = getEmailTheme(prefs?.theme);
+  const th = resolveEmailTheme(prefs?.theme, prefs?.customTheme);
 
   const html = renderEmail({
     th, lang, appName,

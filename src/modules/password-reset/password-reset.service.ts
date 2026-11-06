@@ -2,14 +2,10 @@ import crypto from 'crypto';
 import User from '../users/user.model.js';
 import PasswordReset from './password-reset.model.js';
 import { sendPasswordResetEmail, sendPasswordChangedEmail } from '../email/email.service.js';
-import Settings from '../settings/settings.model.js';
+import { loadEmailPrefs } from '../email/email-prefs.js';
 import { resolveSticky, createOnce } from '../notifications/notifications.service.js';
 import { resetPasswordAtomically, changePasswordAtomically } from '../auth/auth.tx.service.js';
 import { getEnv } from '../../config/env.js';
-
-interface SettingsLean {
-  interface?: { defaultLanguage?: string; theme?: string };
-}
 
 interface UserEmailLean {
   _id: unknown;
@@ -53,10 +49,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
   const resetLink = `${resetUrl}/reset-password?token=${token}`;
   try {
     const emailUser = await User.findOne({ email: normalizedEmail }).select('_id displayName accountName').lean();
-    const settings = emailUser
-      ? await Settings.findOne({ userId: emailUser._id }).select('interface').lean()
-      : null;
-    const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
+    const prefs = await loadEmailPrefs(emailUser?._id);
     await sendPasswordResetEmail(normalizedEmail, resetLink, emailUser?.displayName || emailUser?.accountName, prefs);
   } catch (err) {
     console.error('Failed to send password reset email:', err);
@@ -151,9 +144,8 @@ export async function changePassword(userId: string, currentPassword: string | n
   }
   const userEmail = user.email;
   if (userEmail) {
-    Settings.findOne({ userId }).select('interface').lean().then((settings: { interface?: { defaultLanguage?: string; theme?: string } } | null) => {
-      const prefs = { lang: settings?.interface?.defaultLanguage, theme: settings?.interface?.theme };
-      return sendPasswordChangedEmail(userEmail, user.displayName || user.accountName, prefs);
-    }).catch(() => {});
+    loadEmailPrefs(userId)
+      .then((prefs) => sendPasswordChangedEmail(userEmail, user.displayName || user.accountName, prefs))
+      .catch(() => {});
   }
 }

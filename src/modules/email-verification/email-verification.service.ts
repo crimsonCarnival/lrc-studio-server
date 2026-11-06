@@ -3,7 +3,7 @@ import User from '../users/user.model.js';
 import EmailVerification from './email-verification.model.js';
 import EmailHistory from '../users/email-history.model.js';
 import { sendVerificationEmail } from '../email/email.service.js';
-import Settings from '../settings/settings.model.js';
+import { loadEmailPrefs } from '../email/email-prefs.js';
 import { getEnv } from '../../config/env.js';
 import { resolveSticky } from '../notifications/notifications.service.js';
 
@@ -42,12 +42,10 @@ export async function sendVerification(userId: string, email: string, type: 'ini
   const clientUrl = getEnv().APP_URL;
   const verifyLink = `${clientUrl}/verify-email?token=${token}`;
 
-  const [user, settings] = await Promise.all([
+  const [user, prefs] = await Promise.all([
     User.findById(userId).select('displayName accountName'),
-    Settings.findOne({ userId }).select('interface').lean(),
+    loadEmailPrefs(userId),
   ]);
-  const settingsLean = settings as { interface?: { defaultLanguage?: string; theme?: string } } | null;
-  const prefs = { lang: settingsLean?.interface?.defaultLanguage, theme: settingsLean?.interface?.theme };
   await sendVerificationEmail(email, verifyLink, user?.displayName || user?.accountName, prefs);
 }
 
