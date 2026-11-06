@@ -5,7 +5,7 @@ import { createAdapter } from '@socket.io/mongo-adapter';
 import { parseCookie } from 'cookie';
 import { verifyLiveAccessToken } from './auth.js';
 import { wallRoom } from '../modules/wall/wall.service.js';
-import { setIO } from '../socket/socket.manager.js';
+import { setIO, sessionRoom } from '../socket/socket.manager.js';
 import { initSocialGraph } from '../lib/social-graph.js';
 import { initRequestQueue } from '../modules/requests/request.queue.js';
 import { loadHeap, scheduleEviction, cancelEviction } from '../lib/notification-heap.js';
@@ -147,7 +147,10 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         const user = decoded.sub
           ? await User.findById(decoded.sub).select('isDeleted ban').lean<IUser>()
           : null;
-        if (user && !user.isDeleted && !user.ban?.active) socket.data.userId = decoded.sub;
+        if (user && !user.isDeleted && !user.ban?.active) {
+          socket.data.userId = decoded.sub;
+          socket.data.familyId = decoded.familyId;
+        }
       }
     } catch {
       // Expired / malformed / revoked token — treat as anonymous
@@ -264,6 +267,8 @@ async function socketPlugin(fastify: FastifyInstance): Promise<void> {
         if (typeof ack === 'function') (ack as (ok: boolean) => void)(!!userId);
         if (!userId) return;
         socket.join(`user:${userId}`);
+        const familyId = socket.data.familyId as string | undefined;
+        if (familyId) socket.join(sessionRoom(familyId));
         await loadHeap(userId);
         cancelEviction(userId);
 

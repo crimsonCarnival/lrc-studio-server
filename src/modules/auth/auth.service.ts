@@ -7,7 +7,7 @@ import type { IUser } from '../users/user.model.js';
 import Session from './session.model.js';
 import { disconnectAccount } from '../collab/collab.service.js';
 import { withCollabServer } from '../collab/collab.server.js';
-import { getIO } from '../../socket/socket.manager.js';
+import { getIO, sessionRoom } from '../../socket/socket.manager.js';
 import { logUserAction } from '../user-logs/logs.service.js';
 import { registerAtomically, loginAtomically } from './auth.tx.service.js';
 import BannedIp from '../admin/banned-ip.model.js';
@@ -693,7 +693,8 @@ export async function revokeSession(
   session.isValid = false;
   await session.save();
   withCollabServer((server) => server.reauthUserEverywhere(userId));
-  try { getIO().to(`user:${userId}`).emit('session:revoked', { sessionId }); } catch { /* socket not ready */ }
+  // Only the revoked session's own sockets are told; the user's other devices stay signed in.
+  try { getIO().to(sessionRoom(session.familyId)).emit('session:revoked', { sessionId }); } catch { /* socket not ready */ }
   return { success: true };
 }
 
@@ -705,10 +706,16 @@ export async function revokeAllSessions(
   if (exceptFamilyId) {
     query.familyId = { $ne: exceptFamilyId };
   }
+  // Collected before the update: these are the sessions about to die, and the only ones to notify.
+  const revokedFamilies: string[] = await Session.find({ ...query, isValid: true }).distinct('familyId');
   const result = await Session.updateMany(query, { $set: { isValid: false } });
   if (result.modifiedCount > 0) {
     withCollabServer((server) => server.reauthUserEverywhere(userId));
-    try { getIO().to(`user:${userId}`).emit('session:revoked', {}); } catch { /* socket not ready */ }
+    try {
+      if (revokedFamilies.length > 0) {
+        getIO().to(revokedFamilies.map(sessionRoom)).emit('session:revoked', {});
+      }
+    } catch { /* socket not ready */ }
   }
   return { revokedCount: result.modifiedCount };
 }

@@ -383,8 +383,14 @@ export async function revokeSession(req: FastifyRequest, reply: FastifyReply): P
 export async function logoutAll(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const body = req.body as { keepCurrent?: boolean } | undefined;
   const keepCurrent = body?.keepCurrent === true;
+  const exceptFamilyId = keepCurrent ? currentFamilyId(req) : undefined;
 
-  await authService.revokeAllSessions(req.userId!, keepCurrent ? currentFamilyId(req) : undefined);
+  // "Keep this session" with no session to keep must not fall through to revoking every session.
+  if (keepCurrent && !exceptFamilyId) {
+    return reply.code(400).send({ error: 'current_session_unknown' });
+  }
+
+  await authService.revokeAllSessions(req.userId!, exceptFamilyId);
 
   if (!keepCurrent) {
     clearAuthCookies(reply);
