@@ -156,6 +156,8 @@ export const rootSchema = `
     adminUpdateAddictionLevel(id: String!, input: AddictionLevelUpdateInput!): AddictionLevel!
     adminDeleteAddictionLevel(id: String!): Boolean!
     updatePreferences(input: UpdatePreferencesInput!): UserPreferences!
+    "The IANA timezone (e.g. America/Bogota) whose calendar days the user's streak and heatmap count."
+    setTimezone(timezone: String!): Boolean!
     adminShadowBan(userId: ID!, feed: Boolean!, search: Boolean!, reason: String): Boolean!
     adminUnshadowBan(userId: ID!): Boolean!
   }
@@ -210,6 +212,7 @@ export const rootSchema = `
     miniProfileBadgeIds: [String!]!
     showActivityHeatmap: Boolean!
     showXpProgress: Boolean!
+    showAddictionTitle: Boolean!
     wallEnabled: Boolean!
     allowTags: Boolean!
     "everyone, following (people the owner follows) or nobody."
@@ -257,6 +260,7 @@ export const rootSchema = `
     miniProfileBadgeIds: [String!]
     showActivityHeatmap: Boolean
     showXpProgress: Boolean
+    showAddictionTitle: Boolean
     wallEnabled: Boolean
     allowTags: Boolean
     wallWhoCanComment: String
@@ -441,7 +445,7 @@ export const rootSchema = `
     title: LocalizedString!
     description: LocalizedString!
     requirements: AddictionLevelRequirements!
-    order: Int!
+    order: Float!
   }
 
   input AddictionLevelRequirementsInput {
@@ -459,7 +463,7 @@ export const rootSchema = `
     title: LocalizedStringInput!
     description: LocalizedStringInput
     requirements: AddictionLevelRequirementsInput
-    order: Int
+    order: Float
   }
 
   # One row of the XP level curve, derived server-side from computeLevel's
@@ -475,6 +479,6 @@ export const rootSchema = `
     title: LocalizedStringInput
     description: LocalizedStringInput
     requirements: AddictionLevelRequirementsInput
-    order: Int
+    order: Float
   }
 `;
