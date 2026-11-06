@@ -24,6 +24,7 @@ function withDefaults(prefs: IUserPreferences): IUserPreferences {
     ...prefs,
     showActivityHeatmap: prefs.showActivityHeatmap === true,
     showXpProgress: prefs.showXpProgress === true,
+    showAddictionTitle: prefs.showAddictionTitle !== false,
     wallEnabled: prefs.wallEnabled !== false,
     allowTags: prefs.allowTags !== false,
     wallWhoCanComment: prefs.wallWhoCanComment ?? 'everyone',

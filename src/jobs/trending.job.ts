@@ -19,6 +19,17 @@ export async function recomputeTrendingScores(): Promise<void> {
   }>([
     { $match: { createdAt: { $gte: ago30d } } },
     {
+      $lookup: {
+        from: 'projects',
+        localField: 'publicId',
+        foreignField: 'publicId',
+        as: 'project',
+      },
+    },
+    { $unwind: '$project' },
+    // An owner starring their own project is a bookmark, not a signal.
+    { $match: { 'project.public': true, $expr: { $ne: ['$userId', '$project.userId'] } } },
+    {
       $group: {
         _id: '$publicId',
         stars24h: { $sum: { $cond: [{ $gte: ['$createdAt', ago24h] }, 1, 0] } },
@@ -26,16 +37,6 @@ export async function recomputeTrendingScores(): Promise<void> {
         stars30d: { $sum: 1 },
       },
     },
-    {
-      $lookup: {
-        from: 'projects',
-        localField: '_id',
-        foreignField: 'publicId',
-        as: 'project',
-      },
-    },
-    { $unwind: '$project' },
-    { $match: { 'project.public': true } },
   ]);
 
   // --- Project forks ---
@@ -49,6 +50,8 @@ export async function recomputeTrendingScores(): Promise<void> {
       $match: {
         'forkedFrom.publicId': { $ne: null },
         createdAt: { $gte: ago30d },
+        // Forking your own project is a copy, not social proof.
+        $expr: { $ne: ['$userId', '$forkedFrom.userId'] },
       },
     },
     {

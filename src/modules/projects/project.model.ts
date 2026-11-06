@@ -51,6 +51,9 @@ export interface IProject extends Document {
    * existed; readers fall back to updatedAt.
    */
   contentUpdatedAt?: Date;
+  // Set once, the first time the project is published. Later private->public flips
+  // do not emit another publish activity, so toggling visibility cannot spam followers.
+  firstPublishedAt?: Date | null;
 }
 
 export type ProjectCollaboratorCredit = {
@@ -243,6 +246,7 @@ const projectSchema = new mongoose.Schema(
     shareCount: { type: Number, default: 0 },
     createdFrom: { type: String, default: null, maxlength: 64 },
     contentUpdatedAt: { type: Date },
+    firstPublishedAt: { type: Date, default: null },
   },
   { timestamps: true, collection: 'projects' }
 );

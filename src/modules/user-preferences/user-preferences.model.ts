@@ -52,6 +52,9 @@ export interface IUserPreferences {
   // Also opt-in: the XP progress bar on the public profile. Level and XP totals stay public
   // where they already are (leaderboard), this only hides the progress bar.
   showXpProgress: boolean;
+  // Whether the level title ("addiction" tier) shows next to the user's name on other people's pages.
+  // On by default; it is a joke about the tier names, so anyone may opt out.
+  showAddictionTitle: boolean;
   // Whether other people can leave comments on this user's profile wall.
   wallEnabled: boolean;
   // Whether other people can tag this user in comments. Never limits whom they tag.
@@ -102,6 +105,7 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   miniProfileBadgeIds:      { type: [String], default: [] },
   showActivityHeatmap:      { type: Boolean, default: false },
   showXpProgress:           { type: Boolean, default: false },
+  showAddictionTitle:       { type: Boolean, default: true },
   wallEnabled:              { type: Boolean, default: true },
   allowTags:                { type: Boolean, default: true },
   wallWhoCanComment:        { type: String, enum: WALL_COMMENT_POLICIES, default: 'everyone' },

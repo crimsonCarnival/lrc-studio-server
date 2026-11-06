@@ -11,6 +11,7 @@ import { projectPath } from '../../utils/project-slug.js';
 import Upload from '../uploads/upload.model.js';
 import { cleanTitle, fallbackTitle, hasProjectIdentity, PROJECT_TITLE_MAX } from './project-identity.js';
 import { getIO } from '../../socket/socket.manager.js';
+import { tagTimedLines } from '../badges/sync-stats.js';
 
 export async function getShareProject(publicId: string): Promise<ProjectPublic | null> {
   const project = await Project.findOne({ publicId })
@@ -149,9 +150,11 @@ export async function cloneProject(
       },
     }], { session });
 
-    const incomingSections = sourceLyrics?.sections?.length
+    // Copied timings earn the forker nothing until they re-time the line (sync-stats SOURCE_WEIGHT).
+    const incomingSections = (sourceLyrics?.sections?.length
       ? sourceLyrics.sections
-      : migrateLinesToSections(sourceLyrics?.lines || []);
+      : migrateLinesToSections(sourceLyrics?.lines || [])
+    ).map((sec) => ({ ...sec, lines: tagTimedLines((sec.lines ?? []) as never[], 'fork') }));
 
     const [newLyricsDoc] = await Lyrics.create([{
       publicId: newProject.publicId,
@@ -163,7 +166,10 @@ export async function cloneProject(
     await newProject.save({ session });
 
     await Promise.all([
-      Project.updateOne({ publicId: sourcepublicId }, { $inc: { forkCount: 1 } }, { session, timestamps: false }),
+      // Forking your own project is a copy, not social proof: it must not raise forkCount (trending input).
+      ...(String((sourceProject.userId as unknown as { _id?: unknown })?._id ?? sourceProject.userId) === String(newUserId)
+        ? []
+        : [Project.updateOne({ publicId: sourcepublicId }, { $inc: { forkCount: 1 } }, { session, timestamps: false })]),
       ProjectFork.create([{
         sourcepublicId,
         forkedpublicId: newProject.publicId,

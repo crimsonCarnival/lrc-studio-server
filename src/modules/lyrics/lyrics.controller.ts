@@ -13,6 +13,7 @@ import {
 } from '../../utils/lrc.js';
 
 import { compileSRT } from '../../utils/srt.js';
+import { tagTimedLines } from '../badges/sync-stats.js';
 import { parseArtists, formatArtistDisplay } from '../../utils/artists.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,7 +31,9 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ error: 'Unsupported lyrics format' });
   }
 
-  const lines = parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {});
+  // Timings that come from a file or a lyrics search are imported work, not hand-synced: they count
+  // at a reduced rate in sync stats until the user re-times the line.
+  const lines = tagTimedLines(parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {}), 'import');
   // Header tags ([ti:], [ar:], …) and what the shared parser makes of them, so the
   // client can prefill artists and a cleaned title. SRT has no header tags.
   const isSrt = normalizedName.endsWith('.srt');

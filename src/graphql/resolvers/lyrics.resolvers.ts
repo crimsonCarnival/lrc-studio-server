@@ -1,8 +1,9 @@
+import { isDeepStrictEqual } from 'node:util';
 import Project from '../../modules/projects/project.model.js';
 import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import { Context } from './context.js';
 import { scheduleSyncStatsRefresh, updateStreak } from '../../modules/badges/badge.service.js';
-import { collabSessionBlocks } from '../../modules/projects/projects.crud.service.js';
+import { collabSessionBlocks, assertValidSectionsTiming } from '../../modules/projects/projects.crud.service.js';
 
 export interface LyricsInput {
   [key: string]: unknown;
@@ -26,7 +27,11 @@ export const lyricsResolvers = {
       if (blocked) throw Object.assign(new Error(blocked.error ?? 'collab_active'), { extensions: { code: blocked.code, status: blocked.status } });
       const update: Record<string, unknown> = {};
       if (input.editorMode !== undefined) update.editorMode = input.editorMode;
-      if (input.sections !== undefined) update.sections = input.sections;
+      if (input.sections !== undefined) {
+        assertValidSectionsTiming(input.sections as unknown[]);
+        update.sections = input.sections;
+      }
+      const before = await Lyrics.findOne({ publicId }).select('editorMode sections -_id').lean();
       const result = await Lyrics.findOneAndUpdate(
         { publicId },
         { $set: update, $unset: { lines: 1 } },
@@ -35,7 +40,11 @@ export const lyricsResolvers = {
       // Fire-and-forget. Stats and badges are coalesced per user; ranking is left
       // to the hourly job — recomputing every user's score per call let one
       // caller drive a full-collection rewrite on demand.
-      updateStreak(context.userId).catch(() => {});
+      // Only a real change is activity; re-sending identical lyrics must not keep a streak alive.
+      const after = { editorMode: result?.editorMode, sections: result?.sections };
+      if (!isDeepStrictEqual(JSON.parse(JSON.stringify(before ?? {})), JSON.parse(JSON.stringify(after)))) {
+        updateStreak(context.userId).catch(() => {});
+      }
       scheduleSyncStatsRefresh(context.userId);
       return result;
     },

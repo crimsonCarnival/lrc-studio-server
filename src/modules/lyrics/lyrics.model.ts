@@ -4,11 +4,41 @@ import type { LineEntry, SectionEntry } from '../../types/index.js';
 
 const textSetter = (v: string) => (typeof v === 'string' ? stripHtml(v) : v);
 
+/**
+ * Upper bound for any timestamp, end time or word time, in seconds. Sync minutes,
+ * XP and the leaderboard are derived from these values, so an unbounded one lets
+ * a single save set any level. 6 h is an assumption: longer than any song or mix
+ * the editor is meant for. Raise it here if a legitimate case needs more.
+ */
+export const MAX_TIME_SECONDS = 6 * 3600;
+
+const timeField = { type: Number, default: null, min: 0, max: MAX_TIME_SECONDS };
+
+/** Throws 422 unless `value` is null/undefined or a finite number in [0, MAX_TIME_SECONDS]. */
+export function assertTimeInRange(value: unknown, context: string): void {
+  if (value == null) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > MAX_TIME_SECONDS) {
+    throw Object.assign(new Error(`${context}: time must be between 0 and ${MAX_TIME_SECONDS} seconds`), { statusCode: 422 });
+  }
+}
+
+/** Range-checks every time field of a line (timestamp, endTime, counterpart anchor, word times). */
+export function assertLineTimesInRange(line: unknown, context: string): void {
+  const l = line as { timestamp?: unknown; endTime?: unknown; adLibOf?: unknown; words?: unknown; secondaryWords?: unknown } | null;
+  if (!l || typeof l !== 'object') return;
+  assertTimeInRange(l.timestamp, context);
+  assertTimeInRange(l.endTime, context);
+  assertTimeInRange(l.adLibOf, context);
+  for (const list of [l.words, l.secondaryWords]) {
+    if (Array.isArray(list)) for (const w of list) assertTimeInRange((w as { time?: unknown } | null)?.time, context);
+  }
+}
+
 // --- Subdocument: Word ---
 const wordSchema = new mongoose.Schema(
   {
     word: { type: String, default: '', maxlength: 500, set: textSetter },
-    time: { type: Number, default: null },
+    time: timeField,
     reading: { type: String, default: '', maxlength: 500, set: textSetter },
     singerIndex: { type: Number, default: null, min: 0 },
   },
@@ -29,8 +59,8 @@ const lineSchema = new mongoose.Schema(
   {
     id: { type: String, default: null, maxlength: 50 },
     text: { type: String, default: '', maxlength: 2000, set: textSetter },
-    timestamp: { type: Number, default: null },
-    endTime: { type: Number, default: null },
+    timestamp: timeField,
+    endTime: timeField,
     secondary: { type: String, default: null, maxlength: 2000, set: textSetter },
     singers: { type: [String], default: undefined },
     mode: { type: String, enum: ['solo', 'duet', 'split'], default: null },
@@ -38,12 +68,13 @@ const lineSchema = new mongoose.Schema(
     translations: { type: [translationSchema], default: undefined },
     words: { type: [wordSchema], default: undefined },
     secondaryWords: { type: [wordSchema], default: undefined },
-    // Tracks whether the timestamp was set by AI (ASR auto-stamp) or manually.
-    // null = legacy/unknown (treated as manual). Resets to 'manual' on any manual edit.
-    source: { type: String, enum: ['manual', 'asr'], default: null },
+    // Who set the timing: 'manual', 'asr' (auto-stamp), 'import' (parsed from a file or lyrics search)
+    // or 'fork' (copied by cloning). null = legacy/unknown (treated as manual). Becomes 'manual' when
+    // the user re-times the line. Weighted in sync stats, see badges/sync-stats.ts.
+    source: { type: String, enum: ['manual', 'asr', 'import', 'fork'], default: null },
     // Counterpart anchor (named for the feature's old "ad-lib" name): when set, this line
     // overlaps the parent line at timestamp=adLibOf.
-    adLibOf: { type: Number, default: null },
+    adLibOf: timeField,
   },
   { _id: false }
 );
@@ -58,7 +89,7 @@ const sectionSchema = new mongoose.Schema(
     // Singers available for lines within this section.
     singers: { type: [String], default: undefined },
     // Optional section-level timestamp (e.g. karaoke highlight cue).
-    timestamp: { type: Number, default: null },
+    timestamp: timeField,
     lines: { type: [lineSchema], default: [] },
   },
   { _id: false }

@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 export interface IXPEvent extends Document {
   userId: mongoose.Types.ObjectId;
-  type: 'badge_grant' | 'badge_revoke' | 'admin_adjustment' | 'backfill';
+  type: 'badge_grant' | 'badge_revoke' | 'admin_adjustment' | 'backfill' | 'recompute';
   source: string;
   delta: number;
   totalXpAfter: number;
@@ -13,7 +13,7 @@ export interface IXPEvent extends Document {
 const xpEventSchema = new mongoose.Schema<IXPEvent>(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
-    type: { type: String, enum: ['badge_grant', 'badge_revoke', 'admin_adjustment', 'backfill'], required: true },
+    type: { type: String, enum: ['badge_grant', 'badge_revoke', 'admin_adjustment', 'backfill', 'recompute'], required: true },
     source: { type: String, required: true },
     delta: { type: Number, required: true },
     totalXpAfter: { type: Number, required: true, min: 0 },

@@ -217,7 +217,7 @@ export async function notifyRoleChanged(userId: string, from: string, to: string
 export interface StreakWarningParams {
   userId: string;
   current: number;
-  /** UTC day ('YYYY-MM-DD') on whose 00:00 UTC rollover the streak ends. */
+  /** The user's local day ('YYYY-MM-DD') whose midnight ends the streak. */
   day: string;
   /** Most recently updated project, used as the "continue working" link. */
   publicId: string | null;

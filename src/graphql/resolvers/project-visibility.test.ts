@@ -25,6 +25,7 @@ vi.mock('../../modules/email-verification/email-verification.service.js', () => 
 }));
 vi.mock('../../modules/badges/badge.service.js', () => ({
   triggerBadgeCheck: async () => undefined,
+  recomputeXP: async () => 0,
   updateStreak: async () => undefined,
   updateShowcase: async () => undefined,
   getBadgeRarity: async () => ({ rarity: 'common', holderCount: 1 }),

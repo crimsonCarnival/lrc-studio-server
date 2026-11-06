@@ -1,5 +1,5 @@
 import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
-import { migrateLinesToSections } from '../lyrics/lyrics.model.js';
+import { migrateLinesToSections, assertLineTimesInRange, assertTimeInRange } from '../lyrics/lyrics.model.js';
 import { notifyFollowedProject } from '../notifications/notifications.events.js';
 import { linkArtistIds, type StoredCredit } from '../artists/artist.service.js';
 import { projectPath } from '../../utils/project-slug.js';
@@ -725,7 +725,11 @@ export async function patchProject(
     metadata: { publicId, fieldsUpdated: Object.keys(projectUpdate) },
   });
 
-  if (isPublishing && userId) {
+  // Only the first publish is announced; the conditional write claims it atomically.
+  const firstPublish = isPublishing && !!userId
+    && (await Project.updateOne({ publicId, firstPublishedAt: null }, { $set: { firstPublishedAt: new Date() } }, { timestamps: false })).modifiedCount === 1;
+
+  if (firstPublish && userId) {
     // targetPath spares the web client from rebuilding the owner-scoped URL.
     // Best-effort: an owner with no accountName leaves it unset rather than
     // throwing out of projectPath() and losing the activity row entirely.
@@ -753,17 +757,20 @@ export async function patchProject(
       .catch(() => {});
   }
 
+  const contentChanged = !!userId && (
+    projectContentChanged(project, updatedProject) || !isDeepStrictEqual(lyricsBefore, lyricsAfter)
+  );
+
   if (data.lyrics !== undefined && userId) {
-    updateStreak(userId).catch(() => {});
     scheduleSyncStatsRefresh(userId);
   }
+  // An empty or no-op lyrics patch is not activity: counting it let a one-line script keep a streak.
+  if (userId && contentChanged) updateStreak(userId).catch(() => {});
 
-  if (trackForHeatmap && userId && (
-    projectContentChanged(project, updatedProject) || !isDeepStrictEqual(lyricsBefore, lyricsAfter)
-  )) {
+  if (trackForHeatmap && userId && contentChanged) {
     recordHeatmapEvent(userId, 'project_edited', publicId).catch(() => {});
     // Followers who asked to hear about edits. Publishing already told the others.
-    if (!isPublishing && updatedProject?.public) {
+    if (!firstPublish && updatedProject?.public) {
       User.findById(userId).select('accountName avatarUrl').lean<{ accountName?: string; avatarUrl?: string | null }>()
         .then((owner) => {
           if (!owner?.accountName) return;
@@ -864,7 +871,15 @@ const MAX_LINE_INDEX = 10000;
 const MAX_WORD_INDEX = 2000;
 
 // Allow-lists prevent writing arbitrary nested paths.
-const LINE_FIELDS = new Set(['id', 'text', 'timestamp', 'endTime', 'secondary', 'singers', 'translation', 'translations', 'words', 'secondaryWords']);
+const LINE_FIELDS = new Set(['id', 'text', 'timestamp', 'endTime', 'secondary', 'singers', 'translation', 'translations', 'words', 'secondaryWords', 'source']);
+const LINE_SOURCES = new Set(['manual', 'asr', 'import', 'fork']);
+
+// findOneAndUpdate runs no enum validation, so the one enum-typed positional field is checked here.
+function assertValidLineSource(line: { source?: unknown }, context: string): void {
+  if (line.source != null && !LINE_SOURCES.has(line.source as string)) {
+    throw Object.assign(new Error(`${context}: invalid source`), { statusCode: 422 });
+  }
+}
 const WORD_FIELDS = new Set(['id', 'word', 'time', 'reading', 'singerIndex']);
 
 function isValidIndex(n: unknown, max: number): n is number {
@@ -875,7 +890,9 @@ function isValidIndex(n: unknown, max: number): n is number {
 // (Mongoose only runs SchemaType path validators for updates, not document middleware),
 // so cross-field timing checks must be re-applied here before every $set that can touch
 // timestamp/endTime.
-function assertValidLineTiming(line: { timestamp?: unknown; endTime?: unknown }, context: string): void {
+function assertValidLineTiming(line: { timestamp?: unknown; endTime?: unknown; source?: unknown }, context: string): void {
+  assertLineTimesInRange(line, context);
+  assertValidLineSource(line, context);
   const { timestamp, endTime } = line;
   if (typeof timestamp === 'number' && typeof endTime === 'number' && endTime <= timestamp) {
     throw Object.assign(new Error(`${context}: endTime must be greater than timestamp`), { statusCode: 422 });
@@ -899,8 +916,9 @@ function preserveSingers(metadata: Record<string, unknown>, existing: unknown): 
   return result;
 }
 
-function assertValidSectionsTiming(sections: unknown[]): void {
+export function assertValidSectionsTiming(sections: unknown[]): void {
   for (const section of sections ?? []) {
+    assertTimeInRange((section as { timestamp?: unknown })?.timestamp, 'Section');
     const lines = (section as { lines?: unknown[] })?.lines ?? [];
     lines.forEach((line, i) => assertValidLineTiming(line as { timestamp?: unknown; endTime?: unknown }, `Section line ${i}`));
   }
@@ -968,6 +986,7 @@ async function patchLyricsWithSession(
       throw Object.assign(new Error('Invalid sectionIdx/lineIdx/wordIndex'), { status: 400 });
     }
     const update: Record<string, unknown> = {};
+    assertTimeInRange((lyricsData.word as { time?: unknown }).time, `Section ${lyricsData.sectionIdx} line ${lyricsData.lineIdx} word ${lyricsData.wordIndex}`);
     for (const [key, value] of Object.entries(lyricsData.word)) {
       if (!WORD_FIELDS.has(key)) continue;
       update[`sections.${lyricsData.sectionIdx}.lines.${lyricsData.lineIdx}.words.${lyricsData.wordIndex}.${key}`] = value;
@@ -1061,6 +1080,16 @@ async function removeProject(
         { session, timestamps: false }
       );
       await ProjectFork.deleteOne({ forkedpublicId: publicId }, { session });
+      // The source owner was credited when this fork was made (never for their own fork);
+      // take it back so fork-and-delete cannot farm the counter.
+      const sourceOwner = project.forkedFrom.userId;
+      if (sourceOwner && String(sourceOwner) !== String(project.userId)) {
+        await User.updateOne(
+          { _id: sourceOwner, 'social.totalForksReceived': { $gt: 0 } },
+          { $inc: { 'social.totalForksReceived': -1 } },
+          { session }
+        );
+      }
     }
 
     // 2. Source-with-forks cascade: this project IS a source with active forks pointing

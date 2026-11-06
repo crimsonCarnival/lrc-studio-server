@@ -758,6 +758,13 @@ export async function adjustXP(
   // a write storm of one notification per user across the whole user base.
   const applyDelta = async (ids: string[], notify = false) => {
     if (!ids.length) return;
+    // Targeted adjustments first bring the stored total up to the derived one. A revoke is
+    // clamped against the stored value, so against a stale (lower) one it would be recorded
+    // as a smaller bonus than intended. Skipped for target 'all' to avoid a recompute storm.
+    if (notify) {
+      const { recomputeXP } = await import('../../modules/badges/badge.service.js');
+      await Promise.all(ids.map((id) => recomputeXP(id).catch(() => 0)));
+    }
     await User.updateMany({ _id: { $in: ids } }, { $inc: { 'progression.xp': delta, 'progression.bonusXp': delta } });
     const updated = await User.find({ _id: { $in: ids } }).select('_id progression.xp progression.bonusXp').lean<{ _id: mongoose.Types.ObjectId; progression?: { xp?: number; bonusXp?: number } }[]>();
     await Promise.all(updated.map((u) => {

@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import Project from '../projects/project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import User from '../users/user.model.js';
+import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { getAddictionLevel } from './addiction-level.service.js';
 import { getStreakView } from '../badges/badge.service.js';
 
@@ -221,21 +222,25 @@ function countSyncedLines(lyric: LyricShape): number {
  * The addiction level title of each user, for lists that show many people at once (wall
  * comments). Same inputs as getUserContentStats, minus the per-project lyrics scan: the
  * stored counters plus one grouped project count for the whole batch. Users that no longer
- * exist are left out.
+ * exist, and users who hid their title (showAddictionTitle), are left out.
  */
 export async function getAddictionTitles(userIds: string[]): Promise<Map<string, { en: string; es: string }>> {
   const titles = new Map<string, { en: string; es: string }>();
   if (userIds.length === 0) return titles;
   const ids = userIds.map(id => new mongoose.Types.ObjectId(id));
-  const [users, counts] = await Promise.all([
+  const [users, counts, hidden] = await Promise.all([
     User.find({ _id: { $in: ids } }).select('stats social').lean(),
     Project.aggregate<{ _id: mongoose.Types.ObjectId; total: number; public: number }>([
       { $match: { userId: { $in: ids } } },
       { $group: { _id: '$userId', total: { $sum: 1 }, public: { $sum: { $cond: ['$public', 1, 0] } } } },
     ]),
+    UserPreferences.find({ userId: { $in: ids }, showAddictionTitle: false }).select('userId').lean<{ userId: mongoose.Types.ObjectId }[]>(),
   ]);
   const countsById = new Map(counts.map(c => [c._id.toString(), c]));
+  // Opted out of showing their title: enforced here so no caller can forget to.
+  const hiddenIds = new Set(hidden.map(h => h.userId.toString()));
   for (const u of users) {
+    if (hiddenIds.has(u._id.toString())) continue;
     const c = countsById.get(u._id.toString());
     const { title } = await getAddictionLevel({
       syncedLines: u.stats?.syncedLines ?? 0,

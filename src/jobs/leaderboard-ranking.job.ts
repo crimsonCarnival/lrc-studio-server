@@ -97,7 +97,7 @@ interface LeanUserForRanking {
 
 export async function recomputeLeaderboardRanking(): Promise<void> {
   // 1. Load all active, non-deleted users
-  const users = await User.find({ isDeleted: { $ne: true } })
+  const users = await User.find({ isDeleted: { $ne: true }, 'ban.active': { $ne: true }, 'shadowBan.search': { $ne: true } })
     .select('_id stats social streak')
     .lean<LeanUserForRanking[]>();
 
@@ -115,20 +115,11 @@ export async function recomputeLeaderboardRanking(): Promise<void> {
   // 3. Build raw (transformed) metric values per user
   type UserMetrics = Record<MetricKey, number>;
   const userMetrics: Array<{ id: string; metrics: UserMetrics; eligible: boolean }> = users.map(u => {
+    // Stored stats are already weighted by who timed each line (badges/sync-stats.ts), so no
+    // further AI discount is applied here; applying one would count it twice.
     const timeSynced   = (u.stats?.minutesSynced ?? 0) * 60 + (u.stats?.secondsSynced ?? 0);
     const syncedLines  = u.stats?.syncedLines ?? 0;
-    const aiSyncedLines = u.stats?.aiSyncedLines ?? 0;
-    const manualLines  = Math.max(0, syncedLines - aiSyncedLines);
-    // AI discount: AI lines count at 0.3×, manual at 1.0×
-    const effectiveSyncedLines = manualLines + aiSyncedLines * 0.3;
-    // Apply the same manual-fraction discount to time (approximation, since we don't
-    // store AI time separately — assume AI proportion of lines ≈ AI proportion of time).
-    const manualFraction = syncedLines > 0 ? manualLines / syncedLines : 1;
-    const effectiveTimeSynced = timeSynced * manualFraction;
     const wordsSynced  = u.stats?.wordsSynced ?? 0;
-    const aiWordsSynced = u.stats?.aiWordsSynced ?? 0;
-    const manualWords = Math.max(0, wordsSynced - aiWordsSynced);
-    const effectiveWordsSynced = manualWords + aiWordsSynced * 0.3;
 
     const karaokeLines = u.stats?.karaokeLines ?? 0;
     const stars        = u.social?.totalStarsReceived ?? 0;
@@ -143,9 +134,9 @@ export async function recomputeLeaderboardRanking(): Promise<void> {
       id: u._id.toString(),
       eligible,
       metrics: {
-        timeSynced:   effectiveTimeSynced,
-        syncedLines:  Math.sqrt(effectiveSyncedLines),  // diminishing returns on volume
-        wordsSynced:  Math.sqrt(effectiveWordsSynced),   // diminishing returns on volume
+        timeSynced,
+        syncedLines:  Math.sqrt(syncedLines),  // diminishing returns on volume
+        wordsSynced:  Math.sqrt(wordsSynced),   // diminishing returns on volume
         karaokeLines: Math.sqrt(karaokeLines),           // diminishing returns on volume
         stars,
         forks,

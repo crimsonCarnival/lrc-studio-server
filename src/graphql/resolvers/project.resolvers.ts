@@ -31,7 +31,7 @@ import { writeActivity } from '../../modules/activity/activity.service.js';
 import { searchProjects as searchProjectsService } from '../../modules/projects/projects.search.service.js';
 import { getBlockedSet, isHiddenByBlock, ownerIdOf } from '../../modules/blocks/block.service.js';
 import type { SearchSort } from '../../modules/projects/projects.search.service.js';
-import { triggerBadgeCheck, updateStreak } from '../../modules/badges/badge.service.js';
+import { triggerBadgeCheck, updateStreak, recomputeXP } from '../../modules/badges/badge.service.js';
 import { upsertMusicLibraryEntry } from '../../modules/users/music-library.service.js';
 import { joinNames, primaryNames, type ArtistCredit } from '../../utils/artists.js';
 import { projectSlug, projectPath } from '../../utils/project-slug.js';
@@ -283,10 +283,11 @@ export const projectResolvers = {
       if (sourceOwnerId && sourceOwnerId !== context.userId) {
         User.updateOne({ _id: sourceOwnerId }, { $inc: { 'social.totalForksReceived': 1 } })
           .then(() => triggerBadgeCheck(sourceOwnerId, 'fork_received'))
+          .then(() => recomputeXP(sourceOwnerId))
           .catch(() => {});
       }
-      // Badge: project_create for the forker
-      Promise.all([updateStreak(context.userId), triggerBadgeCheck(context.userId, 'project_create')]).catch(() => {});
+      // Badge: project_create for the forker. A fork is not authoring, so it does not touch the streak.
+      triggerBadgeCheck(context.userId, 'project_create').catch(() => {});
 
       return Project.findOne({ publicId: cloned.publicId });
     },
@@ -314,7 +315,8 @@ export const projectResolvers = {
           const starred = await Project.findOneAndUpdate({ publicId: id }, { $inc: { starCount: 1 } }, { returnDocument: 'after', timestamps: false })
             .select('starCount').lean<{ starCount?: number }>();
           const ownerId = project.userId?.toString();
-          if (ownerId) {
+          // Starring your own project is a bookmark: no owner credit, milestone, feed row or notification.
+          if (ownerId && ownerId !== context.userId) {
             notifyStarMilestone({ ownerId, publicId: id, projectTitle: project.title || '', count: starred?.starCount ?? 0 }).catch(() => {});
             User.findById(context.userId).select('accountName avatarUrl').lean<IUser>().then(actor => {
               if (actor) {
@@ -332,6 +334,7 @@ export const projectResolvers = {
             // Increment denormalized star count on owner, then check badges
             User.updateOne({ _id: ownerId }, { $inc: { 'social.totalStarsReceived': 1 } })
               .then(() => triggerBadgeCheck(ownerId, 'star_received'))
+              .then(() => recomputeXP(ownerId))
               .catch(() => {});
           }
         }
@@ -340,7 +343,7 @@ export const projectResolvers = {
       }
       // writeActivity is outside the upsert try/catch so a duplicate-key swallow
       // doesn't silently suppress the activity error path
-      if (isNewStar) {
+      if (isNewStar && project.userId?.toString() !== context.userId) {
         activityTargetPath(project).then((targetPath) => writeActivity({
           actorId:      context.userId!,
           type:         'project_starred',
@@ -368,6 +371,13 @@ export const projectResolvers = {
       // deleteOne is atomic — only one concurrent request will get deletedCount: 1
       const { deletedCount } = await ProjectStar.deleteOne({ publicId: id, userId: context.userId });
       if (deletedCount > 0) {
+        // Mirror of starProject's owner credit (never given for a self-star), guarded against going negative.
+        const starred = await Project.findOne({ publicId: id }).select('userId').lean<{ userId?: { toString(): string } | null }>();
+        const ownerId = starred?.userId?.toString();
+        if (ownerId && ownerId !== context.userId) {
+          await User.updateOne({ _id: ownerId, 'social.totalStarsReceived': { $gt: 0 } }, { $inc: { 'social.totalStarsReceived': -1 } });
+          recomputeXP(ownerId).catch(() => {});
+        }
         await Project.updateOne(
           { publicId: id, starCount: { $gt: 0 } },
           { $inc: { starCount: -1 } },
