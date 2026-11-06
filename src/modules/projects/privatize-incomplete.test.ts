@@ -52,7 +52,7 @@ describe('privatizeIncomplete', () => {
   it('ignores section markers and treats timestamp 0 as timed', async () => {
     await seed('markers0001', [{ type: 'section', timestamp: null }, { timestamp: 0 }, { timestamp: 4 }]);
     const res = await privatizeIncomplete({ dryRun: false });
-    expect(res).toEqual({ matched: [], changed: 0, skippedChanged: 0, failed: [] });
+    expect(res).toEqual({ matched: [], changed: 0, skippedChanged: 0, failed: [], notifyFailed: [] });
     expect(await isPublic('markers0001')).toBe(true);
   });
 
@@ -68,7 +68,7 @@ describe('privatizeIncomplete', () => {
   it('is idempotent and preserves updatedAt', async () => {
     await seed('partial001', [{ timestamp: null }]);
     expect((await privatizeIncomplete({ dryRun: false })).changed).toBe(1);
-    expect(await privatizeIncomplete({ dryRun: false })).toEqual({ matched: [], changed: 0, skippedChanged: 0, failed: [] });
+    expect(await privatizeIncomplete({ dryRun: false })).toEqual({ matched: [], changed: 0, skippedChanged: 0, failed: [], notifyFailed: [] });
     const doc = await Project.collection.findOne({ publicId: 'partial001' }) as { updatedAt: Date };
     expect(doc.updatedAt.toISOString()).toBe('2020-01-01T00:00:00.000Z');
     expect(await Notification.countDocuments({})).toBe(1);
@@ -202,6 +202,32 @@ describe('privatizeIncomplete', () => {
     expect(res.changed).toBe(1);
   });
 
+  it('dry run reports unreadable projects in failed', async () => {
+    await seed('dryfail0001', [{ timestamp: null }]);
+    await seed('dryfail0002', [{ timestamp: null }]);
+    const read = vi.spyOn(Lyrics, 'findOne').mockImplementationOnce((() => { throw new Error('read boom'); }) as never);
+    const res = await privatizeIncomplete({ dryRun: true });
+    read.mockRestore();
+    expect(res.failed).toHaveLength(1);
+    expect(res.failed[0].error).toBe('read boom');
+    expect(res.matched).toHaveLength(1);
+    expect(res.changed).toBe(0);
+  });
+
+  it('records notification failures (including non-Error throws) and continues with other owners', async () => {
+    const a = oid();
+    const b = oid();
+    await seed('nf0000000a1', [{ timestamp: null }], { owner: a });
+    await seed('nf0000000b1', [{ timestamp: null }], { owner: b });
+    const spy = vi.spyOn(Notification, 'create').mockRejectedValueOnce('string boom mongodb://u:pw@h/db' as never);
+    const res = await privatizeIncomplete({ dryRun: false });
+    spy.mockRestore();
+    expect(res.changed).toBe(2);
+    expect(res.notifyFailed).toHaveLength(1);
+    expect(res.notifyFailed[0]).toMatchObject({ count: 1, error: 'string boom <redacted-uri>' });
+    expect(await Notification.countDocuments({})).toBe(1);
+  });
+
   it('persists the notification row even when no socket server exists', async () => {
     await seed('persist0001', [{ timestamp: null }]);
     await privatizeIncomplete({ dryRun: false });
@@ -248,6 +274,22 @@ describe('describeMongoTarget', () => {
     expect(describeMongoTarget('not a uri')).toBe('<unparseable target>');
     expect(describeMongoTarget('mongodb://user:pa?ss@host/db')).toBe('<unparseable target>');
     expect(describeMongoTarget('mongodb://user:secret')).toBe('<unparseable target>');
+    expect(describeMongoTarget('')).toBe('<unparseable target>');
+    expect(describeMongoTarget('mongodb://')).toBe('<unparseable target>');
+  });
+  it.each([
+    'mongodb://user:p@ss?x@host/db',
+    'mongodb://admin?x@host/db',
+    'mongodb://user:12345?x@host',
+    'mongodb://user:pa?ss@host/db',
+    'mongodb://host/db?auth=user:secret@evil',
+  ])('fails closed when an @ follows the first ?: %s', (uri) => {
+    expect(describeMongoTarget(uri)).toBe('<unparseable target>');
+  });
+  it('still prints targets whose query has no @, any scheme case', () => {
+    expect(describeMongoTarget('mongodb+srv://user:p%40ss@host/db?x=y')).toBe('host/db');
+    expect(describeMongoTarget('mongodb://user:secret@host?x=y')).toBe('host/(default db)');
+    expect(describeMongoTarget('MONGODB://u:p@Host/db')).toBe('Host/db');
   });
 });
 
@@ -257,6 +299,11 @@ describe('redactSecrets', () => {
     const msg = `connect failed for ${uri}: auth bob:s3c%40ret rejected, pw s3c@ret, other mongodb://z:q@h/x`;
     const out = redactSecrets(msg, uri);
     expect(out).not.toMatch(/bob|s3c|mongodb:\/\/z|cluster\.example/);
+  });
+  it('redacts a ?-in-password uri completely', () => {
+    const u = 'mongodb://user:pa?ss@host/db';
+    const out = redactSecrets(`bad ${u} and fragment pa?ss and user:pa`, u);
+    expect(out).not.toMatch(/pa\?ss|user|host/);
   });
   it('strips any mongodb uri even without a known one', () => {
     expect(redactSecrets('boom mongodb://a:b@h/db end')).toBe('boom <redacted-uri> end');

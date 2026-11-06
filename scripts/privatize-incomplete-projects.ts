@@ -11,7 +11,12 @@
  *
  * Idempotent (a second --apply changes 0). Projects whose lyrics/content changed
  * between the scan and the write are skipped (reported as skippedChanged).
- * Sends one notification per owner.
+ * Sends one notification per owner. Failure policy: a project that cannot be
+ * read or written, or an owner whose notice cannot be stored, is listed in the
+ * final summary and the script exits 1. A failed notice cannot be resent by a
+ * rerun (the projects are no longer public), so notify those owners manually
+ * from the printed owner-to-count list. A dry run that could not read some
+ * projects is a lower bound and also exits 1.
  *
  * What it does NOT handle (runs in its own process, no Socket.IO server):
  * - Live push: owners online now will see the notice after reconnect or a
@@ -36,7 +41,7 @@ import {
   parseArgs,
   describeMongoTarget,
   PRIVATIZE_USAGE,
-  redactSecrets,
+  errorText,
 } from '../src/modules/projects/privatize-incomplete.service.js';
 
 const args = parseArgs(process.argv.slice(2));
@@ -56,24 +61,34 @@ async function main(): Promise<void> {
   console.log(`🎯  Target: ${describeMongoTarget(MONGO_URI)}  (${APPLY ? 'APPLY' : 'DRY RUN — no writes, no notifications; pass --apply to write'})`);
   await mongoose.connect(MONGO_URI);
   console.log('✅  Connected to MongoDB');
-  const { matched, changed, skippedChanged, failed } = await privatizeIncomplete({ dryRun: !APPLY, log: (m) => console.log(m) });
+  const { matched, changed, skippedChanged, failed, notifyFailed } = await privatizeIncomplete({ dryRun: !APPLY, log: (m) => console.log(m) });
   for (const m of matched) console.log(`   ${m.publicId}  "${m.title}"  ${m.timed}/${m.total} timed`);
   if (APPLY) {
-    console.log(`\n✅  Made ${changed} of ${matched.length} matched project(s) private; ${skippedChanged} skipped (changed during the run)`);
+    console.log(`
+✅  Made ${changed} of ${matched.length} matched project(s) private; ${skippedChanged} skipped (changed during the run)`);
     console.log('ℹ️   Owners online now will see the notice after reconnect or a server restart. Restart the server to drop viewers already in project rooms.');
-    if (failed.length) {
-      console.error(`❌  ${failed.length} project(s) failed (listed above); exiting non-zero`);
-      process.exitCode = 1;
-    }
   } else {
-    console.log(`\n📋  Would make ${matched.length} project(s) private (target above)`);
+    console.log(`
+📋  Would make ${matched.length} project(s) private (target above)`);
+  }
+  if (failed.length) {
+    for (const f of failed) console.error(`   could not process ${f.publicId}: ${f.error}`);
+    console.error(APPLY
+      ? `❌  ${failed.length} project(s) failed (listed above); exiting non-zero`
+      : `❌  ${failed.length} project(s) could not be read; the list above is a lower bound. Exiting non-zero`);
+    process.exitCode = 1;
+  }
+  if (notifyFailed.length) {
+    console.error('❌  Notices could not be stored for these owners (ownerId: projects privatized). Notify them manually:');
+    for (const n of notifyFailed) console.error(`   ${n.ownerId}: ${n.count}  (${n.error})`);
+    process.exitCode = 1;
   }
 }
 
 main()
   .catch((err) => {
     const e = err instanceof Error ? err : new Error(String(err));
-    console.error(`❌  Failed: ${e.name}: ${redactSecrets(e.message, MONGO_URI)}`);
+    console.error(`❌  Failed: ${e.name}: ${errorText(e, MONGO_URI)}`);
     process.exitCode = 1;
   })
   .finally(() => mongoose.disconnect());

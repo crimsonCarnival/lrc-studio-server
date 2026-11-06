@@ -4,7 +4,15 @@ import { notifyProjectsPrivatized } from '../notifications/notifications.service
 
 export type PrivatizeMatch = { publicId: string; title: string; timed: number; total: number };
 export type PrivatizeFailure = { publicId: string; error: string };
-export type PrivatizeResult = { matched: PrivatizeMatch[]; changed: number; skippedChanged: number; failed: PrivatizeFailure[] };
+export type PrivatizeNotifyFailure = { ownerId: string; count: number; error: string };
+export type PrivatizeResult = {
+  matched: PrivatizeMatch[];
+  changed: number;
+  skippedChanged: number;
+  failed: PrivatizeFailure[];
+  /** Owners whose notice could not be stored. A rerun cannot resend it (their projects are no longer public): notify them manually. */
+  notifyFailed: PrivatizeNotifyFailure[];
+};
 
 export type PrivatizeOptions = {
   dryRun: boolean;
@@ -34,6 +42,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
 const HOST_RE = /^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9._-]+)(:\d{1,5})?$/;
 const DB_RE = /^[A-Za-z0-9._-]*$/;
+const hasAtAfterQuery = (uri: string): boolean => {
+  const q = uri.indexOf('?');
+  return q !== -1 && uri.slice(q).includes('@');
+};
 const URI_RE = /^[a-z][a-z0-9+.-]*:\/\/(.*)$/is;
 
 /**
@@ -45,6 +57,8 @@ const URI_RE = /^[a-z][a-z0-9+.-]*:\/\/(.*)$/is;
  */
 export function describeMongoTarget(uri: string): string {
   const bad = '<unparseable target>';
+  // Fail closed: an `@` after the first `?` may mean the `?` sits inside the userinfo.
+  if (hasAtAfterQuery(uri)) return bad;
   const m = URI_RE.exec(uri.split('?')[0]);
   if (!m) return bad;
   const afterUser = m[1].slice(m[1].lastIndexOf('@') + 1);
@@ -55,13 +69,19 @@ export function describeMongoTarget(uri: string): string {
   return `${hosts}/${db || '(default db)'}`;
 }
 
+/** Safe message of anything that can be thrown (strings, objects, null), with secrets redacted. */
+export function errorText(err: unknown, uri = ''): string {
+  return redactSecrets(err instanceof Error ? err.message : String(err), uri);
+}
+
 /** Removes the URI, its userinfo (raw and decoded) and any other mongodb URI from `text`. */
 export function redactSecrets(text: string, uri = ''): string {
   let out = text;
   const secrets: string[] = [];
   if (uri) {
     secrets.push(uri);
-    const m = URI_RE.exec(uri.split('?')[0]);
+    // With an `@` after a `?`, the userinfo may contain the `?`: take it from the full string.
+    const m = URI_RE.exec(hasAtAfterQuery(uri) ? uri : uri.split('?')[0]);
     const at = m ? m[1].lastIndexOf('@') : -1;
     if (m && at > 0) {
       const userinfo = m[1].slice(0, at);
@@ -118,16 +138,18 @@ function countLines(lyrics: LyricsLines): { timed: number; total: number } {
  * A failure on one project is recorded in `failed` and the run continues. One
  * `system` notification per owner goes out right after that owner's projects,
  * counting only those actually written; owner-less (guest) projects are
- * privatized but notify nobody. A notification failure is logged, not fatal.
+ * privatized but notify nobody. A notification failure is not fatal to the run
+ * but is reported in `notifyFailed` (a rerun cannot resend it).
  */
 export async function privatizeIncomplete(options: PrivatizeOptions): Promise<PrivatizeResult> {
   const { dryRun, evictNonOwners, log, beforeWrite } = options;
   const matched: PrivatizeMatch[] = [];
   const failed: PrivatizeFailure[] = [];
+  const notifyFailed: PrivatizeNotifyFailure[] = [];
   let changed = 0;
   let skippedChanged = 0;
   const fail = (publicId: string, err: unknown): void => {
-    failed.push({ publicId, error: redactSecrets(err instanceof Error ? err.message : String(err)) });
+    failed.push({ publicId, error: errorText(err) });
   };
 
   type Candidate = { publicId: string; ownerId: string | null; contentUpdatedAt: Date | null; lyricsStamp: string };
@@ -151,7 +173,7 @@ export async function privatizeIncomplete(options: PrivatizeOptions): Promise<Pr
       fail(project.publicId, err);
     }
   }
-  if (dryRun) return { matched, changed: 0, skippedChanged: 0, failed };
+  if (dryRun) return { matched, changed: 0, skippedChanged: 0, failed, notifyFailed };
 
   // Group by owner so each owner is notified as soon as their projects are written.
   const byOwner = new Map<string | null, Candidate[]>();
@@ -191,12 +213,15 @@ export async function privatizeIncomplete(options: PrivatizeOptions): Promise<Pr
       try {
         await notifyProjectsPrivatized(ownerId, ownerChanged);
       } catch (err) {
-        log?.(`notification failed for ${ownerId}: ${redactSecrets((err as Error).message)}`);
+        const error = errorText(err);
+        notifyFailed.push({ ownerId, count: ownerChanged, error });
+        log?.(`notification failed for ${ownerId}: ${error}`);
       }
     }
   } finally {
     log?.(`owner -> privatized count (for recovery): ${JSON.stringify(counts)}`);
     if (failed.length) log?.(`failed (${failed.length}): ${JSON.stringify(failed)}`);
+    if (notifyFailed.length) log?.(`notify failed, notify these owners manually: ${JSON.stringify(notifyFailed)}`);
   }
-  return { matched, changed, skippedChanged, failed };
+  return { matched, changed, skippedChanged, failed, notifyFailed };
 }
