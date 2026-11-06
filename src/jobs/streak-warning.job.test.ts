@@ -75,4 +75,21 @@ describe('sendStreakWarnings', () => {
     await UserPreferences.collection.insertOne({ userId: id, notifications: { follow: true } });
     expect(await sendStreakWarnings(NOW)).toBe(1);
   });
+
+  it("uses each user's own clock: 19:00 in Bogota is hour 0 UTC", async () => {
+    // Bogota (UTC-5): last active Wed 10:00 local, and it is Thu 19:00 local = Fri 00:00Z.
+    const id = await mkUser({ streak: { current: 3, longest: 3, lastActiveDate: new Date('2026-09-23T15:00:00Z'), timezone: 'America/Bogota' } });
+    await mkUser({ streak: { current: 3, longest: 3, lastActiveDate: new Date('2026-09-23T15:00:00Z') } }); // same history in UTC: not yesterday
+    const now = new Date('2026-09-25T00:00:00Z');
+    expect(await sendStreakWarnings(now)).toBe(1);
+    const notifs = await Notification.find({ userId: id }).lean();
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0]).toMatchObject({ meta: { day: '2026-09-24' } }); // the user's local day
+    expect(await sendStreakWarnings(now)).toBe(0);
+  });
+
+  it('does not warn before the local warning hour', async () => {
+    await mkUser({ streak: { current: 3, longest: 3, lastActiveDate: new Date('2026-09-23T15:00:00Z'), timezone: 'America/Bogota' } });
+    expect(await sendStreakWarnings(new Date('2026-09-24T21:00:00Z'))).toBe(0); // 16:00 in Bogota
+  });
 });

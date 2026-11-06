@@ -32,11 +32,15 @@ import { upsertFollow } from '../../modules/notifications/notifications.service.
 import { getIO } from '../../socket/socket.manager.js';
 import { searchUsers as searchUsersService } from '../../modules/users/users.search.service.js';
 import { writeActivity, getPublicActivityHeatmap } from '../../modules/activity/activity.service.js';
-import { triggerBadgeCheck, getBadgeRarity, getShowcaseSlots, getStreakView } from '../../modules/badges/badge.service.js';
+import { triggerBadgeCheck, recomputeXP, getBadgeRarity, getShowcaseSlots, getStreakView } from '../../modules/badges/badge.service.js';
 import BadgeDefinition from '../../modules/badges/badge-definition.model.js';
 import type { IBadgeDefinition } from '../../modules/badges/badge-definition.model.js';
 import { stripHtml, sanitizeUrl } from '../../utils/sanitize.js';
 import { socialGraph } from '../../lib/social-graph.js';
+import { canonicalTimeZone } from '../../shared/zoned-day.js';
+
+/** Minimum gap between two timezone changes. */
+const TIMEZONE_CHANGE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 import { getPreferences, updatePreferences } from '../../modules/user-preferences/user-preferences.service.js';
 import { WALL_COMMENT_POLICIES, WALL_HOLD_POLICIES, WALL_MUTED_WORDS_MAX, WALL_MUTED_WORD_MAX_LENGTH } from '../../modules/user-preferences/user-preferences.model.js';
 import { isCountryCode } from '../../utils/countries.js';
@@ -466,7 +470,8 @@ export const userResolvers = {
       const sortStage = buildLeaderboardSort(sortBy, dir, 'user.', 'periodXp');
 
       const basePipeline: mongoose.PipelineStage[] = [
-        { $match: { createdAt: { $gte: cutoff } } },
+        // 'backfill' deltas are corrections of past work, not XP earned in this window.
+        { $match: { createdAt: { $gte: cutoff }, type: { $ne: 'backfill' } } },
         { $group: { _id: '$userId', periodXp: { $sum: '$delta' } } },
         { $match: blockedIds.length > 0 ? { periodXp: { $gt: 0 }, _id: { $nin: blockedIds } } : { periodXp: { $gt: 0 } } },
         { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
@@ -766,6 +771,7 @@ export const userResolvers = {
       socialGraph.addEdge(context.userId, targetId);
       // Badge: follower_count for the target
       triggerBadgeCheck(targetId, 'follow_received').catch(() => {});
+      recomputeXP(targetId).catch(() => {});
       return true;
     },
 
@@ -806,6 +812,7 @@ export const userResolvers = {
           ),
         ]);
         socialGraph.removeEdge(context.userId, target._id.toString());
+        recomputeXP(target._id.toString()).catch(() => {});
       }
       return true;
     },
@@ -842,6 +849,26 @@ export const userResolvers = {
       requireSudo(context);
       const result = await toggleShadowBan(userId, false, false, null, adminId, context.ip);
       return result.success === true;
+    },
+
+    setTimezone: async (_root: unknown, { timezone }: { timezone: string }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      const canonical = canonicalTimeZone(timezone);
+      if (!canonical) {
+        throw Object.assign(new Error('invalid_timezone'), { extensions: { code: 'invalid_timezone', status: 400 } });
+      }
+      const me = await User.findById(context.userId).select('streak.timezone streak.timezoneChangedAt').lean<IUser>();
+      if (me?.streak?.timezone === canonical) return true;
+      // One change per day: switching zones moves "today", so unlimited switching would farm streak days.
+      const changedAt = me?.streak?.timezoneChangedAt;
+      if (changedAt && Date.now() - new Date(changedAt).getTime() < TIMEZONE_CHANGE_COOLDOWN_MS) {
+        throw Object.assign(new Error('rate_limited'), { extensions: { code: 'rate_limited', status: 429 } });
+      }
+      await User.updateOne(
+        { _id: context.userId },
+        { $set: { 'streak.timezone': canonical, 'streak.timezoneChangedAt': new Date() } },
+      );
+      return true;
     },
 
     updatePreferences: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {

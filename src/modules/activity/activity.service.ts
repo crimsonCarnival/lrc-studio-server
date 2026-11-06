@@ -8,6 +8,7 @@ import Project from '../projects/project.model.js';
 import { getCachedBlockedSet } from '../blocks/block-list.cache.js';
 import { enqueueFanOut } from './fan-out.queue.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
+import { zonedDayKey, dayKeyToDate, isValidTimeZone } from '../../shared/zoned-day.js';
 
 export interface WriteActivityParams {
   actorId: string;
@@ -133,8 +134,18 @@ const DAY_MS = 86400000;
 
 export type HeatmapEventKind = 'project_created' | 'project_edited';
 
-function startOfUtcDay(date: Date): Date {
-  return new Date(Math.floor(date.getTime() / DAY_MS) * DAY_MS);
+/**
+ * The user's calendar day for `date`, stored as that date at 00:00 UTC (the shape the heatmap
+ * collections have always used). Counting in the user's own timezone keeps an evening session
+ * on the day it happened for them.
+ */
+function startOfUserDay(date: Date, timeZone: string | null | undefined): Date {
+  return dayKeyToDate(zonedDayKey(date, timeZone));
+}
+
+async function timezoneOf(userId: string): Promise<string | null> {
+  const u = await User.findById(userId).select('streak.timezone').lean<{ streak?: { timezone?: string | null } }>();
+  return u?.streak?.timezone ?? null;
 }
 
 function isDuplicateKeyError(err: unknown): boolean {
@@ -182,7 +193,7 @@ export async function recordHeatmapEvent(
   now: Date = new Date()
 ): Promise<void> {
   const userObjectId = new mongoose.Types.ObjectId(userId);
-  const day = startOfUtcDay(now);
+  const day = startOfUserDay(now, await timezoneOf(userId));
 
   try {
     await HeatmapProjectEdit.create({ userId: userObjectId, projectId, day });
@@ -194,19 +205,20 @@ export async function recordHeatmapEvent(
   await incrementHeatmapDay(userObjectId, day, kind === 'project_created' ? 'projectsCreated' : 'editedProjects');
 }
 
-// Merges two sources per UTC calendar date ($dateToString's default timezone):
+// Merges two sources per calendar date in the user's timezone ($dateToString's `timezone`; UTC when unset):
 // social `activities` (365-day TTL, { actorId, createdAt } index) and private
 // authoring counters in heatmap_days ({ userId, day } index, ~400-day TTL).
 // Both are bounded to the same window starting at a UTC day boundary.
 export async function getUserActivityHeatmap(userId: string): Promise<ActivityHeatmapDay[]> {
-  const since = startOfUtcDay(new Date(Date.now() - HEATMAP_WINDOW_DAYS * DAY_MS));
+  const tz = await timezoneOf(userId);
+  const since = startOfUserDay(new Date(Date.now() - HEATMAP_WINDOW_DAYS * DAY_MS), tz);
   const userObjectId = new mongoose.Types.ObjectId(userId);
   const [socialDays, counterDays] = await Promise.all([
     Activity.aggregate<ActivityHeatmapDay>([
       { $match: { actorId: userObjectId, createdAt: { $gte: since } } },
       {
         $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: isValidTimeZone(tz) ? tz : 'UTC' } },
           count: { $sum: 1 },
         },
       },

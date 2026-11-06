@@ -86,4 +86,11 @@ describe('resetLapsedStreaks', () => {
       expect(stored).toBe(viewed);
     }
   });
+
+  it('keeps a streak that is still alive in the widest-ahead timezone (UTC+14)', async () => {
+    // 09-27 12:00Z is 09-28 02:00 in UTC+14 - yesterday there, while NOW (09-29 04:00Z) is 09-29 18:00 local.
+    const id = await mkUser({ current: 5, longest: 7, lastActiveDate: new Date('2026-09-27T12:00:00Z') });
+    expect(await resetLapsedStreaks(NOW)).toBe(0);
+    expect((await streakOf(id))?.current).toBe(5);
+  });
 });

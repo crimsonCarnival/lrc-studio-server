@@ -11,9 +11,12 @@ import Notification from '../notifications/notification.model.js';
 import XPEvent, { type IXPEvent } from '../progression/xp-event.model.js';
 import { getIO } from '../../socket/socket.manager.js';
 import { getPreferences } from '../user-preferences/user-preferences.service.js';
+import UserPreferences from '../user-preferences/user-preferences.model.js';
 import { enqueueNotif } from '../../lib/notification-heap.js';
 import type { INotification } from '../notifications/notification.model.js';
 import { scheduleOnce } from '../../lib/job-queue.js';
+import { computeSyncStats, type SyncStats } from './sync-stats.js';
+import { zonedDayKey, prevDayKey } from '../../shared/zoned-day.js';
 
 // ─── Builtin seed data ────────────────────────────────────────────────────────
 
@@ -36,14 +39,12 @@ export const BUILTIN_BADGES: Array<Omit<IBadgeDefinition, 'rarity' | 'createdBy'
   { id: 'streak7',     label: { en: 'Daily Mix', es: 'En racha' },      description: { en: '7-day activity streak', es: 'Racha de actividad de 7 días' },                    icon: '🔥', color: 'orange',  conditionType: 'streak_days',          conditionValue: 7,     autoGrant: true, isBuiltin: true, xpReward: 100 },
   { id: 'streak30',    label: { en: 'Extended Play', es: 'Imparable' },  description: { en: '30-day activity streak', es: 'Racha de actividad de 30 días' },                   icon: '⚡', color: 'amber',   conditionType: 'streak_days',          conditionValue: 30,    autoGrant: true, isBuiltin: true, xpReward: 300 },
   { id: 'verified',    label: { en: 'In Key', es: 'Verificado' },         description: { en: 'Verified email address', es: 'Correo electrónico verificado' },                   icon: '✓',  color: 'primary', conditionType: 'is_verified',          conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 50  },
-  { id: 'admin',       label: { en: 'A&R', es: 'Staff' },            description: { en: 'Platform administrator', es: 'Miembro del equipo de LRC Studio' },                   icon: '🛡️', color: 'rose',   conditionType: 'role_admin',           conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 500 },
 ];
 
 // How rare each built-in badge is, set by hand from how hard it is to earn. It is a property of
 // the badge, never derived from how many users hold it, so it does not drift as the user base grows.
 const BUILTIN_RARITY: Record<string, BadgeRarity> = {
   og: 'legendary',
-  admin: 'legendary',
   wordsmith50k: 'legendary',
   pioneer: 'epic',
   syncer100h: 'epic',
@@ -62,6 +63,33 @@ const BUILTIN_RARITY: Record<string, BadgeRarity> = {
   streak7: 'common',
   verified: 'common',
 };
+
+/**
+ * Built-in badges that were removed from BUILTIN_BADGES. Seeding only inserts, so a retired badge
+ * would otherwise live on in the database and on every holder's profile.
+ * 'admin': staff are marked by the role ring instead, which is subtler than a badge.
+ */
+const RETIRED_BUILTIN_BADGES = ['admin'];
+
+/**
+ * Deletes retired built-in badges, takes them off their holders (badges, showcase, mini-profile
+ * picks) and rebuilds those holders' XP as a 'backfill' so the drop stays off the period boards.
+ * Idempotent: with nothing left to remove it is three cheap no-op queries. Returns holders changed.
+ */
+export async function retireBuiltinBadges(): Promise<number> {
+  let holdersChanged = 0;
+  for (const id of RETIRED_BUILTIN_BADGES) {
+    const holders = await User.find({ 'badges.id': id }).select('_id').lean<{ _id: mongoose.Types.ObjectId }[]>();
+    await BadgeDefinition.deleteOne({ id, isBuiltin: true });
+    if (holders.length === 0) continue;
+    await User.updateMany({ 'badges.id': id }, { $pull: { badges: { id }, showcasedBadges: id } });
+    await UserPreferences.updateMany({ miniProfileBadgeIds: id }, { $pull: { miniProfileBadgeIds: id } });
+    for (const h of holders) await recomputeXP(h._id.toString(), 'backfill').catch(() => 0);
+    holdersChanged += holders.length;
+  }
+  if (holdersChanged > 0) invalidatePublicBadgeDefsCache();
+  return holdersChanged;
+}
 
 // Seeds built-in badges to DB — called on server startup (plugins/cron.ts) and
 // before the registration badge check. Idempotent per badge, keyed by `id`:
@@ -182,8 +210,11 @@ export async function checkCondition(user: UserForCondition, def: IBadgeDefiniti
 export async function grantBadge(
   userId: string,
   badgeId: string,
-  grantedBy: string = 'system'
+  grantedBy: string = 'system',
+  { recompute = true }: { recompute?: boolean } = {}
 ): Promise<boolean> {
+  // An id with no definition would still be pushed and earn the 50-XP default.
+  if (!(await BadgeDefinition.exists({ id: badgeId }))) return false;
   const result = await User.findOneAndUpdate(
     { _id: userId, 'badges.id': { $ne: badgeId } },
     { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy } } },
@@ -192,7 +223,9 @@ export async function grantBadge(
   if (!result) return false; // already had it or user not found
 
   notifyBadgeAwarded(userId, badgeId).catch(() => {});
-  recomputeXP(userId).catch(() => {});
+  // triggerBadgeCheck grants several badges in a loop and recomputes once afterwards, so the
+  // concurrent read-compute-write recomputes cannot overwrite one another.
+  if (recompute) recomputeXP(userId).catch(() => {});
   return true;
 }
 
@@ -276,13 +309,28 @@ export async function listPublicBadgeDefs(): Promise<PublicBadgeDef[]> {
   return defs;
 }
 
+/**
+ * Upper bound for a custom badge's XP reward. Built-ins top out at 1,500; 10,000 is an assumption
+ * that leaves room for event badges while stopping a definition from minting levels on its own.
+ */
+export const MAX_BADGE_XP_REWARD = 10_000;
+
+function assertValidXpReward(xpReward: number | undefined): void {
+  if (xpReward === undefined) return;
+  if (!Number.isInteger(xpReward) || xpReward < 0 || xpReward > MAX_BADGE_XP_REWARD) {
+    throw Object.assign(new Error(`xpReward must be an integer between 0 and ${MAX_BADGE_XP_REWARD}`), { status: 400 });
+  }
+}
+
 export async function createBadgeDef(input: BadgeDefInput, createdBy?: string): Promise<Record<string, unknown>> {
+  assertValidXpReward(input.xpReward);
   const def = await BadgeDefinition.create({ ...input, isBuiltin: false, createdBy } as unknown as IBadgeDefinition);
   invalidatePublicBadgeDefsCache();
   return { ...def.toObject(), holderCount: 0, holderPct: 0 };
 }
 
 export async function updateBadgeDef(id: string, input: BadgeDefInput): Promise<Record<string, unknown>> {
+  assertValidXpReward(input.xpReward);
   const def = await BadgeDefinition.findOneAndUpdate({ id }, { $set: input }, { returnDocument: 'after' });
   if (!def) throw new Error('Badge not found');
   invalidatePublicBadgeDefsCache();
@@ -322,11 +370,12 @@ export async function triggerBadgeCheck(userId: string, event: BadgeEvent): Prom
     if (existingIds.has(def.id)) continue;
     const qualifies = await checkCondition(user as unknown as UserForCondition, def);
     if (qualifies) {
-      const ok = await grantBadge(userId, def.id, 'system');
+      const ok = await grantBadge(userId, def.id, 'system', { recompute: false });
       if (ok) granted.push(def.id);
     }
   }
 
+  if (granted.length > 0) await recomputeXP(userId).catch(() => 0);
   return granted;
 }
 
@@ -402,261 +451,27 @@ async function retroactiveRegistrationRank(
 
 // ─── Stat recompute (call after lyrics/project changes) ──────────────────────
 
-export async function recomputeSyncStats(userId: string): Promise<{
-  minutesSynced: number;
-  secondsSynced: number;
-  wordsSynced: number;
-  karaokeLines: number;
-  syncedLines: number;
-  aiSyncedLines: number;
-  aiWordsSynced: number;
-}> {
+export async function recomputeSyncStats(userId: string): Promise<SyncStats> {
   const userProjects = await Project.find({ userId }).select('publicId').lean<{ publicId: string }[]>();
   const publicIds: string[] = userProjects.map((p) => p.publicId);
 
-  if (publicIds.length === 0) {
-    await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': 0, 'stats.secondsSynced': 0, 'stats.wordsSynced': 0, 'stats.karaokeLines': 0, 'stats.syncedLines': 0, 'stats.aiSyncedLines': 0, 'stats.aiWordsSynced': 0, statsComputedAt: new Date() } });
-    return { minutesSynced: 0, secondsSynced: 0, wordsSynced: 0, karaokeLines: 0, syncedLines: 0, aiSyncedLines: 0, aiWordsSynced: 0 };
-  }
+  // At most MAX_PROJECTS_PER_USER (200) documents; a pure reducer over them replaces six pipelines.
+  const docs = publicIds.length === 0
+    ? []
+    : await Lyrics.find({ publicId: { $in: publicIds } }).select('sections +lines').lean();
+  const stats = computeSyncStats(docs as Parameters<typeof computeSyncStats>[0]);
 
-  const [minAgg, wordAgg, aiWordAgg, karaokeAgg, syncedLineAgg, aiSyncedLineAgg] = await Promise.all([
-    // Minutes: max timestamp per project
-    Lyrics.aggregate([
-      { $match: { publicId: { $in: publicIds } } },
-      {
-        $project: {
-          allLines: {
-            $cond: {
-              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
-              then: {
-                $reduce: {
-                  input: '$sections',
-                  initialValue: [],
-                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
-                }
-              },
-              else: { $ifNull: ['$lines', []] }
-            }
-          }
-        }
-      },
-      {
-        $project: {
-          maxTs: {
-            $max: {
-              $map: {
-                input: '$allLines',
-                as: 'l',
-                in: { $ifNull: ['$$l.timestamp', 0] }
-              }
-            }
-          }
-        }
-      },
-      { $group: { _id: null, total: { $sum: '$maxTs' } } },
-    ]),
-
-    // Words synced: words with non-null time
-    Lyrics.aggregate([
-      { $match: { publicId: { $in: publicIds } } },
-      {
-        $project: {
-          allLines: {
-            $cond: {
-              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
-              then: {
-                $reduce: {
-                  input: '$sections',
-                  initialValue: [],
-                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
-                }
-              },
-              else: { $ifNull: ['$lines', []] }
-            }
-          }
-        }
-      },
-      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
-      { $unwind: { path: '$allLines.words', preserveNullAndEmptyArrays: false } },
-      { $match: { 'allLines.words.time': { $ne: null } } },
-      { $count: 'total' },
-    ]),
-
-    // AI Words: total number of words with time != null in AI-sourced lines
-    Lyrics.aggregate([
-      { $match: { publicId: { $in: publicIds } } },
-      {
-        $project: {
-          allLines: {
-            $cond: {
-              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
-              then: {
-                $reduce: {
-                  input: '$sections',
-                  initialValue: [],
-                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
-                }
-              },
-              else: { $ifNull: ['$lines', []] }
-            }
-          }
-        }
-      },
-      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
-      { $match: { 'allLines.source': 'asr' } },
-      { $unwind: { path: '$allLines.words', preserveNullAndEmptyArrays: false } },
-      { $match: { 'allLines.words.time': { $ne: null } } },
-      { $count: 'total' },
-    ]),
-
-    // Karaoke lines: lines where ≥1 word has a time
-    Lyrics.aggregate([
-      { $match: { publicId: { $in: publicIds } } },
-      {
-        $project: {
-          allLines: {
-            $cond: {
-              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
-              then: {
-                $reduce: {
-                  input: '$sections',
-                  initialValue: [],
-                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
-                }
-              },
-              else: { $ifNull: ['$lines', []] }
-            }
-          }
-        }
-      },
-      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
-      {
-        $project: {
-          hasKaraoke: {
-            $gt: [
-              {
-                $size: {
-                  $filter: {
-                    input: { $ifNull: ['$allLines.words', []] },
-                    cond: { $ne: ['$$this.time', null] },
-                  },
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
-      { $match: { hasKaraoke: true } },
-      { $count: 'total' },
-    ]),
-
-    // Synced lines: lines with a non-null timestamp or a non-null word time
-    Lyrics.aggregate([
-      { $match: { publicId: { $in: publicIds } } },
-      {
-        $project: {
-          allLines: {
-            $cond: {
-              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
-              then: {
-                $reduce: {
-                  input: '$sections',
-                  initialValue: [],
-                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
-                }
-              },
-              else: { $ifNull: ['$lines', []] }
-            }
-          }
-        }
-      },
-      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
-      { $match: {
-          // Exclude blank/placeholder lines (empty text shown as ♪)
-          'allLines.text': { $exists: true, $nin: [null, ''] },
-          $expr: {
-            $or: [
-              { $ne: ['$allLines.timestamp', null] },
-              {
-                $gt: [
-                  {
-                    $size: {
-                      $filter: {
-                        input: { $ifNull: ['$allLines.words', []] },
-                        cond: { $ne: ['$$this.time', null] },
-                      },
-                    },
-                  },
-                  0,
-                ],
-              },
-            ],
-          },
-        },
-      },
-      { $count: 'total' },
-    ]),
-    // AI-stamped synced lines: lines with source='asr' and a non-null timestamp or word time
-    Lyrics.aggregate([
-      { $match: { publicId: { $in: publicIds } } },
-      {
-        $project: {
-          allLines: {
-            $cond: {
-              if: { $gt: [{ $size: { $ifNull: ['$sections', []] } }, 0] },
-              then: {
-                $reduce: {
-                  input: '$sections',
-                  initialValue: [],
-                  in: { $concatArrays: ['$$value', { $ifNull: ['$$this.lines', []] }] }
-                }
-              },
-              else: { $ifNull: ['$lines', []] }
-            }
-          }
-        }
-      },
-      { $unwind: { path: '$allLines', preserveNullAndEmptyArrays: false } },
-      { $match: {
-          'allLines.source': 'asr',
-          // Exclude blank/placeholder lines (empty text shown as ♪)
-          'allLines.text': { $exists: true, $nin: [null, ''] },
-          $expr: {
-            $or: [
-              { $ne: ['$allLines.timestamp', null] },
-              {
-                $gt: [
-                  {
-                    $size: {
-                      $filter: {
-                        input: { $ifNull: ['$allLines.words', []] },
-                        cond: { $ne: ['$$this.time', null] },
-                      },
-                    },
-                  },
-                  0,
-                ],
-              },
-            ],
-          },
-        },
-      },
-      { $count: 'total' },
-    ]),
-  ]);
-
-  const totalSeconds = minAgg[0]?.total ?? 0;
-  const minutesSynced = Math.floor(totalSeconds / 60);
-  const secondsSynced = Math.floor(totalSeconds % 60);
-  const wordsSynced = wordAgg[0]?.total ?? 0;
-  const karaokeLines = karaokeAgg[0]?.total ?? 0;
-  const syncedLines = syncedLineAgg[0]?.total ?? 0;
-  const aiSyncedLines = aiSyncedLineAgg[0]?.total ?? 0;
-  const aiWordsSynced = aiWordAgg[0]?.total ?? 0;
-
-  await User.updateOne({ _id: userId }, { $set: { 'stats.minutesSynced': minutesSynced, 'stats.secondsSynced': secondsSynced, 'stats.wordsSynced': wordsSynced, 'stats.karaokeLines': karaokeLines, 'stats.syncedLines': syncedLines, 'stats.aiSyncedLines': aiSyncedLines, 'stats.aiWordsSynced': aiWordsSynced, statsComputedAt: new Date() } });
-  return { minutesSynced, secondsSynced, wordsSynced, karaokeLines, syncedLines, aiSyncedLines, aiWordsSynced };
+  await User.updateOne({ _id: userId }, { $set: {
+    'stats.minutesSynced': stats.minutesSynced,
+    'stats.secondsSynced': stats.secondsSynced,
+    'stats.wordsSynced': stats.wordsSynced,
+    'stats.karaokeLines': stats.karaokeLines,
+    'stats.syncedLines': stats.syncedLines,
+    'stats.aiSyncedLines': stats.aiSyncedLines,
+    'stats.aiWordsSynced': stats.aiWordsSynced,
+    statsComputedAt: new Date(),
+  } });
+  return stats;
 }
 
 // ─── Coalesced stat refresh (call from save paths) ───────────────────────────
@@ -680,6 +495,8 @@ export function scheduleSyncStatsRefresh(userId: string): void {
 export async function runSyncStatsRefresh({ userId }: { userId: string }): Promise<void> {
   await recomputeSyncStats(userId);
   await triggerBadgeCheck(userId, 'sync_update');
+  // XP is derived from stats, so it has to follow them; before this it only moved on a badge change.
+  await recomputeXP(userId);
 }
 
 // ─── XP Event logging (event-based system) ────────────────────────────────────
@@ -752,25 +569,35 @@ export async function validateXPIntegrity(userId: string): Promise<{
 
 type LeanUserStreak = Pick<IUser, 'streak'>;
 
-export async function updateStreak(userId: string): Promise<number> {
+/** Minimum real time between two counted days when the timezone changed in between. */
+const MIN_HOPPED_DAY_GAP_MS = 20 * 60 * 60 * 1000;
+
+export async function updateStreak(userId: string, now: Date = new Date()): Promise<number> {
   const user = await User.findById(userId).select('streak').lean<LeanUserStreak>();
   if (!user) return 0;
 
-  const todayStr = new Date().toISOString().slice(0, 10); // "2026-06-02"
-  const lastDate = user.streak?.lastActiveDate
-    ? new Date(user.streak.lastActiveDate).toISOString().slice(0, 10)
-    : null;
+  // Days are the user's own calendar days (streak.timezone), not UTC ones.
+  const tz = user.streak?.timezone;
+  const todayStr = zonedDayKey(now, tz);
+  const lastDate = user.streak?.lastActiveDate ? zonedDayKey(new Date(user.streak.lastActiveDate), tz) : null;
 
   if (lastDate === todayStr) return user.streak?.current ?? 1;
 
-  const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const current = lastDate === yesterdayStr ? (user.streak?.current ?? 0) + 1 : 1;
+  // A timezone change since the last activity can make "today" a new day with no real day passing.
+  // Count a new day only once enough real time has elapsed, so zone hopping cannot add streak days.
+  const lastAt = user.streak?.lastActiveDate ? new Date(user.streak.lastActiveDate).getTime() : null;
+  const tzChangedAt = user.streak?.timezoneChangedAt ? new Date(user.streak.timezoneChangedAt).getTime() : null;
+  if (lastAt !== null && tzChangedAt !== null && tzChangedAt > lastAt && now.getTime() - lastAt < MIN_HOPPED_DAY_GAP_MS) {
+    return user.streak?.current ?? 1;
+  }
+
+  const current = lastDate === prevDayKey(todayStr) ? (user.streak?.current ?? 0) + 1 : 1;
   const longest = Math.max(current, user.streak?.longest ?? 0);
 
   await User.updateOne({ _id: userId }, {
     'streak.current': current,
     'streak.longest': longest,
-    'streak.lastActiveDate': new Date(),
+    'streak.lastActiveDate': now,
   });
 
   return current;
@@ -781,19 +608,20 @@ export type StreakView = { current: number; longest: number; lastActiveDate: str
 /**
  * Read-side view of a stored streak. `streak.current` is only rewritten when the
  * user is active again, so a streak broken days ago still holds its old value in
- * the DB. A streak is alive only if the last active UTC day is today or
- * yesterday; otherwise the effective current streak is 0.
+ * the DB. A streak is alive only if the last active day (in the user's own timezone,
+ * `streak.timezone`, UTC when unset) is today or yesterday; otherwise the effective
+ * current streak is 0.
  */
 export function getStreakView(
-  streak: { current?: number; longest?: number; lastActiveDate?: Date | string | null } | null | undefined,
+  streak: { current?: number; longest?: number; lastActiveDate?: Date | string | null; timezone?: string | null } | null | undefined,
   now: Date = new Date()
 ): StreakView {
   const last = streak?.lastActiveDate ? new Date(streak.lastActiveDate) : null;
   const lastValid = last && !Number.isNaN(last.getTime()) ? last : null;
-  const lastDay = lastValid ? lastValid.toISOString().slice(0, 10) : null;
-  const today = now.toISOString().slice(0, 10);
-  const yesterday = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
-  const alive = lastDay === today || lastDay === yesterday;
+  const tz = streak?.timezone;
+  const lastDay = lastValid ? zonedDayKey(lastValid, tz) : null;
+  const today = zonedDayKey(now, tz);
+  const alive = lastDay === today || lastDay === prevDayKey(today);
   return {
     current: alive ? (streak?.current ?? 0) : 0,
     longest: streak?.longest ?? 0,
@@ -870,7 +698,12 @@ const BUILTIN_XP: Map<string, number> = new Map(
 
 type LeanUserXP = Pick<IUser, 'badges' | 'stats' | 'social'>;
 
-export async function recomputeXP(userId: string): Promise<number> {
+/**
+ * Rebuilds `progression.xp` from badges, stats, social counts and the admin bonus.
+ * `eventType` 'backfill' is for one-off corrections: those deltas are kept off the weekly and
+ * monthly XP boards, which would otherwise credit months of old work to the week it was applied.
+ */
+export async function recomputeXP(userId: string, eventType: 'recompute' | 'backfill' = 'recompute'): Promise<number> {
   const user = await User.findById(userId)
     .select('badges stats social progression')
     .lean<LeanUserXP & { progression?: { xp?: number; bonusXp?: number; level?: number } }>();
@@ -907,11 +740,11 @@ export async function recomputeXP(userId: string): Promise<number> {
   if (delta !== 0) {
     await XPEvent.create({
       userId: new mongoose.Types.ObjectId(userId),
-      type: 'badge_grant',
+      type: eventType,
       source: 'system',
       delta,
       totalXpAfter: newXp,
-      reason: 'badge or stat update',
+      reason: eventType === 'backfill' ? 'backfill' : 'badge, stat or social update',
       createdAt: new Date(),
     });
   }

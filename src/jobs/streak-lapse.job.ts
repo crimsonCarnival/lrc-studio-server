@@ -10,8 +10,10 @@
  * `current: 5`, which is actively misleading to anyone inspecting the data,
  * writing an aggregation, or debugging a "why does the UI disagree" report.
  *
- * A streak is alive when its last active UTC day is today or yesterday, matching
- * getStreakView exactly. Anything older is lapsed and gets reset to 0.
+ * A streak is alive when its last active day, in the user's own timezone, is today or
+ * yesterday, matching getStreakView. This job runs one query for everyone, so it only resets
+ * streaks that are lapsed in EVERY timezone (see the cutoff); the rest are reported as 0 by
+ * getStreakView already and are reset by a later run once they are old enough.
  * `streak.longest` is never touched — that is the historical record.
  *
  * Scheduling: hourly, alongside the streak warning job. Running it more often
@@ -29,9 +31,9 @@ import User from '../modules/users/user.model.js';
  * @param now injectable for tests; defaults to the current time.
  */
 export async function resetLapsedStreaks(now: Date = new Date()): Promise<number> {
-  // Start of yesterday, UTC. A lastActiveDate before this instant cannot be
-  // "today or yesterday", so the streak is dead.
-  const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+  // Start of yesterday UTC, minus the widest offset (UTC+14). A lastActiveDate before this instant
+  // is not "today or yesterday" in any timezone, so the streak is dead for whoever owns it.
+  const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1) - 14 * 3_600_000);
 
   const result = await User.updateMany(
     {

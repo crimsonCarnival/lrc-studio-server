@@ -73,6 +73,11 @@ export interface IUserStreak {
   // UTC day ('YYYY-MM-DD') for which the streak-ending warning was already
   // sent. Makes the streak-warning job idempotent across runs and restarts.
   warnedFor?: string | null;
+  // IANA zone ('America/Bogota') whose calendar days the streak counts. Set by the client from the
+  // user's timezone setting; null or invalid means UTC. Lives here so every reader of `streak` has it.
+  timezone?: string | null;
+  // When `timezone` last changed; limits changes to one per day so hopping zones cannot farm streak days.
+  timezoneChangedAt?: Date | null;
 }
 
 export interface IUserProgression {
@@ -240,6 +245,8 @@ const streakSchema = new mongoose.Schema<IUserStreak>(
     longest: { type: Number, default: 0, min: 0 },
     lastActiveDate: { type: Date, default: null },
     warnedFor: { type: String, default: null },
+    timezone: { type: String, default: null, maxlength: 50 },
+    timezoneChangedAt: { type: Date, default: null },
   },
   { _id: false },
 );

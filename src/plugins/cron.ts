@@ -9,7 +9,7 @@ import { sweepJobs } from '../modules/asr/job.store.js';
 import { endIdleSessions } from '../modules/collab/collab.service.js';
 import { sendStreakWarnings } from '../jobs/streak-warning.job.js';
 import { resetLapsedStreaks } from '../jobs/streak-lapse.job.js';
-import { seedBuiltinBadges, runSyncStatsRefresh, SYNC_STATS_REFRESH_JOB } from '../modules/badges/badge.service.js';
+import { seedBuiltinBadges, retireBuiltinBadges, runSyncStatsRefresh, SYNC_STATS_REFRESH_JOB } from '../modules/badges/badge.service.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { syncSuperadminEmailGrant } from '../modules/auth/superadmin-env.service.js';
 import { dropSupersededIndexes } from '../db/superseded-indexes.js';
@@ -33,6 +33,9 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
       seedBuiltinBadges()
         .then((n) => fastify.log.info(`[startup] Built-in badges seeded (${n} inserted)`))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed built-in badges')),
+      retireBuiltinBadges()
+        .then((n) => { if (n > 0) fastify.log.info(`[startup] Retired built-in badges removed from ${n} holders`); })
+        .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to retire built-in badges')),
       seedAddictionLevels()
         .then((n) => fastify.log.info(`[startup] Addiction levels seeded (${n} inserted)`))
         .catch((err: unknown) => fastify.log.error({ err }, '[startup] Failed to seed addiction levels')),
@@ -68,9 +71,8 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
         await recomputeLeaderboardRanking();
       });
 
-      // Streak-ending warnings. The job itself no-ops before
-      // STREAK_WARNING_HOUR_UTC and is idempotent per user per UTC day, so a
-      // frequent tick only bounds the send delay (<= 15 min).
+      // Streak-ending warnings. The job tests each user's own local hour and day and is
+      // idempotent per user per local day, so a frequent tick only bounds the send delay (<= 15 min).
       await defineRecurring('streak-warnings', '15 minutes', async () => {
         const sent = await sendStreakWarnings();
         if (sent > 0) fastify.log.info(`[jobs] streak warnings sent: ${sent}`);
