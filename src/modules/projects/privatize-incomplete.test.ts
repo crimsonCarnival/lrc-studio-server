@@ -7,7 +7,7 @@ vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Erro
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Notification from '../notifications/notification.model.js';
-import { privatizeIncomplete, parseArgs, describeMongoTarget } from './privatize-incomplete.service.js';
+import { privatizeIncomplete, parseArgs, describeMongoTarget, redactSecrets } from './privatize-incomplete.service.js';
 
 let mongo: MongoMemoryServer;
 beforeAll(async () => {
@@ -52,7 +52,7 @@ describe('privatizeIncomplete', () => {
   it('ignores section markers and treats timestamp 0 as timed', async () => {
     await seed('markers0001', [{ type: 'section', timestamp: null }, { timestamp: 0 }, { timestamp: 4 }]);
     const res = await privatizeIncomplete({ dryRun: false });
-    expect(res).toEqual({ matched: [], changed: 0, skippedChanged: 0 });
+    expect(res).toEqual({ matched: [], changed: 0, skippedChanged: 0, failed: [] });
     expect(await isPublic('markers0001')).toBe(true);
   });
 
@@ -68,7 +68,7 @@ describe('privatizeIncomplete', () => {
   it('is idempotent and preserves updatedAt', async () => {
     await seed('partial001', [{ timestamp: null }]);
     expect((await privatizeIncomplete({ dryRun: false })).changed).toBe(1);
-    expect(await privatizeIncomplete({ dryRun: false })).toEqual({ matched: [], changed: 0, skippedChanged: 0 });
+    expect(await privatizeIncomplete({ dryRun: false })).toEqual({ matched: [], changed: 0, skippedChanged: 0, failed: [] });
     const doc = await Project.collection.findOne({ publicId: 'partial001' }) as { updatedAt: Date };
     expect(doc.updatedAt.toISOString()).toBe('2020-01-01T00:00:00.000Z');
     expect(await Notification.countDocuments({})).toBe(1);
@@ -166,6 +166,47 @@ describe('privatizeIncomplete', () => {
     expect(await isPublic('notiffail002')).toBe(false);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('notification failed'));
   });
+
+  it('one project throwing does not stop others; failures are reported and the notice counts written ones', async () => {
+    const o = oid();
+    await seed('thrower0001', [{ timestamp: null }], { owner: o });
+    await seed('okproject01', [{ timestamp: null }], { owner: o });
+    const log = vi.fn();
+    const res = await privatizeIncomplete({
+      dryRun: false,
+      log,
+      beforeWrite: async (id) => { if (id === 'thrower0001') throw new Error('write boom mongodb://u:pw@h/db'); },
+    });
+    expect(res.changed).toBe(1);
+    expect(res.failed).toEqual([{ publicId: 'thrower0001', error: 'write boom <redacted-uri>' }]);
+    expect(await isPublic('thrower0001')).toBe(true);
+    expect(await isPublic('okproject01')).toBe(false);
+    const notes = await Notification.find({}).lean();
+    expect(notes).toHaveLength(1);
+    expect(notes[0].meta).toEqual({ kind: 'projects_privatized', count: 1 });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('privatized okproject01'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('failed (1)'));
+  });
+
+  it('a throwing lyrics read or project update fails only that project', async () => {
+    await seed('readfail0001', [{ timestamp: null }]);
+    await seed('updfail00001', [{ timestamp: null }]);
+    await seed('fine0000001', [{ timestamp: null }]);
+    const read = vi.spyOn(Lyrics, 'findOne').mockImplementationOnce((() => { throw new Error('read boom'); }) as never);
+    const upd = vi.spyOn(Project, 'updateOne').mockRejectedValueOnce(new Error('update boom') as never);
+    const res = await privatizeIncomplete({ dryRun: false });
+    read.mockRestore();
+    upd.mockRestore();
+    expect(res.failed).toHaveLength(2);
+    expect(res.failed.map((x) => x.error).sort()).toEqual(['read boom', 'update boom']);
+    expect(res.changed).toBe(1);
+  });
+
+  it('persists the notification row even when no socket server exists', async () => {
+    await seed('persist0001', [{ timestamp: null }]);
+    await privatizeIncomplete({ dryRun: false });
+    expect(await Notification.countDocuments({ type: 'system' })).toBe(1);
+  });
 });
 
 describe('parseArgs', () => {
@@ -179,12 +220,45 @@ describe('parseArgs', () => {
     expect(parseArgs(['--aply']).ok).toBe(false);
     expect(parseArgs(['--apply', 'extra']).ok).toBe(false);
   });
+  it('rejects a literal -- separator', () => {
+    expect(parseArgs(['--', '--apply']).ok).toBe(false);
+  });
 });
 
 describe('describeMongoTarget', () => {
-  it('strips credentials and query string', () => {
-    expect(describeMongoTarget('mongodb+srv://user:p%40ss@cluster0.x.mongodb.net/lrc?retryWrites=true')).toBe('cluster0.x.mongodb.net/lrc');
-    expect(describeMongoTarget('mongodb://u:p@a:27017,b:27017/db')).toBe('a:27017,b:27017/db');
-    expect(describeMongoTarget('mongodb://localhost:27017')).toBe('localhost:27017/(default db)');
+  const cases: [string, string][] = [
+    ['mongodb+srv://user:p%40ss@cluster0.x.mongodb.net/lrc?retryWrites=true', 'cluster0.x.mongodb.net/lrc'],
+    ['mongodb://u:p@a:27017,b:27017/db', 'a:27017,b:27017/db'],
+    ['mongodb://localhost:27017', 'localhost:27017/(default db)'],
+    // leak 1: no slash before the query string
+    ['mongodb://host:27017?replicaSet=x&tlsCertificateKeyFilePassword=secret', 'host:27017/(default db)'],
+    // leak 2: raw "/" in the password
+    ['mongodb://user:pa/ss@host/db', 'host/db'],
+    ['mongodb://user:p@ss@host:1/db', 'host:1/db'],
+    ['mongodb://user:p%40ss@host/db', 'host/db'],
+    ['mongodb://u:p@[::1]:27017/db', '[::1]:27017/db'],
+    ['mongodb+srv://u:p@h1.example.com/db?authSource=admin&x=secret', 'h1.example.com/db'],
+  ];
+  it.each(cases)('%s', (uri, expected) => {
+    const out = describeMongoTarget(uri);
+    expect(out).toBe(expected);
+    expect(out).not.toMatch(/secret|pa\/ss|p%40ss|user|:p@/);
+  });
+  it('never prints anything unparseable', () => {
+    expect(describeMongoTarget('not a uri')).toBe('<unparseable target>');
+    expect(describeMongoTarget('mongodb://user:pa?ss@host/db')).toBe('<unparseable target>');
+    expect(describeMongoTarget('mongodb://user:secret')).toBe('<unparseable target>');
+  });
+});
+
+describe('redactSecrets', () => {
+  const uri = 'mongodb+srv://bob:s3c%40ret@cluster.example.com/db?x=1';
+  it('removes the uri, userinfo, password and decoded form', () => {
+    const msg = `connect failed for ${uri}: auth bob:s3c%40ret rejected, pw s3c@ret, other mongodb://z:q@h/x`;
+    const out = redactSecrets(msg, uri);
+    expect(out).not.toMatch(/bob|s3c|mongodb:\/\/z|cluster\.example/);
+  });
+  it('strips any mongodb uri even without a known one', () => {
+    expect(redactSecrets('boom mongodb://a:b@h/db end')).toBe('boom <redacted-uri> end');
   });
 });

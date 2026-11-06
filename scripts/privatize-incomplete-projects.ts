@@ -36,6 +36,7 @@ import {
   parseArgs,
   describeMongoTarget,
   PRIVATIZE_USAGE,
+  redactSecrets,
 } from '../src/modules/projects/privatize-incomplete.service.js';
 
 const args = parseArgs(process.argv.slice(2));
@@ -55,11 +56,15 @@ async function main(): Promise<void> {
   console.log(`🎯  Target: ${describeMongoTarget(MONGO_URI)}  (${APPLY ? 'APPLY' : 'DRY RUN — no writes, no notifications; pass --apply to write'})`);
   await mongoose.connect(MONGO_URI);
   console.log('✅  Connected to MongoDB');
-  const { matched, changed, skippedChanged } = await privatizeIncomplete({ dryRun: !APPLY, log: (m) => console.log(m) });
+  const { matched, changed, skippedChanged, failed } = await privatizeIncomplete({ dryRun: !APPLY, log: (m) => console.log(m) });
   for (const m of matched) console.log(`   ${m.publicId}  "${m.title}"  ${m.timed}/${m.total} timed`);
   if (APPLY) {
     console.log(`\n✅  Made ${changed} of ${matched.length} matched project(s) private; ${skippedChanged} skipped (changed during the run)`);
     console.log('ℹ️   Owners online now will see the notice after reconnect or a server restart. Restart the server to drop viewers already in project rooms.');
+    if (failed.length) {
+      console.error(`❌  ${failed.length} project(s) failed (listed above); exiting non-zero`);
+      process.exitCode = 1;
+    }
   } else {
     console.log(`\n📋  Would make ${matched.length} project(s) private (target above)`);
   }
@@ -67,7 +72,8 @@ async function main(): Promise<void> {
 
 main()
   .catch((err) => {
-    console.error('❌  Failed:', err);
+    const e = err instanceof Error ? err : new Error(String(err));
+    console.error(`❌  Failed: ${e.name}: ${redactSecrets(e.message, MONGO_URI)}`);
     process.exitCode = 1;
   })
   .finally(() => mongoose.disconnect());
