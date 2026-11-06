@@ -46,6 +46,7 @@ describe('every new project is private', () => {
     expect(stored?.public).toBe(false);
   });
 
+  // Regression guard: forks already defaulted to private via the model; keep it explicit.
   it('a fork of a public project is private', async () => {
     const owner = await mkUser();
     const forker = await mkUser();
@@ -53,8 +54,7 @@ describe('every new project is private', () => {
     if (!('publicId' in res)) throw new Error('create failed');
     await Project.updateOne({ publicId: res.publicId }, { $set: { public: true } });
     const forked = await cloneProject(res.publicId, forker);
-    if (!('data' in forked) && !('publicId' in forked)) throw new Error('fork failed: ' + JSON.stringify(forked));
-    const forkId = (forked as { data?: { publicId: string }; publicId?: string }).data?.publicId ?? (forked as { publicId?: string }).publicId;
-    expect((await Project.findOne({ publicId: forkId }).lean())?.public).toBe(false);
+    if (!('publicId' in forked)) throw new Error(`fork failed: ${JSON.stringify(forked)}`);
+    expect((await Project.findOne({ publicId: forked.publicId }).lean())?.public).toBe(false);
   });
 });
