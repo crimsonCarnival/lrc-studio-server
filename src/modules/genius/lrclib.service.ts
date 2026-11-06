@@ -125,8 +125,8 @@ export async function getLyricsFromLrclib(
 }
 
 /**
- * Free-text search. Used as the search fallback when Genius is unconfigured, so
- * the lyrics search feature works with zero API keys.
+ * Free-text search behind the editor's lyrics search, so every hit is one `extract` can import.
+ * Needs no API key.
  *
  * LRCLIB returns the lyrics inline with each hit, which lets us flag which
  * results are time-synced *before* the user picks one.

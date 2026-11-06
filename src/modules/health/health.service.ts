@@ -81,13 +81,12 @@ function checkConfigured(vars: string[]): ServiceCheck {
  * (the primary, and the only one returning synced LRC) needs no credentials at
  * all. Lyrics lookup therefore never hard-fails on configuration, so this
  * reports ok and names the optional providers rather than marking the whole
- * service degraded over a key the feature does not require. The previous
- * `genius` check gated on GENIUS_CLIENT_ACCESS_TOKEN, which only affects search.
+ * service degraded over a key the feature does not require. Search also
+ * runs on LRCLIB, so it needs no key either.
  */
 function checkLyrics(): ServiceCheck {
   const start = performance.now();
   const optional = [
-    process.env.GENIUS_CLIENT_ACCESS_TOKEN ? 'genius-search' : null,
     process.env.LYRICFIND_API_KEY ? 'lyricfind' : null,
   ].filter(Boolean);
   return {

@@ -1,17 +1,18 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { searchSongs } from './genius.service.js';
 import { getLyricsFromLrclib, getLrclibById, searchLrclib, LRCLIB_ID_PREFIX } from './lrclib.service.js';
 import { getLyricsFromLyricFind } from './lyricfind.service.js';
 import { getLyricsFromLyricsOvh } from './lyricsovh.service.js';
-import type { LyricsResult, LyricsSearchHit } from './lyrics-provider.types.js';
+import type { LyricsResult } from './lyrics-provider.types.js';
 import JobLog from '../../db/job-log.model.js';
 import { auditActorId } from '../../plugins/auth.js';
 
 /**
- * Search uses Genius when configured — it has cover art and the best fuzzy
- * matching — and falls back to LRCLIB otherwise, so the feature works on a
- * deployment with no API keys at all. LRCLIB hits additionally carry a `synced`
- * flag so the UI can show which results come with timestamps.
+ * Search runs against LRCLIB, the same source `extract` resolves lyrics from. Search used to go
+ * through Genius, whose catalogue is not the one the lyrics come from: a song that exists on
+ * Genius but not on LRCLIB (or the later providers) showed up as a hit and then failed to import.
+ * Searching the primary provider means every hit can actually be imported, and each one carries a
+ * `synced` flag so the UI can show which come with timestamps. The hit id is `lrclib:<id>`, which
+ * `extract` resolves back to that exact record.
  */
 export async function search(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const query = (request.query as Record<string, string>).q;
@@ -19,41 +20,12 @@ export async function search(request: FastifyRequest, reply: FastifyReply): Prom
     return reply.code(400).send({ error: 'Missing search query' });
   }
 
-  let geniusFailure: (Error & { retryAfter?: string }) | null = null;
   try {
-    const hits = await searchSongs(query);
-    if (hits.length) {
-      const results: LyricsSearchHit[] = hits.map(h => ({
-        id: String(h.id),
-        title: h.title,
-        artist: h.artist,
-        thumbnail: h.thumbnail,
-        url: h.url,
-        provider: 'genius' as const,
-      }));
-      return reply.send({ results });
-    }
-    // Genius configured but empty-handed — LRCLIB's catalogue differs enough
-    // to be worth a second look before telling the user there's nothing.
-  } catch (err) {
-    geniusFailure = err as Error & { retryAfter?: string };
-  }
-
-  try {
-    const results = await searchLrclib(query);
-    if (results.length || !geniusFailure) return reply.send({ results });
+    return reply.send({ results: await searchLrclib(query) });
   } catch (err) {
     request.log.error({ err }, 'LRCLIB search failed');
+    return reply.code(502).send({ error: 'upstream_error' });
   }
-
-  if (geniusFailure?.message === 'genius_not_configured') {
-    return reply.code(500).send({ error: 'genius_not_configured' });
-  }
-  if (geniusFailure?.message === 'rate_limited') {
-    return reply.code(429).send({ error: 'rate_limited', retryAfter: geniusFailure.retryAfter });
-  }
-  request.log.error({ err: geniusFailure }, 'Lyrics search failed');
-  return reply.code(502).send({ error: 'upstream_error' });
 }
 
 /**

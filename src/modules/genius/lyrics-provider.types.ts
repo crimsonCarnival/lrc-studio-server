@@ -16,7 +16,7 @@ export type LyricsResult = {
   provider: LyricsProviderName;
 };
 
-/** A search hit. `thumbnail`/`url` are Genius-only; LRCLIB has neither. */
+/** A search hit. LRCLIB has no cover art or page URL, so `thumbnail`/`url` are null. */
 export type LyricsSearchHit = {
   /** Namespaced so `extract` can resolve a hit back to its provider exactly. */
   id: string;
@@ -29,5 +29,5 @@ export type LyricsSearchHit = {
   synced?: boolean;
   thumbnail?: string | null;
   url?: string | null;
-  provider: LyricsProviderName | 'genius';
+  provider: LyricsProviderName;
 };
