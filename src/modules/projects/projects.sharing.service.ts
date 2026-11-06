@@ -143,6 +143,7 @@ export async function cloneProject(
       metadata: cloneMetadata,
       coverImage: sourceProject.coverImage || '',
       readOnly: false,
+      public: false,
       forkedFrom: {
         publicId: sourcepublicId,
         userId: ((sourceProject.userId as unknown as { _id?: unknown })?._id || sourceProject.userId || null) as mongoose.Types.ObjectId | null,

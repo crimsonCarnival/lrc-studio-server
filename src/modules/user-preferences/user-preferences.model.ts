@@ -43,7 +43,8 @@ export interface IUserPreferences {
   /** ISO 3166-1 alpha-2, chosen by the user in settings; null when they haven't. */
   country: string | null;
   countryVisibility: 'everyone' | 'friends' | 'nobody';
-  defaultProjectPrivacy: 'public' | 'private';
+  /** @deprecated Removed setting; every project is created private. Always 'private'. */
+  defaultProjectPrivacy: 'private';
   miniProfileBadgesEnabled: boolean;
   miniProfileBadgeIds: string[];
   // Privacy-by-default: the activity heatmap reveals when a user is active,
@@ -100,7 +101,6 @@ const userPreferencesSchema = new mongoose.Schema<IUserPreferences>({
   lastOnlineVisibility:     { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'friends' },
   country:                  { type: String, default: null, match: /^[A-Z]{2}$/ },
   countryVisibility:        { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'nobody' },
-  defaultProjectPrivacy:    { type: String, enum: ['public', 'private'], default: 'public' },
   miniProfileBadgesEnabled: { type: Boolean, default: true },
   miniProfileBadgeIds:      { type: [String], default: [] },
   showActivityHeatmap:      { type: Boolean, default: false },

@@ -13,7 +13,6 @@ import CollabSession from '../collab/collab-session.model.js';
 import { discardDeletedProject } from '../collab/collab.service.js';
 import { mountedCollabServer, type SongSource } from '../collab/collab.server.js';
 import User from '../users/user.model.js';
-import { getPreferences } from '../user-preferences/user-preferences.service.js';
 import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user-logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
@@ -115,7 +114,7 @@ export async function createProject(
 ): Promise<{ publicId: string; url: string } | ServiceResult> {
   const data = rawData as CreateProjectData;
   const {
-    title, uploadId, lyrics, state, metadata, readOnly, public: isPublic,
+    title, uploadId, lyrics, state, metadata, readOnly,
     coverImage, recaptchaToken, ytUrl, uploadUrl, uploadPublicId, fileName, duration, createdFrom,
   } = data;
 
@@ -185,17 +184,6 @@ export async function createProject(
       resolvedUploadId = upload._id;
     }
 
-    let finalIsPublic: boolean;
-    if (isPublic !== undefined) {
-      finalIsPublic = isPublic;
-    } else if (userId) {
-      const prefs = await getPreferences(userId);
-      // Ensure backwards compatibility by defaulting to public if the preference is somehow missing
-      finalIsPublic = prefs?.defaultProjectPrivacy !== 'private';
-    } else {
-      finalIsPublic = false; // Guests default to private
-    }
-
     // New content inherits the owner's current visibility, so a shadow-banned
     // user's new project is unlisted from the moment it exists rather than
     // until the next sync. Guests (no userId) are treated as visible.
@@ -210,7 +198,9 @@ export async function createProject(
       metadata: cleanedMetadata,
       coverImage: (coverImage ? sanitizeUrl(coverImage) : '') as string,
       readOnly: readOnly ?? true,
-      public: finalIsPublic,
+      // Every project starts private. `public` on the input is accepted for old
+      // clients but ignored: publishing is a later, explicit update.
+      public: false,
       createdFrom: createdFrom ? createdFrom.slice(0, 64) : null,
       contentUpdatedAt: new Date(),
     }], { session });

@@ -874,6 +874,9 @@ export const userResolvers = {
     updatePreferences: async (_root: unknown, { input }: { input: Record<string, unknown> }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
 
+      // Removed setting, still sent by old clients: accept and drop.
+      delete input.defaultProjectPrivacy;
+
       if (input.onlineVisibility !== undefined) {
         const valid = ['everyone', 'friends', 'nobody'];
         if (!valid.includes(input.onlineVisibility as string)) {

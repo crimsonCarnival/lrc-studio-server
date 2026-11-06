@@ -207,7 +207,7 @@ export const rootSchema = `
     "ISO 3166-1 alpha-2, chosen by the user; null when unset."
     country: String
     countryVisibility: String!
-    defaultProjectPrivacy: String!
+    defaultProjectPrivacy: String! @deprecated(reason: "Every new project is private; always the string private.")
     miniProfileBadgesEnabled: Boolean!
     miniProfileBadgeIds: [String!]!
     showActivityHeatmap: Boolean!
@@ -255,7 +255,7 @@ export const rootSchema = `
     "ISO 3166-1 alpha-2, or null to clear."
     country: String
     countryVisibility: String
-    defaultProjectPrivacy: String
+    defaultProjectPrivacy: String @deprecated(reason: "Ignored; every new project is private.")
     miniProfileBadgesEnabled: Boolean
     miniProfileBadgeIds: [String!]
     showActivityHeatmap: Boolean

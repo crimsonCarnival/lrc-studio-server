@@ -56,7 +56,9 @@ const uid = async (): Promise<string> => {
 const credit = (name: string, role: 'primary' | 'featured') => ({ name, role });
 
 async function create(userId: string, input: Record<string, unknown>) {
-  const r = await createProject({ public: true, ...input }, userId, '127.0.0.1');
+  const r = await createProject(input, userId, '127.0.0.1');
+  // Creation is always private; these tests exercise public projects.
+  if ('publicId' in r) await Project.updateOne({ publicId: r.publicId }, { $set: { public: true } });
   return r as { publicId: string; url: string; error?: string; code?: string; status?: number };
 }
 const stored = (publicId: string) => Project.findOne({ publicId }).lean<{

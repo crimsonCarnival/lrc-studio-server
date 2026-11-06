@@ -22,6 +22,8 @@ const CACHE_TTL_MS = 5 * 60_000; // 5 minutes
 function withDefaults(prefs: IUserPreferences): IUserPreferences {
   return {
     ...prefs,
+    // Removed setting: a stored value from before the removal is ignored.
+    defaultProjectPrivacy: 'private',
     showActivityHeatmap: prefs.showActivityHeatmap === true,
     showXpProgress: prefs.showXpProgress === true,
     showAddictionTitle: prefs.showAddictionTitle !== false,

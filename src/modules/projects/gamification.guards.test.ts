@@ -51,8 +51,10 @@ async function mkUser(extra: Record<string, unknown> = {}): Promise<string> {
   return insertedId.toString();
 }
 async function mkProject(userId: string, lines: unknown[] = [{ text: 'a', timestamp: 1 }, { text: 'b', timestamp: 2 }], pub = true): Promise<string> {
-  const res = await createProject({ title: `T${++seq}`, public: pub, lyrics: { editorMode: 'lrc', sections: [{ label: 'V', lines }] } }, userId, '127.0.0.1');
+  const res = await createProject({ title: `T${++seq}`, lyrics: { editorMode: 'lrc', sections: [{ label: 'V', lines }] } }, userId, '127.0.0.1');
   if (!('publicId' in res)) throw new Error('create failed');
+  // Creation is always private; publish directly for tests that need a public project.
+  if (pub) await Project.updateOne({ publicId: res.publicId }, { $set: { public: true } });
   return res.publicId as string;
 }
 const dayAgo = () => new Date(Date.now() - 86400000);
