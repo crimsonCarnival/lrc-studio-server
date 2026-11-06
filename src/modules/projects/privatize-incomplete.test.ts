@@ -7,7 +7,7 @@ vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Erro
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import Notification from '../notifications/notification.model.js';
-import { privatizeIncomplete } from './privatize-incomplete.service.js';
+import { privatizeIncomplete, parseArgs, describeMongoTarget } from './privatize-incomplete.service.js';
 
 let mongo: MongoMemoryServer;
 beforeAll(async () => {
@@ -22,7 +22,7 @@ beforeEach(async () => {
   await Promise.all([Project.deleteMany({}), Lyrics.deleteMany({}), Notification.deleteMany({})]);
 });
 
-type L = { text?: string; timestamp?: number | null; type?: string };
+type L = { text?: string; timestamp?: number | null; endTime?: number | null; words?: { word: string; time: number | null }[]; type?: string };
 const oid = () => new mongoose.Types.ObjectId();
 
 // Raw inserts keep the fixture exact (no hooks, no defaults) and let us pin updatedAt.
@@ -52,7 +52,7 @@ describe('privatizeIncomplete', () => {
   it('ignores section markers and treats timestamp 0 as timed', async () => {
     await seed('markers0001', [{ type: 'section', timestamp: null }, { timestamp: 0 }, { timestamp: 4 }]);
     const res = await privatizeIncomplete({ dryRun: false });
-    expect(res).toEqual({ matched: [], changed: 0 });
+    expect(res).toEqual({ matched: [], changed: 0, skippedChanged: 0 });
     expect(await isPublic('markers0001')).toBe(true);
   });
 
@@ -68,7 +68,7 @@ describe('privatizeIncomplete', () => {
   it('is idempotent and preserves updatedAt', async () => {
     await seed('partial001', [{ timestamp: null }]);
     expect((await privatizeIncomplete({ dryRun: false })).changed).toBe(1);
-    expect(await privatizeIncomplete({ dryRun: false })).toEqual({ matched: [], changed: 0 });
+    expect(await privatizeIncomplete({ dryRun: false })).toEqual({ matched: [], changed: 0, skippedChanged: 0 });
     const doc = await Project.collection.findOne({ publicId: 'partial001' }) as { updatedAt: Date };
     expect(doc.updatedAt.toISOString()).toBe('2020-01-01T00:00:00.000Z');
     expect(await Notification.countDocuments({})).toBe(1);
@@ -107,5 +107,84 @@ describe('privatizeIncomplete', () => {
     expect(await isPublic('guest000001')).toBe(false);
     expect(await Notification.countDocuments({})).toBe(0);
     expect(evict).toHaveBeenCalledWith('guest000001', null);
+  });
+
+  it('treats words-only lines as timed; endTime-only lines stay untimed', async () => {
+    await seed('wordsonly01', [{ timestamp: null, words: [{ word: 'a', time: null }, { word: 'b', time: 3 }] }]);
+    await seed('endonly0001', [{ timestamp: null, endTime: 5 }]);
+    const res = await privatizeIncomplete({ dryRun: false });
+    expect(res.matched.map((m) => m.publicId)).toEqual(['endonly0001']);
+    expect(await isPublic('wordsonly01')).toBe(true);
+  });
+
+  it('skips a project whose lyrics were completed between scan and write', async () => {
+    await seed('racing00001', [{ timestamp: null }]);
+    const res = await privatizeIncomplete({
+      dryRun: false,
+      beforeWrite: async (id) => {
+        await Lyrics.updateOne({ publicId: id }, { $set: { sections: [{ lines: [{ text: 'x', timestamp: 1 }] }] }, $inc: { version: 1 } });
+      },
+    });
+    expect(res).toMatchObject({ changed: 0, skippedChanged: 1 });
+    expect(await isPublic('racing00001')).toBe(true);
+    expect(await Notification.countDocuments({})).toBe(0);
+  });
+
+  it('skips when the project content stamp changed after the scan', async () => {
+    await seed('racing00002', [{ timestamp: null }]);
+    await Project.collection.updateOne({ publicId: 'racing00002' }, { $set: { contentUpdatedAt: new Date('2021-01-01') } });
+    const res = await privatizeIncomplete({
+      dryRun: false,
+      beforeWrite: async (id) => {
+        await Project.collection.updateOne({ publicId: id }, { $set: { contentUpdatedAt: new Date('2022-01-01') } });
+      },
+    });
+    expect(res).toMatchObject({ changed: 0, skippedChanged: 1 });
+    expect(await isPublic('racing00002')).toBe(true);
+  });
+
+  it('preserves contentUpdatedAt and firstPublishedAt', async () => {
+    await seed('stamps00001', [{ timestamp: null }]);
+    const cu = new Date('2021-05-05T00:00:00Z');
+    const fp = new Date('2021-06-06T00:00:00Z');
+    await Project.collection.updateOne({ publicId: 'stamps00001' }, { $set: { contentUpdatedAt: cu, firstPublishedAt: fp } });
+    expect((await privatizeIncomplete({ dryRun: false })).changed).toBe(1);
+    const doc = await Project.collection.findOne({ publicId: 'stamps00001' }) as { contentUpdatedAt: Date; firstPublishedAt: Date };
+    expect(doc.contentUpdatedAt).toEqual(cu);
+    expect(doc.firstPublishedAt).toEqual(fp);
+  });
+
+  it('a notification failure does not abort the run', async () => {
+    await seed('notiffail001', [{ timestamp: null }]);
+    await seed('notiffail002', [{ timestamp: null }]);
+    const spy = vi.spyOn(Notification, 'create').mockRejectedValueOnce(new Error('boom') as never);
+    const log = vi.fn();
+    const res = await privatizeIncomplete({ dryRun: false, log });
+    spy.mockRestore();
+    expect(res.changed).toBe(2);
+    expect(await isPublic('notiffail001')).toBe(false);
+    expect(await isPublic('notiffail002')).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('notification failed'));
+  });
+});
+
+describe('parseArgs', () => {
+  it('defaults to dry run', () => expect(parseArgs([])).toEqual({ ok: true, apply: false }));
+  it('accepts --apply and explicit --dry-run', () => {
+    expect(parseArgs(['--apply'])).toEqual({ ok: true, apply: true });
+    expect(parseArgs(['--dry-run'])).toEqual({ ok: true, apply: false });
+  });
+  it('rejects --apply with --dry-run and unknown arguments', () => {
+    expect(parseArgs(['--apply', '--dry-run']).ok).toBe(false);
+    expect(parseArgs(['--aply']).ok).toBe(false);
+    expect(parseArgs(['--apply', 'extra']).ok).toBe(false);
+  });
+});
+
+describe('describeMongoTarget', () => {
+  it('strips credentials and query string', () => {
+    expect(describeMongoTarget('mongodb+srv://user:p%40ss@cluster0.x.mongodb.net/lrc?retryWrites=true')).toBe('cluster0.x.mongodb.net/lrc');
+    expect(describeMongoTarget('mongodb://u:p@a:27017,b:27017/db')).toBe('a:27017,b:27017/db');
+    expect(describeMongoTarget('mongodb://localhost:27017')).toBe('localhost:27017/(default db)');
   });
 });
