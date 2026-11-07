@@ -240,6 +240,24 @@ export async function notifyStreakWarning(params: StreakWarningParams): Promise<
   emitToUser(userId, 'notification:push', notification.toObject());
 }
 
+// One-off migration: an owner's incomplete public projects were made private.
+// `meta.kind` + `meta.count` let the client localize it; `body` is the English fallback
+// (the client renders `system` as its raw body today and the server has no UI locale).
+export async function notifyProjectsPrivatized(userId: string, count: number): Promise<void> {
+  const notification = await Notification.create({
+    userId: new mongoose.Types.ObjectId(userId),
+    type: 'system',
+    sticky: false,
+    body: count === 1
+      ? 'Your public project with unsynced lines was made private. Publish it when it is ready.'
+      : `${count} of your public projects with unsynced lines were made private. Publish them when they are ready.`,
+    publicId: null, projectTitle: null, actors: [], actorCount: 0, read: false,
+    meta: { kind: 'projects_privatized', count },
+  });
+  enqueueNotifIfLoaded(userId, notification.toObject() as unknown as INotification);
+  emitToUser(userId, 'notification:push', notification.toObject());
+}
+
 export async function notifyUnban(userId: string): Promise<void> {
   const notification = await Notification.create({
     userId: new mongoose.Types.ObjectId(userId),

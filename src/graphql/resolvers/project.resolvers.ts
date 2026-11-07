@@ -187,7 +187,6 @@ export const projectResolvers = {
         Promise.all([
           updateStreak(context.userId),
           triggerBadgeCheck(context.userId, 'project_create'),
-          ...(input.public ? [triggerBadgeCheck(context.userId, 'project_publish')] : []),
           ...(artist || meta?.songAlbum
             ? [upsertMusicLibraryEntry(context.userId, { artist, album: meta?.songAlbum || '', genre: meta?.songGenre, language: meta?.songLanguage, trackCount: meta?.trackCount })]
             : []),
