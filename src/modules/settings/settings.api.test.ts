@@ -78,6 +78,13 @@ describe('newly persisted client settings', () => {
     expect(doc.autoStamp).toMatchObject({ confidenceThreshold: 0.9, fuzzyTolerance: 0.6, applyMode: 'all' });
   });
 
+  it('stores the date display settings', async () => {
+    const u = uid();
+    await update(u, { advanced: { hourCycle: '24', dateStyle: 'short', showUtcOffset: false } });
+    const stored = ((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).advanced;
+    expect(stored).toMatchObject({ hourCycle: '24', dateStyle: 'short', showUtcOffset: false });
+  });
+
   it('stores keepThemeOnSignOut', async () => {
     const u = uid();
     await update(u, { interface: { keepThemeOnSignOut: false } });

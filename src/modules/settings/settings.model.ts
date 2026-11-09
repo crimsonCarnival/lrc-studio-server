@@ -162,6 +162,9 @@ const advancedSchema = sub({
   autoSaveIndicator: { type: String, enum: ['short', 'normal', 'long'] },
   confirmDestructive: Boolean,
   timezone: { type: String, maxlength: 50, match: /^(auto|[A-Za-z_]+\/[A-Za-z_/]+)$/ },
+  hourCycle: { type: String, enum: ['auto', '12', '24'] },
+  dateStyle: { type: String, enum: ['long', 'short'] },
+  showUtcOffset: Boolean,
 });
 
 const autoStampSchema = sub({

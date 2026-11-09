@@ -161,6 +161,9 @@ export const settingsSchema = `
     autoSaveIndicator: String
     confirmDestructive: Boolean
     timezone: String
+    hourCycle: String
+    dateStyle: String
+    showUtcOffset: Boolean
   }
 
   type AutoSaveSettings {
@@ -347,5 +350,8 @@ export const settingsSchema = `
     autoSaveIndicator: String
     confirmDestructive: Boolean
     timezone: String
+    hourCycle: String
+    dateStyle: String
+    showUtcOffset: Boolean
   }
 `;
