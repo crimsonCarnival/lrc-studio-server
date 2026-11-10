@@ -26,6 +26,21 @@ export const playlistSchema = `
     ALPHABETICAL
   }
 
+  "Sort order for a user's playlists page."
+  enum PlaylistListSort {
+    UPDATED
+    NEWEST
+    SAVES
+    NAME
+  }
+
+  "Owner-only filter on a user's playlists page; other viewers always get public lists only."
+  enum PlaylistVisibilityFilter {
+    ALL
+    PUBLIC
+    PRIVATE
+  }
+
   input CreatePlaylistInput {
     name: String!
     description: String

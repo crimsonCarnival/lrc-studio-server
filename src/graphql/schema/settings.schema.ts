@@ -153,6 +153,12 @@ export const settingsSchema = `
     focusPreview: [String!]
     focusPlayback: [String!]
     captureAdLib: [String!]
+    alignLeft: [String!]
+    alignCenter: [String!]
+    alignRight: [String!]
+    toggleVisualizer: [String!]
+    toggleFullLyrics: [String!]
+    togglePlayer: [String!]
   }
 
 
@@ -337,6 +343,12 @@ export const settingsSchema = `
     focusPreview: [String!]
     focusPlayback: [String!]
     captureAdLib: [String!]
+    alignLeft: [String!]
+    alignCenter: [String!]
+    alignRight: [String!]
+    toggleVisualizer: [String!]
+    toggleFullLyrics: [String!]
+    togglePlayer: [String!]
   }
 
 

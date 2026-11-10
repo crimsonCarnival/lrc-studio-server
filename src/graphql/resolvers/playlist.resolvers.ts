@@ -32,7 +32,16 @@ async function resolveProjects(playlist: LeanPlaylist, viewerId?: string | null)
   if (!playlist.publicIds?.length) return [];
   // Projects by someone in a block relationship with the viewer drop out of the list.
   const blockedSet = await getBlockedSet(viewerId);
-  const docs = (await Project.find({ _id: { $in: playlist.publicIds } }).lean<IProject[]>())
+  // Only projects the viewer could open directly: public ones, or the viewer's
+  // own. Entries are not vetted otherwise — an owner can add their own private
+  // project to a public list, or a project can go private after being added —
+  // so without this a public list leaks private titles and publicIds.
+  // The owner rule is getProject's (projects.crud.service.ts): `ownerActive`,
+  // not `ownerListed`, so a shadow-banned owner's project still shows here just
+  // as it still opens by link.
+  const readable: Record<string, unknown>[] = [{ public: true, ownerActive: { $ne: false } }];
+  if (viewerId) readable.push({ userId: viewerId });
+  const docs = (await Project.find({ _id: { $in: playlist.publicIds }, $or: readable }).lean<IProject[]>())
     .filter((d) => !d.userId || !blockedSet.has(d.userId.toString()));
   const mode = playlist.sortMode;
   if (mode === 'STARS') {
@@ -73,7 +82,8 @@ async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
     isPublic: playlist.isPublic,
     sortMode: playlist.sortMode,
     projects,
-    projectCount: playlist.publicIds?.length ?? 0,
+    // What the viewer can see, not what is stored, so it matches `projects`.
+    projectCount: projects.length,
     savedCount: playlist.savedCount ?? 0,
     viewCount: playlist.viewCount ?? 0,
     shareCount: playlist.shareCount ?? 0,
@@ -82,6 +92,30 @@ async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
     updatedAt: new Date(playlist.updatedAt).toISOString(),
   };
 }
+
+type PlaylistListSort = 'UPDATED' | 'NEWEST' | 'SAVES' | 'NAME';
+type PlaylistVisibilityFilter = 'ALL' | 'PUBLIC' | 'PRIVATE';
+type PlaylistPageResult = { playlists: Awaited<ReturnType<typeof formatPlaylist>>[]; total: number; hasMore: boolean };
+
+const PAGE_DEFAULT_LIMIT = 12;
+const PAGE_MAX_LIMIT = 48;
+const SEARCH_MAX_LENGTH = 60;
+const EMPTY_PAGE: PlaylistPageResult = { playlists: [], total: 0, hasMore: false };
+
+const PLAYLIST_SORTS: Record<PlaylistListSort, Record<string, 1 | -1>> = {
+  UPDATED: { updatedAt: -1, _id: -1 },
+  NEWEST: { createdAt: -1, _id: -1 },
+  SAVES: { savedCount: -1, _id: -1 },
+  NAME: { name: 1, _id: -1 },
+};
+
+function clampPage(offset?: number | null, limit?: number | null): { offset: number; limit: number } {
+  const l = typeof limit === 'number' && Number.isFinite(limit) ? Math.trunc(limit) : PAGE_DEFAULT_LIMIT;
+  const o = typeof offset === 'number' && Number.isFinite(offset) ? Math.trunc(offset) : 0;
+  return { offset: Math.max(0, o), limit: Math.min(PAGE_MAX_LIMIT, Math.max(1, l)) };
+}
+
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function validatePlaylistInput(input: PlaylistInput) {
   if (input.name !== undefined && input.name.trim().length === 0) throw new Error('validation_error');
@@ -120,6 +154,81 @@ export const playlistResolvers = {
       if (!isOwner) filter.isPublic = true;
       const playlists = await Playlist.find(filter).sort({ createdAt: -1 }).limit(100).lean<LeanPlaylist[]>();
       return Promise.all(playlists.map(p => formatPlaylist(p, context)));
+    },
+
+    playlistsPage: async (
+      _root: unknown,
+      args: {
+        accountName: string;
+        offset?: number | null;
+        limit?: number | null;
+        sort?: PlaylistListSort | null;
+        visibility?: PlaylistVisibilityFilter | null;
+        search?: string | null;
+      },
+      context: Context,
+    ): Promise<PlaylistPageResult> => {
+      const user = await findUserByAccountName<LeanUser>(args.accountName);
+      if (!user || user.isDeleted || user.ban?.active) return EMPTY_PAGE;
+      if (await isHiddenByBlock(context.userId, user._id)) return EMPTY_PAGE;
+      const { offset, limit } = clampPage(args.offset, args.limit);
+      const isOwner = !!context.userId && context.userId === user._id.toString();
+
+      const filter: Record<string, unknown> = { userId: user._id };
+      // A non-owner only ever sees public lists; `visibility` is the owner's filter.
+      if (!isOwner) filter.isPublic = true;
+      else if (args.visibility === 'PUBLIC') filter.isPublic = true;
+      else if (args.visibility === 'PRIVATE') filter.isPublic = false;
+
+      const term = (args.search ?? '').trim().slice(0, SEARCH_MAX_LENGTH);
+      if (term) {
+        filter.$or = [
+          { name: { $regex: escapeRegex(term), $options: 'i' } },
+          { tags: term.toLowerCase() },
+        ];
+      }
+
+      const sort = PLAYLIST_SORTS[args.sort ?? 'UPDATED'] ?? PLAYLIST_SORTS.UPDATED;
+      let query = Playlist.find(filter).sort(sort).skip(offset).limit(limit);
+      if (args.sort === 'NAME') query = query.collation({ locale: 'en', strength: 2 });
+      const [docs, total] = await Promise.all([
+        query.lean<LeanPlaylist[]>(),
+        Playlist.countDocuments(filter),
+      ]);
+      const playlists = await Promise.all(docs.map(p => formatPlaylist(p, context)));
+      return { playlists, total, hasMore: offset + docs.length < total };
+    },
+
+    savedPlaylistsPage: async (
+      _root: unknown,
+      args: { offset?: number | null; limit?: number | null },
+      context: Context,
+    ): Promise<PlaylistPageResult> => {
+      if (!context.userId) throw new Error('unauthorized');
+      const { offset, limit } = clampPage(args.offset, args.limit);
+      const blocked = [...await getBlockedSet(context.userId)]
+        .filter(id => mongoose.isValidObjectId(id))
+        .map(id => new mongoose.Types.ObjectId(id));
+      // Same eligibility as savedPlaylists, applied before paging so a list that
+      // went private (or whose owner was banned) can't leave a short page or a
+      // wrong total.
+      const [result] = await SavedPlaylist.aggregate<{ page: LeanPlaylist[]; total: { n: number }[] }>([
+        { $match: { userId: new mongoose.Types.ObjectId(context.userId) } },
+        { $lookup: { from: Playlist.collection.name, localField: 'playlistId', foreignField: '_id', as: 'p' } },
+        { $unwind: '$p' },
+        { $match: { 'p.isPublic': true, 'p.ownerActive': { $ne: false }, 'p.userId': { $nin: blocked } } },
+        { $sort: { savedAt: -1, _id: -1 } },
+        {
+          $facet: {
+            page: [{ $skip: offset }, { $limit: limit }, { $replaceRoot: { newRoot: '$p' } }],
+            total: [{ $count: 'n' }],
+          },
+        },
+      ]);
+      const docs = result?.page ?? [];
+      const total = result?.total[0]?.n ?? 0;
+      const playlists = await Promise.all(docs.map(p => formatPlaylist(p, context)));
+      return { playlists, total, hasMore: offset + docs.length < total };
     },
 
     savedPlaylists: async (_root: unknown, _args: Record<string, unknown>, context: Context) => {

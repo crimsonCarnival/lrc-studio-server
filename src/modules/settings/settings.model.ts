@@ -149,6 +149,12 @@ const shortcutsSchema = sub({
   focusPreview: { type: [shortcutString] },
   focusPlayback: { type: [shortcutString] },
   captureAdLib: { type: [shortcutString] },
+  alignLeft: { type: [shortcutString] },
+  alignCenter: { type: [shortcutString] },
+  alignRight: { type: [shortcutString] },
+  toggleVisualizer: { type: [shortcutString] },
+  toggleFullLyrics: { type: [shortcutString] },
+  togglePlayer: { type: [shortcutString] },
 });
 
 

@@ -39,6 +39,10 @@ export const rootSchema = `
     playlist(id: ID!): Playlist
     playlists(accountName: String!): [Playlist!]!
     savedPlaylists: [Playlist!]!
+    "A user's playlists, paged. Non-owners get public lists only and visibility is ignored."
+    playlistsPage(accountName: String!, offset: Int, limit: Int, sort: PlaylistListSort, visibility: PlaylistVisibilityFilter, search: String): PlaylistPage!
+    "The viewer's saved playlists, newest save first. Requires auth."
+    savedPlaylistsPage(offset: Int, limit: Int): PlaylistPage!
     feed(offset: Int, limit: Int): FeedResult!
     userActivity(offset: Int, limit: Int): FeedResult!
     userActivityHeatmap: [ActivityHeatmapDay!]!
