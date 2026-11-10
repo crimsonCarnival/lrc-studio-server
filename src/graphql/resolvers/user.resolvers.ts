@@ -308,7 +308,7 @@ export const userResolvers = {
       // Unlisted projects are not on a profile: only their owner sees them there.
       const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true, listed: { $ne: false } };
 
-      const playlistFilter = isOwner ? { userId: user._id } : { userId: user._id, isPublic: true };
+      const playlistFilter = isOwner ? { userId: user._id } : { userId: user._id, isPublic: true, listed: { $ne: false } };
 
       const [projects, projectCount, playlistCount, socialTotals] = await Promise.all([
         Project.find(projectFilter)

@@ -7,6 +7,8 @@ export const playlistSchema = `
     coverImage: String
     tags: [String!]!
     isPublic: Boolean!
+    "False on a public list = unlisted: open by link, absent from discovery."
+    listed: Boolean!
     sortMode: PlaylistSortMode!
     projects: [Project!]!
     projectCount: Int!
@@ -38,6 +40,7 @@ export const playlistSchema = `
   enum PlaylistVisibilityFilter {
     ALL
     PUBLIC
+    UNLISTED
     PRIVATE
   }
 
@@ -47,6 +50,8 @@ export const playlistSchema = `
     coverImage: String
     tags: [String!]
     isPublic: Boolean
+    "With isPublic: true, false makes the list unlisted. Defaults to listed whenever isPublic changes."
+    listed: Boolean
     sortMode: PlaylistSortMode
     publicIds: [ID!]
   }
@@ -57,6 +62,8 @@ export const playlistSchema = `
     coverImage: String
     tags: [String!]
     isPublic: Boolean
+    "With isPublic: true, false makes the list unlisted. Defaults to listed whenever isPublic changes."
+    listed: Boolean
     sortMode: PlaylistSortMode
   }
 `;

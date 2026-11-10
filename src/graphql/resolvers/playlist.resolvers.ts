@@ -24,6 +24,7 @@ export interface PlaylistInput {
   coverImage?: string;
   tags?: string[];
   isPublic?: boolean;
+  listed?: boolean;
   sortMode?: string;
   publicIds?: string[];
 }
@@ -81,6 +82,7 @@ async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
     coverImage: playlist.coverImage ?? null,
     tags: playlist.tags ?? [],
     isPublic: playlist.isPublic,
+    listed: playlist.listed !== false,
     sortMode: playlist.sortMode,
     projects,
     // What the viewer can see, not what is stored, so it matches `projects`.
@@ -95,7 +97,7 @@ async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
 }
 
 type PlaylistListSort = 'UPDATED' | 'NEWEST' | 'SAVES' | 'NAME';
-type PlaylistVisibilityFilter = 'ALL' | 'PUBLIC' | 'PRIVATE';
+type PlaylistVisibilityFilter = 'ALL' | 'PUBLIC' | 'UNLISTED' | 'PRIVATE';
 type PlaylistPageResult = { playlists: Awaited<ReturnType<typeof formatPlaylist>>[]; total: number; hasMore: boolean };
 
 const PAGE_DEFAULT_LIMIT = 12;
@@ -151,8 +153,9 @@ export const playlistResolvers = {
       if (!user || user.isDeleted || user.ban?.active) return [];
       if (await isHiddenByBlock(context.userId, user._id)) return [];
       const isOwner = context.userId && context.userId === user._id.toString();
-      const filter: { userId: mongoose.Types.ObjectId; isPublic?: boolean } = { userId: user._id };
-      if (!isOwner) filter.isPublic = true;
+      const filter: { userId: mongoose.Types.ObjectId; isPublic?: boolean; listed?: { $ne: boolean } } = { userId: user._id };
+      // Unlisted lists are not on a profile: only their owner sees them there.
+      if (!isOwner) { filter.isPublic = true; filter.listed = { $ne: false }; }
       const playlists = await Playlist.find(filter).sort({ createdAt: -1 }).limit(100).lean<LeanPlaylist[]>();
       return Promise.all(playlists.map(p => formatPlaylist(p, context)));
     },
@@ -177,8 +180,9 @@ export const playlistResolvers = {
 
       const filter: Record<string, unknown> = { userId: user._id };
       // A non-owner only ever sees public lists; `visibility` is the owner's filter.
-      if (!isOwner) filter.isPublic = true;
-      else if (args.visibility === 'PUBLIC') filter.isPublic = true;
+      if (!isOwner) { filter.isPublic = true; filter.listed = { $ne: false }; }
+      else if (args.visibility === 'PUBLIC') { filter.isPublic = true; filter.listed = { $ne: false }; }
+      else if (args.visibility === 'UNLISTED') { filter.isPublic = true; filter.listed = false; }
       else if (args.visibility === 'PRIVATE') filter.isPublic = false;
 
       const term = (args.search ?? '').trim().slice(0, SEARCH_MAX_LENGTH);
@@ -276,6 +280,7 @@ export const playlistResolvers = {
         coverImage: input.coverImage,
         tags: input.tags ?? [],
         isPublic: input.isPublic ?? true,
+        listed: !((input.isPublic ?? true) && input.listed === false),
         sortMode: (input.sortMode ?? 'DATE_ADDED') as IPlaylist['sortMode'],
         publicIds: objectIds,
         savedCount: 0,
@@ -283,7 +288,8 @@ export const playlistResolvers = {
 
       const playlistObj = playlist.toObject() as LeanPlaylist;
 
-      if (playlist.isPublic) {
+      // Unlisted lists are not announced to followers.
+      if (playlist.isPublic && playlist.listed !== false) {
         const creator = await User.findById(context.userId).select('accountName').lean<LeanUser>();
         if (creator) {
           writeActivity({
@@ -311,6 +317,9 @@ export const playlistResolvers = {
       if (input.coverImage !== undefined) playlist.coverImage = input.coverImage;
       if (input.tags !== undefined) playlist.tags = input.tags;
       if (input.isPublic !== undefined) playlist.isPublic = input.isPublic;
+      // `listed` only means something while public; any visibility change without it resets to listed.
+      if (input.listed !== undefined) playlist.listed = playlist.isPublic ? input.listed : true;
+      else if (input.isPublic !== undefined) playlist.listed = true;
       if (input.sortMode !== undefined) playlist.sortMode = input.sortMode as IPlaylist['sortMode'];
       await playlist.save();
       return formatPlaylist(playlist.toObject() as LeanPlaylist, context);

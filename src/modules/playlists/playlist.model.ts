@@ -7,6 +7,8 @@ export interface IPlaylist {
   coverImage?: string;
   tags: string[];
   isPublic: boolean;
+  /** Only meaningful while `isPublic`. False = unlisted: open by link, kept out of discovery. Absent means listed; query as `{ $ne: false }`. */
+  listed: boolean;
   /** Derived from the owner's moderation state — see modules/users/owner-visibility.service.ts */
   ownerActive: boolean;
   ownerListed: boolean;
@@ -28,6 +30,7 @@ const playlistSchema = new mongoose.Schema<IPlaylist>(
     coverImage: { type: String },
     tags: { type: [String], default: [] },
     isPublic: { type: Boolean, default: true },
+    listed: { type: Boolean, default: true },
     // Denormalized owner-visibility — see modules/users/owner-visibility.service.ts.
     // Derived state: recomputed by syncOwnerVisibility(), never set by a handler.
     ownerActive: { type: Boolean, default: true },
