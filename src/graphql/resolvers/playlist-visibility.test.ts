@@ -1,6 +1,7 @@
 /**
  * Playlist read paths must not leak private content: a public list's private
- * entries stay hidden from everyone but their owner.
+ * entries stay hidden from everyone but their owner, and the paged queries
+ * never hand a non-owner a private list.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import mongoose from 'mongoose';
@@ -96,6 +97,7 @@ type Resolver = (root: unknown, args: Record<string, unknown>, context: Context)
 const q = playlistResolvers.Query as unknown as Record<string, Resolver>;
 
 type ListShape = { name: string; isPublic: boolean; projectCount: number; projects: { publicId: string }[] };
+type PageShape = { playlists: ListShape[]; total: number; hasMore: boolean };
 
 describe('Playlist.projects visibility', () => {
   it("hides a private project in a public list from others, shows it to its owner", async () => {
@@ -125,5 +127,86 @@ describe('Playlist.projects visibility', () => {
     const list = await q.playlist(null, { id: listId }, ctx(owner.id)) as ListShape;
     expect(list.projects).toEqual([]);
     expect(list.projectCount).toBe(0);
+  });
+});
+
+describe('playlistsPage', () => {
+  it('never returns private lists to a non-owner, even with visibility PRIVATE', async () => {
+    const owner = await mkUser();
+    const other = await mkUser();
+    await mkPlaylist(owner.id, { name: 'open', isPublic: true });
+    await mkPlaylist(owner.id, { name: 'hidden', isPublic: false });
+
+    for (const viewer of [undefined, other.id]) {
+      const page = await q.playlistsPage(null, { accountName: owner.accountName, visibility: 'PRIVATE' }, ctx(viewer)) as PageShape;
+      expect(page.playlists.map(p => p.name)).toEqual(['open']);
+      expect(page.total).toBe(1);
+    }
+  });
+
+  it('gives the owner only private lists with visibility PRIVATE', async () => {
+    const owner = await mkUser();
+    await mkPlaylist(owner.id, { name: 'open', isPublic: true });
+    await mkPlaylist(owner.id, { name: 'hidden', isPublic: false });
+    const page = await q.playlistsPage(null, { accountName: owner.accountName, visibility: 'PRIVATE' }, ctx(owner.id)) as PageShape;
+    expect(page.playlists.map(p => p.name)).toEqual(['hidden']);
+    const all = await q.playlistsPage(null, { accountName: owner.accountName }, ctx(owner.id)) as PageShape;
+    expect(all.total).toBe(2);
+  });
+
+  it('treats search input as a literal, matches name or tag', async () => {
+    const owner = await mkUser();
+    await mkPlaylist(owner.id, { name: 'Night Drive' });
+    await mkPlaylist(owner.id, { name: 'other', tags: ['jpop'] });
+    const odd = await q.playlistsPage(null, { accountName: owner.accountName, search: 'a.*(' }, ctx()) as PageShape;
+    expect(odd.playlists).toEqual([]);
+    const byName = await q.playlistsPage(null, { accountName: owner.accountName, search: '  night ' }, ctx()) as PageShape;
+    expect(byName.playlists.map(p => p.name)).toEqual(['Night Drive']);
+    const byTag = await q.playlistsPage(null, { accountName: owner.accountName, search: 'JPOP' }, ctx()) as PageShape;
+    expect(byTag.playlists.map(p => p.name)).toEqual(['other']);
+  });
+
+  it('pages with clamped limits and sorts by name case-insensitively', async () => {
+    const owner = await mkUser();
+    for (const name of ['beta', 'Alpha', 'gamma']) await mkPlaylist(owner.id, { name });
+    const first = await q.playlistsPage(null, { accountName: owner.accountName, sort: 'NAME', limit: 2 }, ctx()) as PageShape;
+    expect(first.playlists.map(p => p.name)).toEqual(['Alpha', 'beta']);
+    expect(first).toMatchObject({ total: 3, hasMore: true });
+    const second = await q.playlistsPage(null, { accountName: owner.accountName, sort: 'NAME', limit: 2, offset: 2 }, ctx()) as PageShape;
+    expect(second.playlists.map(p => p.name)).toEqual(['gamma']);
+    expect(second.hasMore).toBe(false);
+    const zero = await q.playlistsPage(null, { accountName: owner.accountName, limit: 0, offset: -5 }, ctx()) as PageShape;
+    expect(zero.playlists).toHaveLength(1);
+  });
+});
+
+describe('savedPlaylistsPage', () => {
+  it('requires auth', async () => {
+    await expect(q.savedPlaylistsPage(null, {}, ctx())).rejects.toThrow('unauthorized');
+  });
+
+  it('pages over eligible saves only, newest save first', async () => {
+    const owner = await mkUser();
+    const viewer = await mkUser();
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) ids.push(await mkPlaylist(owner.id, { name: `l${i}` }));
+    // Saved newest-first order: l3, l2, l1, l0.
+    for (let i = 0; i < 4; i++) {
+      await SavedPlaylist.create({
+        userId: new mongoose.Types.ObjectId(viewer.id),
+        playlistId: new mongoose.Types.ObjectId(ids[i]),
+        savedAt: new Date(Date.UTC(2026, 0, 1 + i)),
+      });
+    }
+    // The two newest saves stop being visible after they were saved.
+    await Playlist.updateOne({ _id: ids[3] }, { $set: { isPublic: false } });
+    await Playlist.updateOne({ _id: ids[2] }, { $set: { ownerActive: false } });
+
+    const first = await q.savedPlaylistsPage(null, { limit: 1 }, ctx(viewer.id)) as PageShape;
+    expect(first.playlists.map(p => p.name)).toEqual(['l1']);
+    expect(first).toMatchObject({ total: 2, hasMore: true });
+    const second = await q.savedPlaylistsPage(null, { limit: 1, offset: 1 }, ctx(viewer.id)) as PageShape;
+    expect(second.playlists.map(p => p.name)).toEqual(['l0']);
+    expect(second.hasMore).toBe(false);
   });
 });
