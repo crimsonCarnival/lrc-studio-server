@@ -108,6 +108,18 @@ describe('contentUpdatedAt', () => {
     expect((await stamps(id)).contentUpdatedAt!).toBeGreaterThan(before.contentUpdatedAt!);
   });
 
+  it('does not move when a lyrics patch re-sends what is already stored', async () => {
+    const u = await mkOwner();
+    const id = await mkProject(u);
+    const before = await stamps(id);
+
+    // The editor sends endTime: null on lines the stored copy has no endTime for.
+    await patchProject(id, { lyrics: { sectionIdx: 0, lineIdx: 0, line: { text: 'a', timestamp: 1, endTime: null } } }, u);
+    await patchProject(id, { lyrics: { sections: [{ lines: [{ text: 'a', timestamp: 1, endTime: null }] }] } }, u);
+
+    expect((await stamps(id)).contentUpdatedAt).toBe(before.contentUpdatedAt);
+  });
+
   it('is left alone by counter writes (view, star, share)', async () => {
     const u = await mkOwner();
     const id = await mkProject(u);

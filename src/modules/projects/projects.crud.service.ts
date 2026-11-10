@@ -613,9 +613,11 @@ export async function patchProject(
 
   // Same stamp as updateProject, set before `hasProjectUpdate` so a lyrics-only
   // patch still writes the project doc to record when its content last changed.
-  if (data.lyrics !== undefined || updateTouchesContent(project, projectUpdate)) {
+  const projectFieldsChangedContent = updateTouchesContent(project, projectUpdate);
+  if (data.lyrics !== undefined || projectFieldsChangedContent) {
     projectUpdate.contentUpdatedAt = new Date();
   }
+  const previousContentUpdatedAt = (project as unknown as { contentUpdatedAt?: Date | null }).contentUpdatedAt ?? null;
 
   const hasProjectUpdate = Object.keys(projectUpdate).length > 0;
   // No client sends `version` today — opt-in, same as before — but when one
@@ -667,9 +669,22 @@ export async function patchProject(
 
     let updatedLyrics;
     if (data.lyrics !== undefined) {
-      if (trackForHeatmap) lyricsBefore = await readLyricsContent(publicId, session);
+      lyricsBefore = await readLyricsContent(publicId, session);
       updatedLyrics = await patchLyricsWithSession(publicId, data.lyrics, session);
-      if (trackForHeatmap) lyricsAfter = await readLyricsContent(publicId, session);
+      lyricsAfter = await readLyricsContent(publicId, session);
+      // A lyrics patch stamps contentUpdatedAt up front, because the project write comes first
+      // (it carries the version check). When it turns out to have changed nothing, the stamp is
+      // taken back, so re-sending lyrics that are already there is not an edit.
+      if (needsProjectWrite && !projectFieldsChangedContent && lyricsContentEqual(lyricsBefore, lyricsAfter)) {
+        await Project.updateOne(
+          { publicId },
+          previousContentUpdatedAt ? { $set: { contentUpdatedAt: previousContentUpdatedAt } } : { $unset: { contentUpdatedAt: 1 } },
+          { session, timestamps: false },
+        );
+        if (updatedProject.contentUpdatedAt !== undefined) {
+          (updatedProject as unknown as { contentUpdatedAt?: Date | null }).contentUpdatedAt = previousContentUpdatedAt;
+        }
+      }
     } else {
       updatedLyrics = await Lyrics.findOne({ publicId }, null, { session });
     }
@@ -748,7 +763,7 @@ export async function patchProject(
   }
 
   const contentChanged = !!userId && (
-    projectContentChanged(project, updatedProject) || !isDeepStrictEqual(lyricsBefore, lyricsAfter)
+    projectContentChanged(project, updatedProject) || !lyricsContentEqual(lyricsBefore, lyricsAfter)
   );
 
   if (data.lyrics !== undefined && userId) {
@@ -847,6 +862,22 @@ function projectContentChanged(before: ProjectDocLike, after: ProjectDocLike): b
 }
 
 type LyricsContent = { editorMode?: string; language?: string | null; sections?: unknown[] };
+
+/**
+ * Whether two reads of a lyrics doc hold the same content. A null field and a missing one are the
+ * same here: the editor sends `endTime: null` on lines that the stored copy simply lacks, and
+ * writing that back must not look like an edit.
+ */
+function lyricsContentEqual(a: LyricsContent | null, b: LyricsContent | null): boolean {
+  const strip = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(strip);
+    if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+      return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== null && x !== undefined).map(([k, x]) => [k, strip(x)]));
+    }
+    return v;
+  };
+  return isDeepStrictEqual(strip(a), strip(b));
+}
 
 // Lean reads on both sides so defaults/casting can't make an unchanged doc look different.
 function readLyricsContent(publicId: string, session: mongoose.ClientSession): Promise<LyricsContent | null> {
