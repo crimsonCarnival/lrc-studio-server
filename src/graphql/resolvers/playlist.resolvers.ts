@@ -32,7 +32,16 @@ async function resolveProjects(playlist: LeanPlaylist, viewerId?: string | null)
   if (!playlist.publicIds?.length) return [];
   // Projects by someone in a block relationship with the viewer drop out of the list.
   const blockedSet = await getBlockedSet(viewerId);
-  const docs = (await Project.find({ _id: { $in: playlist.publicIds } }).lean<IProject[]>())
+  // Only projects the viewer could open directly: public ones, or the viewer's
+  // own. Entries are not vetted otherwise — an owner can add their own private
+  // project to a public list, or a project can go private after being added —
+  // so without this a public list leaks private titles and publicIds.
+  // The owner rule is getProject's (projects.crud.service.ts): `ownerActive`,
+  // not `ownerListed`, so a shadow-banned owner's project still shows here just
+  // as it still opens by link.
+  const readable: Record<string, unknown>[] = [{ public: true, ownerActive: { $ne: false } }];
+  if (viewerId) readable.push({ userId: viewerId });
+  const docs = (await Project.find({ _id: { $in: playlist.publicIds }, $or: readable }).lean<IProject[]>())
     .filter((d) => !d.userId || !blockedSet.has(d.userId.toString()));
   const mode = playlist.sortMode;
   if (mode === 'STARS') {
@@ -73,7 +82,8 @@ async function formatPlaylist(playlist: LeanPlaylist, context: Context) {
     isPublic: playlist.isPublic,
     sortMode: playlist.sortMode,
     projects,
-    projectCount: playlist.publicIds?.length ?? 0,
+    // What the viewer can see, not what is stored, so it matches `projects`.
+    projectCount: projects.length,
     savedCount: playlist.savedCount ?? 0,
     viewCount: playlist.viewCount ?? 0,
     shareCount: playlist.shareCount ?? 0,
