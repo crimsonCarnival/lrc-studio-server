@@ -24,6 +24,8 @@ export const projectSchema = `
     type: String
     readOnly: Boolean
     public: Boolean
+    "False on a public project = unlisted: open by link, absent from discovery. Absent means listed."
+    listed: Boolean
     lineCount: Int
     syncedLineCount: Int
     userId: ID
@@ -247,6 +249,8 @@ export const projectSchema = `
     title: String
     uploadId: ID
     public: Boolean
+    "With public: true, false makes the project unlisted: anyone with the link can open it, but it is not discoverable. Defaults to listed whenever public changes."
+    listed: Boolean
     readOnly: Boolean
     version: Int
     metadata: ProjectMetadataInput

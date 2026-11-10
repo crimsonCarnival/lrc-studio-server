@@ -17,6 +17,7 @@ import { verifyRecaptcha } from '../auth/auth.service.js';
 import { logUserAction } from '../user-logs/logs.service.js';
 import { withTransaction } from '../../db/transaction.js';
 import { writeActivity, recordHeatmapEvent } from '../activity/activity.service.js';
+import Activity from '../activity/activity.model.js';
 import { isDeepStrictEqual } from 'node:util';
 import { recomputeSyncStats, scheduleSyncStatsRefresh, triggerBadgeCheck, updateStreak } from '../badges/badge.service.js';
 import { recomputeLeaderboardRanking } from '../../jobs/leaderboard-ranking.job.js';
@@ -35,6 +36,7 @@ interface LeanProjectListItem {
   uploadId?: Record<string, unknown> | null;
   readOnly: boolean;
   public?: boolean;
+  listed?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
   forkedFrom?: { publicId?: string | null } | null;
@@ -96,6 +98,8 @@ interface UpdateProjectData {
   metadata?: Record<string, unknown>;
   readOnly?: boolean;
   public?: boolean;
+  /** With `public`: false = unlisted (open by link, not discoverable). Omitted when `public` changes = listed. */
+  listed?: boolean;
   coverImage?: string;
   version?: number;
   /** Caller intent only ('manual' = explicit user save). Absent = autosave. Never proof of change. */
@@ -103,6 +107,17 @@ interface UpdateProjectData {
 }
 
 export type SaveKind = 'manual' | 'auto';
+
+/**
+ * The `listed` value an update writes, or undefined to leave it. It only means something on a
+ * public project, so it is accepted alongside `public: true`; whenever visibility changes without
+ * it, it resets to listed, so an unpublished-then-republished project is never silently unlisted.
+ */
+function resolveListed(data: { public?: boolean; listed?: boolean }, existing: { public?: boolean }): boolean | undefined {
+  if (data.listed === false && (data.public ?? existing.public) !== true) return undefined;
+  if (data.listed !== undefined) return data.listed;
+  return data.public !== undefined ? true : undefined;
+}
 
 // Every client flow that ends in a create (see executeRecaptchaSafe call sites).
 const PROJECT_CREATE_RECAPTCHA_ACTIONS = ['create_project', 'autosave_create', 'restore_project', 'share_project'] as const;
@@ -248,7 +263,7 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('publicId title slug metadata coverImage uploadId readOnly public createdAt updatedAt forkedFrom forkCount starCount viewCount')
+    .select('publicId title slug metadata coverImage uploadId readOnly public listed createdAt updatedAt forkedFrom forkCount starCount viewCount')
     .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist')
     .sort({ updatedAt: -1 })
     .limit(100)
@@ -339,6 +354,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       syncedLineCount: lyrics?.syncedLineCount ?? 0,
       readOnly: s.readOnly,
       public: s.public,
+      listed: s.listed !== false,
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
       forkedFrom: s.forkedFrom?.publicId ? s.forkedFrom : null,
@@ -483,6 +499,8 @@ export async function updateProject(
   if (metadata !== undefined) projectUpdate.metadata = preserveSingers(metadata, project.metadata);
   if (readOnly !== undefined) projectUpdate.readOnly = readOnly;
   if (data.public !== undefined) projectUpdate.public = data.public;
+  const nextListed = resolveListed(data, project);
+  if (nextListed !== undefined) projectUpdate.listed = nextListed;
   if (data.coverImage !== undefined) projectUpdate.coverImage = sanitizeUrl(data.coverImage);
 
   const identityError = applyProjectIdentity(project, projectUpdate);
@@ -596,13 +614,18 @@ export async function patchProject(
 
   // Detect publish transition (false → true) before the transaction overwrites the doc
   const wasPublic = !!project.public;
-  const isPublishing = data.public === true && !wasPublic;
+  // "Publishing" means becoming discoverable, the moment followers are told. Going from unlisted to
+  // listed counts; going from listed to unlisted, or private to unlisted, does not.
+  const wasDiscoverable = wasPublic && project.listed !== false;
+  const nextListed = resolveListed(data, project);
+  const isPublishing = !wasDiscoverable && (data.public ?? wasPublic) === true && (nextListed ?? project.listed !== false) !== false;
 
   const projectUpdate: Record<string, unknown> = {};
   const allowed = ['title', 'uploadId', 'state', 'metadata', 'readOnly', 'public', 'coverImage'] as const;
   for (const key of allowed) {
     if (data[key] !== undefined) projectUpdate[key] = data[key];
   }
+  if (nextListed !== undefined) projectUpdate.listed = nextListed;
   if (data.metadata !== undefined) projectUpdate.metadata = preserveSingers(data.metadata, project.metadata);
 
   const identityError = applyProjectIdentity(project, projectUpdate);
@@ -762,6 +785,12 @@ export async function patchProject(
       .catch(() => {});
   }
 
+  // Made unlisted: its past feed entries must go, or the feed keeps advertising a link the owner
+  // just pulled from discovery. (Making it private has never touched them; that is unchanged.)
+  if (wasDiscoverable && updatedProject?.public && updatedProject.listed === false) {
+    Activity.deleteMany({ publicId, type: { $in: ['project_published', 'project_starred', 'project_forked', 'project_shared'] } }).catch(() => {});
+  }
+
   const contentChanged = !!userId && (
     projectContentChanged(project, updatedProject) || !lyricsContentEqual(lyricsBefore, lyricsAfter)
   );
@@ -775,7 +804,7 @@ export async function patchProject(
   if (trackForHeatmap && userId && contentChanged) {
     recordHeatmapEvent(userId, 'project_edited', publicId).catch(() => {});
     // Followers who asked to hear about edits. Publishing already told the others.
-    if (!firstPublish && updatedProject?.public) {
+    if (!firstPublish && updatedProject?.public && updatedProject.listed !== false) {
       User.findById(userId).select('accountName avatarUrl').lean<{ accountName?: string; avatarUrl?: string | null }>()
         .then((owner) => {
           if (!owner?.accountName) return;

@@ -39,7 +39,8 @@ async function resolveProjects(playlist: LeanPlaylist, viewerId?: string | null)
   // The owner rule is getProject's (projects.crud.service.ts): `ownerActive`,
   // not `ownerListed`, so a shadow-banned owner's project still shows here just
   // as it still opens by link.
-  const readable: Record<string, unknown>[] = [{ public: true, ownerActive: { $ne: false } }];
+  // Unlisted projects stay out of a list for everyone but their owner, so a list cannot become a back door to them.
+  const readable: Record<string, unknown>[] = [{ public: true, listed: { $ne: false }, ownerActive: { $ne: false } }];
   if (viewerId) readable.push({ userId: viewerId });
   const docs = (await Project.find({ _id: { $in: playlist.publicIds }, $or: readable }).lean<IProject[]>())
     .filter((d) => !d.userId || !blockedSet.has(d.userId.toString()));

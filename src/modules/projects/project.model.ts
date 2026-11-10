@@ -20,6 +20,12 @@ export interface IProject extends Document {
   coverImage?: string;
   readOnly: boolean;
   public: boolean;
+  /**
+   * Meaningful only while `public`. False = "unlisted": anyone with the link can open it, but it is
+   * kept out of every discovery surface (Explore, search, profiles, feed, playlists) and search engines.
+   * Absent on rows from before this field, which means listed. Query it as `{ $ne: false }`.
+   */
+  listed: boolean;
   /** Derived from the owner's moderation state — see modules/users/owner-visibility.service.ts */
   ownerActive: boolean;
   ownerListed: boolean;
@@ -202,6 +208,7 @@ const projectSchema = new mongoose.Schema(
     // explicitly publishes it. Guarding the public surface (search, public profile,
     // OG, the Project.user edge) starts here — see F8.
     public: { type: Boolean, default: false },
+    listed: { type: Boolean, default: true },
     // Denormalized owner-visibility. Derived, never set by a request handler:
     // syncOwnerVisibility() recomputes both whenever the owner is deactivated,
     // banned, shadow-banned or restored. `ownerActive` gates every read

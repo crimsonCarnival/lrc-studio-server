@@ -251,7 +251,7 @@ export const projectResolvers = {
 
       // Fetch source metadata before cloning — needed for the activity payload
       const sourceProject = await Project.findOne({ publicId: id })
-        .select('publicId title coverImage userId slug metadata')
+        .select('publicId title coverImage userId slug metadata listed')
         .lean<IProject>();
       if (sourceProject && await isHiddenByBlock(context.userId, ownerIdOf(sourceProject))) {
         throw Object.assign(new Error('Project not found'), { extensions: { code: 'not_found', status: 404 } });
@@ -268,7 +268,8 @@ export const projectResolvers = {
       }
       const cloned = result as { publicId: string; url: string };
 
-      activityTargetPath(sourceProject).then((targetPath) => writeActivity({
+      // Unlisted: no feed entry, same reason as a star.
+      if (sourceProject?.listed !== false) activityTargetPath(sourceProject).then((targetPath) => writeActivity({
         actorId:      context.userId!,
         type:         'project_forked',
         publicId:    id,
@@ -297,7 +298,7 @@ export const projectResolvers = {
         err.status = 401;
         throw err;
       }
-      const project = await Project.findOne({ publicId: id }).select('publicId userId public title coverImage slug metadata').lean<IProject>();
+      const project = await Project.findOne({ publicId: id }).select('publicId userId public listed title coverImage slug metadata').lean<IProject>();
       if (!project || !(await canViewProject(project, context)) || await isHiddenByBlock(context.userId, ownerIdOf(project))) {
         throw new Error('Project not found');
       }
@@ -342,7 +343,8 @@ export const projectResolvers = {
       }
       // writeActivity is outside the upsert try/catch so a duplicate-key swallow
       // doesn't silently suppress the activity error path
-      if (isNewStar && project.userId?.toString() !== context.userId) {
+      // Unlisted: a star would put the project's title and link in the stargazer's followers' feeds.
+      if (isNewStar && project.userId?.toString() !== context.userId && project.listed !== false) {
         activityTargetPath(project).then((targetPath) => writeActivity({
           actorId:      context.userId!,
           type:         'project_starred',
@@ -417,7 +419,8 @@ export const projectResolvers = {
 
       // ownerActive: a share puts the project in followers' feeds, so content from
       // a deactivated or banned owner must not be shareable.
-      const project = await Project.findOne({ publicId, public: true, ownerActive: { $ne: false } }).lean<IProject>();
+      // listed: an unlisted project is for people who have its link, so it cannot be put on a profile.
+      const project = await Project.findOne({ publicId, public: true, listed: { $ne: false }, ownerActive: { $ne: false } }).lean<IProject>();
       if (!project || await isHiddenByBlock(ctx.userId, ownerIdOf(project))) throw new Error('Project not found');
 
       const userId = new mongoose.Types.ObjectId(ctx.userId);

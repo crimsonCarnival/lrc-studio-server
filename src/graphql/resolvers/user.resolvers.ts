@@ -305,7 +305,8 @@ export const userResolvers = {
       }
 
       const isOwner = !!viewerId && viewerId === user._id.toString();
-      const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true };
+      // Unlisted projects are not on a profile: only their owner sees them there.
+      const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true, listed: { $ne: false } };
 
       const playlistFilter = isOwner ? { userId: user._id } : { userId: user._id, isPublic: true };
 
@@ -973,7 +974,7 @@ export const userResolvers = {
       const ownerId = (user._id ?? user.id);
       // Owner/admin see everything; everyone else only the owner's public projects.
       if (await isSelfOrAdmin(user, context)) return Project.find({ userId: ownerId });
-      return Project.find({ userId: ownerId, public: true });
+      return Project.find({ userId: ownerId, public: true, listed: { $ne: false } });
     },
     uploads: async (user: IUser, _args: Record<string, unknown>, context: Context) => {
       if (!(await isSelfOrAdmin(user, context))) return [];

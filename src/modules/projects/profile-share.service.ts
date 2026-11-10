@@ -93,6 +93,7 @@ export async function listProfileShares(
   const projects = await Project.find({
     publicId: { $in: page.map((s) => s.publicId) },
     public: true,
+    listed: { $ne: false },
     ownerActive: { $ne: false },
   }).lean<IProject[]>();
   const blocked = await getBlockedSet(viewerId);

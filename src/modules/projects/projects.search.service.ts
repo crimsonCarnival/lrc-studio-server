@@ -56,7 +56,8 @@ async function searchWithAtlas(
   const visibilityStage = {
     $match: {
       $or: [
-        { ownerListed: true },
+        // Unlisted projects are open by link only: never a search result, except to their owner.
+        { ownerListed: true, listed: { $ne: false } },
         ...(userId ? [{ userId: new mongoose.Types.ObjectId(userId) }] : []),
       ],
     },
@@ -102,7 +103,7 @@ async function searchWithRegex(
     $and: [
       {
         $or: [
-          { public: true, ownerListed: true },
+          { public: true, ownerListed: true, listed: { $ne: false } },
           ...(userId ? [{ userId: new mongoose.Types.ObjectId(userId) }] : [])
         ]
       },

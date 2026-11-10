@@ -175,7 +175,7 @@ export async function checkCondition(user: UserForCondition, def: IBadgeDefiniti
       return n >= (def.conditionValue ?? 0);
     }
     case 'public_project_count': {
-      const n = await Project.countDocuments({ userId: user._id, public: true });
+      const n = await Project.countDocuments({ userId: user._id, public: true, listed: { $ne: false } });
       return n >= (def.conditionValue ?? 0);
     }
     case 'stars_received':

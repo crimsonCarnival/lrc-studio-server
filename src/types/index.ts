@@ -177,6 +177,7 @@ export interface ProjectListItem {
   syncedLineCount: number;
   readOnly: boolean;
   public?: boolean;
+  listed?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
   forkedFrom?: { publicId?: string | null } | null;

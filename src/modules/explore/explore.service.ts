@@ -20,7 +20,7 @@ export async function getTrendingProjects(offset: number, limit: number, viewerI
   // ownerListed: a deactivated, banned or shadow-banned owner's work is not a
   // discovery surface. Denormalized so this stays a single-collection query
   // with an index-provided sort — see modules/users/owner-visibility.service.ts.
-  const filter: Record<string, unknown> = { public: true, ownerListed: true };
+  const filter: Record<string, unknown> = { public: true, ownerListed: true, listed: { $ne: false } };
   if (blockedSet.size > 0) {
     filter.userId = { $nin: [...blockedSet].map((id) => new mongoose.Types.ObjectId(id)) };
   }
@@ -38,7 +38,7 @@ export async function getTrendingProjects(offset: number, limit: number, viewerI
 
 export async function getPopularPlaylists(offset: number, limit: number, viewerId?: string) {
   const blockedSet = await getBlockedSet(viewerId);
-  const filter: Record<string, unknown> = { isPublic: true, ownerListed: true };
+  const filter: Record<string, unknown> = { isPublic: true, ownerListed: true, listed: { $ne: false } };
   if (blockedSet.size > 0) {
     filter.userId = { $nin: [...blockedSet].map((id) => new mongoose.Types.ObjectId(id)) };
   }
@@ -172,9 +172,9 @@ export async function getExploreStats() {
   if (cachedExploreStats && now - exploreStatsCachedAt < EXPLORE_STATS_TTL_MS) return cachedExploreStats;
 
   const [totalProjects, totalUsers, totalPlaylists] = await Promise.all([
-    Project.countDocuments({ public: true, ownerListed: true }),
+    Project.countDocuments({ public: true, ownerListed: true, listed: { $ne: false } }),
     User.countDocuments({ isVerified: true }),
-    Playlist.countDocuments({ isPublic: true, ownerListed: true }),
+    Playlist.countDocuments({ isPublic: true, ownerListed: true, listed: { $ne: false } }),
   ]);
 
   cachedExploreStats = { totalProjects, totalUsers, totalPlaylists };

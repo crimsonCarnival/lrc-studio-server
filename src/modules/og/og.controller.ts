@@ -166,7 +166,7 @@ export async function getProjectOgPage(
   // lookup is for.
   const meta = await resolveProjectMeta(publicId, locale, resolveApiOrigin(request));
 
-  const hidden = meta.robots !== 'index,follow';
+  const hidden = meta.robots !== 'index,follow' && !meta.unlisted;
   // A shared link can carry where to start (?s=); it rides along to the song page. Hidden
   // projects redirect home and keep nothing.
   //

@@ -45,6 +45,8 @@ export type OgMeta = {
   locale: string;
   localeAlternate: string[];
   robots: string;
+  /** A real project card that is deliberately not indexed (unlisted). Not the same as hidden. */
+  unlisted?: true;
   themeColor: string;
   image: OgMetaImage;
   music?: { musician?: string };
@@ -426,8 +428,9 @@ export async function resolveProjectMeta(
   apiOrigin: string,
 ): Promise<OgMeta> {
   const project = await Project.findOne({ publicId, public: true })
-    .select('publicId title slug description metadata userId')
+    .select('publicId title slug description metadata userId listed')
     .lean<{
+      listed?: boolean;
       publicId: string;
       title?: string;
       slug?: string;
@@ -469,7 +472,7 @@ export async function resolveProjectMeta(
     if (lyricLines.length >= LYRIC_LINES_SAMPLED) break;
   }
 
-  return buildProjectMeta(
+  const meta = buildProjectMeta(
     {
       publicId: project.publicId,
       title: project.title,
@@ -483,6 +486,8 @@ export async function resolveProjectMeta(
     locale,
     apiOrigin,
   );
+  // Unlisted: the link still previews and opens, but search engines are told to keep it out.
+  return project.listed === false ? { ...meta, robots: ROBOTS_NOINDEX, unlisted: true } : meta;
 }
 
 async function resolveProfile(
@@ -516,8 +521,8 @@ async function resolveList(
   apiOrigin: string,
 ): Promise<OgMeta> {
   const playlist = await Playlist.findOne({ _id: listId, isPublic: true })
-    .select('name description userId isPublic')
-    .lean<{ name?: string; description?: string; userId?: unknown }>();
+    .select('name description userId isPublic listed')
+    .lean<{ name?: string; description?: string; userId?: unknown; listed?: boolean }>();
 
   if (!playlist?.name) return buildHiddenMeta(locale);
 
@@ -537,11 +542,13 @@ async function resolveList(
   const requested = await findUserByAccountName<{ accountName?: string }>(accountName, 'accountName');
   if (!requested || String(requested._id) !== String(playlist.userId)) return buildHiddenMeta(locale);
 
-  return buildListMeta(
+  const meta = buildListMeta(
     { listId, accountName: owner.accountName, name: playlist.name, description: playlist.description },
     locale,
     apiOrigin,
   );
+  // Unlisted: the link still previews and opens, but search engines are told to keep it out.
+  return playlist.listed === false ? { ...meta, robots: ROBOTS_NOINDEX, unlisted: true } : meta;
 }
 
 /**
