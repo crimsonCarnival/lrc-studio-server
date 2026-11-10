@@ -84,6 +84,8 @@ const CLIENT_SETTINGS = {
     playPause: ['Space'], seekForward: ['ArrowRight'], seekBackward: ['ArrowLeft'], mute: ['m'],
     speedUp: ['+'], speedDown: ['-'], addSecondary: ['Shift+H'], addTranslation: ['Shift+T'],
     toggleTranslation: ['t'], focusSync: ['Ctrl+1'], focusPreview: ['Ctrl+2'], focusPlayback: ['Ctrl+3'],
+    alignLeft: ['Shift+L'], alignCenter: ['Shift+C'], alignRight: ['Shift+R'],
+    toggleVisualizer: ['v'], toggleFullLyrics: ['l'], togglePlayer: ['p'],
   },
   advanced: {
     autoSave: { enabled: true, timeInterval: 60 }, autoSaveIndicator: 'normal',
