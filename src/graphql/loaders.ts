@@ -3,6 +3,7 @@ import type { MercuriusContext } from 'mercurius';
 import User from '../modules/users/user.model.js';
 import Upload from '../modules/uploads/upload.model.js';
 import Lyrics from '../modules/lyrics/lyrics.model.js';
+import Project from '../modules/projects/project.model.js';
 import ProjectStar from '../modules/projects/project-star.model.js';
 import ProfileShare from '../modules/projects/profile-share.model.js';
 import { messageCounts } from '../modules/reports/report-thread.service.js';
@@ -110,7 +111,50 @@ async function reportMessageCountLoader(queries: Array<{ obj: LoaderObj }>): Pro
   return queries.map(({ obj }) => counts.get(String(obj.id)) ?? 0);
 }
 
+const PROJECT_TARGET_ACTIVITIES = new Set(['project_starred', 'project_forked', 'project_shared']);
+
+/**
+ * Who an activity was done to, so a card can say "your project" or "followed you" instead
+ * of naming the viewer like a stranger. A follow's target is the account in its stored
+ * path; a star, fork or share targets the project's owner. Publishing and creating a
+ * playlist have no target. Null when the target is gone.
+ */
+async function activityTargetLoader(queries: Array<{ obj: LoaderObj }>): Promise<Array<LoaderObj | null>> {
+  const accountNames = new Set<string>();
+  const publicIds = new Set<string>();
+  for (const { obj } of queries) {
+    const type = String(obj.type);
+    if (type === 'user_followed' && obj.targetPath) accountNames.add(String(obj.targetPath).replace(/^\//, '').toLowerCase());
+    else if (PROJECT_TARGET_ACTIVITIES.has(type) && obj.publicId) publicIds.add(String(obj.publicId));
+  }
+
+  const owners = publicIds.size > 0
+    ? await Project.find({ publicId: { $in: [...publicIds] } }).select('publicId userId').lean<Array<{ publicId: string; userId?: mongoose.Types.ObjectId | null }>>()
+    : [];
+  const ownerIdByProject = new Map(owners.map((p) => [p.publicId, p.userId?.toString()]));
+  const ownerIds = [...new Set([...ownerIdByProject.values()].filter((id): id is string => !!id))];
+
+  const users = accountNames.size > 0 || ownerIds.length > 0
+    ? await User.find({ isDeleted: { $ne: true }, $or: [{ accountName: { $in: [...accountNames] } }, { _id: { $in: ownerIds } }] })
+        .select('accountName displayName avatarUrl')
+        .lean<Array<{ _id: mongoose.Types.ObjectId; accountName?: string; displayName?: string | null; avatarUrl?: string | null }>>()
+    : [];
+  const byAccount = new Map(users.map((u) => [u.accountName?.toLowerCase(), u]));
+  const byId = new Map(users.map((u) => [u._id.toString(), u]));
+
+  return queries.map(({ obj }) => {
+    const type = String(obj.type);
+    const user = type === 'user_followed'
+      ? byAccount.get(String(obj.targetPath ?? '').replace(/^\//, '').toLowerCase())
+      : PROJECT_TARGET_ACTIVITIES.has(type) ? byId.get(ownerIdByProject.get(String(obj.publicId)) ?? '') : undefined;
+    return user
+      ? { id: user._id.toString(), accountName: user.accountName, displayName: user.displayName ?? null, avatarUrl: user.avatarUrl ?? null }
+      : null;
+  });
+}
+
 export const loaders: MercuriusLoaders = {
+  Activity: { target: { loader: activityTargetLoader } },
   ReportEntry: { messageCount: { loader: reportMessageCountLoader } },
   MyReport: { messageCount: { loader: reportMessageCountLoader } },
   User: { staffRole: staffRoleLoader },

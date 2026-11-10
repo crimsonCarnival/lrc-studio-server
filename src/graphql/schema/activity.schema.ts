@@ -2,6 +2,8 @@ export const activitySchema = `
   type Activity {
     id: ID!
     actor: FollowUser!
+    "Who it was done to: the followed user, or the project's owner for a star, fork or share. Null for the rest, or when they are gone. Only id, accountName, displayName and avatarUrl are populated."
+    target: FollowUser
     type: ActivityType!
     publicId: String!
     projectTitle: String!
