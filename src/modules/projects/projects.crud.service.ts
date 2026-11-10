@@ -787,7 +787,8 @@ export async function patchProject(
 
   // Made unlisted: its past feed entries must go, or the feed keeps advertising a link the owner
   // just pulled from discovery. (Making it private has never touched them; that is unchanged.)
-  if (wasDiscoverable && updatedProject?.public && updatedProject.listed === false) {
+  // Not only from listed: a project made private keeps its old entries, so private then unlisted must clear them too.
+  if (updatedProject?.public && updatedProject.listed === false && !(wasPublic && project.listed === false)) {
     Activity.deleteMany({ publicId, type: { $in: ['project_published', 'project_starred', 'project_forked', 'project_shared'] } }).catch(() => {});
   }
 

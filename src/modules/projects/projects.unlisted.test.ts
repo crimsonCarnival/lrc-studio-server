@@ -108,4 +108,15 @@ describe('unlisted visibility', () => {
     await patchProject(id, { listed: true }, owner);
     await vi.waitFor(async () => expect(await Activity.countDocuments({ publicId: id, type: 'project_published' })).toBe(1));
   });
+
+  it('clears old feed entries even when the project went private before it was made unlisted', async () => {
+    const owner = await mkUser();
+    const id = await mkProject(owner);
+    await patchProject(id, { public: true }, owner);
+    await vi.waitFor(async () => expect(await Activity.countDocuments({ publicId: id, type: 'project_published' })).toBe(1));
+    await patchProject(id, { public: false }, owner);
+    expect(await Activity.countDocuments({ publicId: id })).toBe(1);
+    await patchProject(id, { public: true, listed: false }, owner);
+    await vi.waitFor(async () => expect(await Activity.countDocuments({ publicId: id })).toBe(0));
+  });
 });

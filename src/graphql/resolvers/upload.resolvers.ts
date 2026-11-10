@@ -83,7 +83,9 @@ export const uploadResolvers = {
       if (!uploadId) return [];
       const filter: Record<string, unknown> = { uploadId: String(uploadId) };
       if (!(await canViewPrivateContent(context))) {
-        filter.$or = context.userId ? [{ public: true }, { userId: context.userId }] : [{ public: true }];
+        // Unlisted projects are open by link only, so they are not listed here either (their owner still sees them).
+        const listedPublic = { public: true, listed: { $ne: false } };
+        filter.$or = context.userId ? [listedPublic, { userId: context.userId }] : [listedPublic];
       }
       return Project.find(filter).sort({ updatedAt: -1 });
     }
