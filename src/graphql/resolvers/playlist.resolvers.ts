@@ -10,6 +10,7 @@ import User from '../../modules/users/user.model.js';
 import type { IUser } from '../../modules/users/user.model.js';
 import { Context } from './context.js';
 import { writeActivity } from '../../modules/activity/activity.service.js';
+import Activity from '../../modules/activity/activity.model.js';
 import { visibilityForNewContent } from '../../modules/users/owner-visibility.service.js';
 import { getBlockedSet, isHiddenByBlock } from '../../modules/blocks/block.service.js';
 import { removePlaylist } from '../../modules/playlists/playlists.service.js';
@@ -312,6 +313,7 @@ export const playlistResolvers = {
       const playlist = await Playlist.findById(id);
       if (!playlist) throw new Error('not_found');
       if (playlist.userId.toString() !== context.userId) throw new Error('forbidden');
+      const wasUnlisted = playlist.isPublic && playlist.listed === false;
       if (input.name !== undefined) playlist.name = input.name;
       if (input.description !== undefined) playlist.description = input.description ?? undefined;
       if (input.coverImage !== undefined) playlist.coverImage = input.coverImage;
@@ -322,6 +324,10 @@ export const playlistResolvers = {
       else if (input.isPublic !== undefined) playlist.listed = true;
       if (input.sortMode !== undefined) playlist.sortMode = input.sortMode as IPlaylist['sortMode'];
       await playlist.save();
+      // Made unlisted: its feed entry must go, or the feed keeps advertising a list the owner pulled from discovery.
+      if (playlist.isPublic && playlist.listed === false && !wasUnlisted) {
+        Activity.deleteMany({ publicId: playlist._id.toString(), type: 'playlist_created' }).catch(() => {});
+      }
       return formatPlaylist(playlist.toObject() as LeanPlaylist, context);
     },
 
