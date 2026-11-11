@@ -80,7 +80,7 @@ const CLIENT_SETTINGS = {
     mark: ['Enter'], nudgeLeft: ['Alt+ArrowLeft'], nudgeRight: ['Alt+ArrowRight'],
     nudgeLeftFine: ['Shift+ArrowLeft'], nudgeRightFine: ['Shift+ArrowRight'], addLine: ['Ctrl+Enter'],
     deleteLine: ['Delete'], clearTimestamp: ['Backspace'], captureAdLib: ['a'], switchMode: ['Ctrl+m'],
-    deselect: ['Escape'], showHelp: ['?'], rangeSelect: ['Shift'], toggleSelect: ['Ctrl'],
+    deselect: ['Escape'], showHelp: ['?'], rangeSelect: ['Shift'], toggleSelect: ['Ctrl'], loopClick: ['Shift'],
     playPause: ['Space'], seekForward: ['ArrowRight'], seekBackward: ['ArrowLeft'], mute: ['m'],
     speedUp: ['+'], speedDown: ['-'], addSecondary: ['Shift+H'], addTranslation: ['Shift+T'],
     toggleTranslation: ['t'], focusSync: ['Ctrl+1'], focusPreview: ['Ctrl+2'], focusPlayback: ['Ctrl+3'],

@@ -136,6 +136,7 @@ const shortcutsSchema = sub({
   showHelp: { type: [shortcutString] },
   rangeSelect: { type: [shortcutString] },
   toggleSelect: { type: [shortcutString] },
+  loopClick: { type: [shortcutString] },
   playPause: { type: [shortcutString] },
   seekForward: { type: [shortcutString] },
   seekBackward: { type: [shortcutString] },
