@@ -112,3 +112,29 @@ describe('newly persisted client settings', () => {
     expect(doc.autoStamp?.applyMode).toBeUndefined();
   });
 });
+
+describe('interface tour fields', () => {
+  const stored = async (u: string) =>
+    ((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).interface;
+
+  it('stores editorTourShown and editorTourEnabled', async () => {
+    const u = uid();
+    await update(u, { interface: { editorTourShown: 2, editorTourEnabled: false } });
+    const i = await stored(u);
+    expect(i.editorTourShown).toBe(2);
+    expect(i.editorTourEnabled).toBe(false);
+  });
+
+  it('rejects a negative editorTourShown and leaves the stored value alone', async () => {
+    const u = uid();
+    await update(u, { interface: { editorTourShown: 1 } });
+    await expect(update(u, { interface: { editorTourShown: -1 } })).rejects.toThrow('invalid_tour_count');
+    expect((await stored(u)).editorTourShown).toBe(1);
+  });
+
+  it('rejects editorTourShown above 1000', async () => {
+    const u = uid();
+    await expect(update(u, { interface: { editorTourShown: 1001 } })).rejects.toThrow('invalid_tour_count');
+    expect(await Settings.findOne({ userId: u })).toBeNull();
+  });
+});

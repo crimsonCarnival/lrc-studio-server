@@ -75,6 +75,7 @@ const CLIENT_SETTINGS = {
     theme: 'dark', defaultLanguage: 'en', fontSize: 'normal', fontWeight: 'normal', spacing: 'normal',
     previewAlignment: 'left', focusContrast: 'medium', focusMode: 'default', layoutSwap: false,
     playerTop: false, editorWidth: 50, lockLayout: false, autoHideHeader: false, mobileTab: 'editor', toastPosition: 'bottom-right',
+    editorTourShown: 1, editorTourEnabled: true,
   },
   shortcuts: {
     mark: ['Enter'], nudgeLeft: ['Alt+ArrowLeft'], nudgeRight: ['Alt+ArrowRight'],
