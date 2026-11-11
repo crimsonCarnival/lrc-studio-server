@@ -115,6 +115,7 @@ const interfaceSchema = sub({
   playerTop: { type: Boolean, default: false },
   editorWidth: { type: Number, min: 20, max: 90, default: 50 },
   lockLayout: { type: Boolean, default: false },
+  autoHideHeader: { type: Boolean, default: false },
   mobileTab: { type: String, enum: ['editor', 'preview'], default: 'editor' },
   toastPosition: { type: String, enum: ['bottom-right', 'bottom-center', 'bottom-left'], default: 'bottom-right' },
   keepThemeOnSignOut: { type: Boolean, default: true },
@@ -154,6 +155,7 @@ const shortcutsSchema = sub({
   alignCenter: { type: [shortcutString] },
   alignRight: { type: [shortcutString] },
   toggleVisualizer: { type: [shortcutString] },
+  openVisualizer: { type: [shortcutString] },
   toggleFullLyrics: { type: [shortcutString] },
   togglePlayer: { type: [shortcutString] },
 });

@@ -74,7 +74,7 @@ const CLIENT_SETTINGS = {
   interface: {
     theme: 'dark', defaultLanguage: 'en', fontSize: 'normal', fontWeight: 'normal', spacing: 'normal',
     previewAlignment: 'left', focusContrast: 'medium', focusMode: 'default', layoutSwap: false,
-    playerTop: false, editorWidth: 50, lockLayout: false, mobileTab: 'editor', toastPosition: 'bottom-right',
+    playerTop: false, editorWidth: 50, lockLayout: false, autoHideHeader: false, mobileTab: 'editor', toastPosition: 'bottom-right',
   },
   shortcuts: {
     mark: ['Enter'], nudgeLeft: ['Alt+ArrowLeft'], nudgeRight: ['Alt+ArrowRight'],
@@ -85,7 +85,7 @@ const CLIENT_SETTINGS = {
     speedUp: ['+'], speedDown: ['-'], addSecondary: ['Shift+H'], addTranslation: ['Shift+T'],
     toggleTranslation: ['t'], focusSync: ['Ctrl+1'], focusPreview: ['Ctrl+2'], focusPlayback: ['Ctrl+3'],
     alignLeft: ['Shift+L'], alignCenter: ['Shift+C'], alignRight: ['Shift+R'],
-    toggleVisualizer: ['v'], toggleFullLyrics: ['l'], togglePlayer: ['p'],
+    toggleVisualizer: ['v'], openVisualizer: ['Shift+V'], toggleFullLyrics: ['l'], togglePlayer: ['p'],
   },
   advanced: {
     autoSave: { enabled: true, timeInterval: 60 }, autoSaveIndicator: 'normal',

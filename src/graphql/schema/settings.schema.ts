@@ -120,6 +120,7 @@ export const settingsSchema = `
     playerTop: Boolean
     editorWidth: Float
     lockLayout: Boolean
+    autoHideHeader: Boolean
     mobileTab: String
     toastPosition: String
     "Keep the chosen theme on this browser after signing out. Default true."
@@ -158,6 +159,7 @@ export const settingsSchema = `
     alignCenter: [String!]
     alignRight: [String!]
     toggleVisualizer: [String!]
+    openVisualizer: [String!]
     toggleFullLyrics: [String!]
     togglePlayer: [String!]
   }
@@ -311,6 +313,7 @@ export const settingsSchema = `
     playerTop: Boolean
     editorWidth: Float
     lockLayout: Boolean
+    autoHideHeader: Boolean
     mobileTab: String
     toastPosition: String
     "Keep the chosen theme on this browser after signing out. Default true."
@@ -349,6 +352,7 @@ export const settingsSchema = `
     alignCenter: [String!]
     alignRight: [String!]
     toggleVisualizer: [String!]
+    openVisualizer: [String!]
     toggleFullLyrics: [String!]
     togglePlayer: [String!]
   }
