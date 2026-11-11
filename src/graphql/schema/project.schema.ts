@@ -22,6 +22,8 @@ export const projectSchema = `
     state: ProjectState
     metadata: ProjectMetadata
     type: String
+    "What the project is for. Rows from before this field existed read as song."
+    kind: ProjectKind!
     readOnly: Boolean
     public: Boolean
     "False on a public project = unlisted: open by link, absent from discovery. Absent means listed."
@@ -228,10 +230,18 @@ export const projectSchema = `
     lines: [LinePatchInput!]
   }
 
+  "song: lyrics synced to a track. subtitles: captions timed against a video, edited in the subtitle studio."
+  enum ProjectKind {
+    song
+    subtitles
+  }
+
   input CreateProjectInput {
     title: String
     uploadId: ID
     type: String
+    "Set once at creation and never changed. Omitted means song."
+    kind: ProjectKind
     readOnly: Boolean
     # @deprecated ignored; projects are always created private. Kept for old and new clients.
     public: Boolean

@@ -1,4 +1,4 @@
-import type { ServiceResult, ProjectPublic, ProjectListItem, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
+import type { ServiceResult, ProjectPublic, ProjectListItem, ProjectKind, UploadInfo, SectionEntry, LineEntry } from '../../types/index.js';
 import { migrateLinesToSections, assertLineTimesInRange, assertTimeInRange } from '../lyrics/lyrics.model.js';
 import { notifyFollowedProject } from '../notifications/notifications.events.js';
 import { linkArtistIds, type StoredCredit } from '../artists/artist.service.js';
@@ -34,6 +34,7 @@ interface LeanProjectListItem {
   metadata?: Record<string, unknown>;
   coverImage?: string;
   uploadId?: Record<string, unknown> | null;
+  kind?: ProjectKind;
   readOnly: boolean;
   public?: boolean;
   listed?: boolean;
@@ -71,6 +72,8 @@ interface CreateProjectData {
   duration?: number;
   /** Attribution for what triggered creation (e.g. `uploads_library`), carried from the `ref` URL param. */
   createdFrom?: string;
+  /** Only `subtitles` is honoured; anything else, or nothing, is a song. Fixed at creation. */
+  kind?: string;
 }
 
 // Incoming request body for updateProject / patchProject
@@ -132,6 +135,7 @@ export async function createProject(
     title, uploadId, lyrics, state, metadata, readOnly,
     coverImage, recaptchaToken, ytUrl, uploadUrl, uploadPublicId, fileName, duration, createdFrom,
   } = data;
+  const kind: ProjectKind = data.kind === 'subtitles' ? 'subtitles' : 'song';
 
   if (!userId) {
     return { error: 'Authentication required', status: 401 } as ServiceResult;
@@ -217,6 +221,7 @@ export async function createProject(
       // clients but ignored: publishing is a later, explicit update.
       public: false,
       createdFrom: createdFrom ? createdFrom.slice(0, 64) : null,
+      kind,
       contentUpdatedAt: new Date(),
     }], { session });
 
@@ -226,7 +231,7 @@ export async function createProject(
 
     const [lyricsDoc] = await Lyrics.create([{
       publicId: project.publicId,
-      editorMode: (lyrics?.editorMode || 'lrc') as 'lrc' | 'srt' | 'words',
+      editorMode: (lyrics?.editorMode || (kind === 'subtitles' ? 'srt' : 'lrc')) as 'lrc' | 'srt' | 'words',
       sections: incomingSections,
     }], { session });
 
@@ -263,7 +268,7 @@ export async function createProject(
 
 export async function listProjects(userId: string): Promise<ProjectListItem[]> {
   const projects = await Project.find({ userId })
-    .select('publicId title slug metadata coverImage uploadId readOnly public listed createdAt updatedAt forkedFrom forkCount starCount viewCount')
+    .select('publicId title slug metadata coverImage uploadId kind readOnly public listed createdAt updatedAt forkedFrom forkCount starCount viewCount')
     .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist')
     .sort({ updatedAt: -1 })
     .limit(100)
@@ -350,6 +355,7 @@ export async function listProjects(userId: string): Promise<ProjectListItem[]> {
       coverImage: s.coverImage || '',
       upload: uploadObj,
       editorMode: (lyrics?.editorMode || 'lrc') as 'lrc' | 'srt' | 'words',
+      kind: s.kind ?? 'song',
       lineCount: lyrics?.lineCount ?? 0,
       syncedLineCount: lyrics?.syncedLineCount ?? 0,
       readOnly: s.readOnly,

@@ -56,6 +56,10 @@ export type PrimaryGenre =
   | 'blues' | 'soul' | 'reggae' | 'latin' | 'alternative'
   | 'soundtrack' | 'world' | 'other';
 
+/** `song` is lyrics synced to a track; `subtitles` is captions timed against a video (the subtitle studio). */
+export const PROJECT_KINDS = ['song', 'subtitles'] as const;
+export type ProjectKind = (typeof PROJECT_KINDS)[number];
+
 export const PRIMARY_GENRES: PrimaryGenre[] = [
   'pop','rock','hip_hop','rnb','electronic','jazz','classical',
   'country','folk','metal','blues','soul','reggae','latin',
@@ -175,6 +179,7 @@ export interface ProjectListItem {
   editorMode: string;
   lineCount: number;
   syncedLineCount: number;
+  kind: ProjectKind;
   readOnly: boolean;
   public?: boolean;
   listed?: boolean;

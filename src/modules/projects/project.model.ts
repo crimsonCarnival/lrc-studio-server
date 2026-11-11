@@ -2,7 +2,7 @@ import mongoose, { type Document, type Model } from 'mongoose';
 import { nanoid } from 'nanoid';
 import { stripHtml } from '../../utils/sanitize.js';
 import { projectSlug } from '../../utils/project-slug.js';
-import { PRIMARY_GENRES, type ProjectMetadata, type ProjectState } from '../../types/index.js';
+import { PRIMARY_GENRES, PROJECT_KINDS, type ProjectKind, type ProjectMetadata, type ProjectState } from '../../types/index.js';
 
 export interface IProject extends Document {
   // Mongoose 9 no longer declares the `id` virtual on Document.
@@ -47,6 +47,8 @@ export interface IProject extends Document {
   shareCount: number;
   /** Attribution for what triggered creation (e.g. `uploads_library`). Set once at creation, never updated. */
   createdFrom?: string | null;
+  /** What the project is for. Set once at creation; rows from before the field existed are songs. */
+  kind?: ProjectKind;
   createdAt?: Date;
   updatedAt?: Date;
   /**
@@ -252,6 +254,8 @@ const projectSchema = new mongoose.Schema(
     viewCount: { type: Number, default: 0 },
     shareCount: { type: Number, default: 0 },
     createdFrom: { type: String, default: null, maxlength: 64 },
+    // Not the free-text `type` above, which nothing reads: a closed set the client branches on.
+    kind: { type: String, enum: PROJECT_KINDS, default: 'song' },
     contentUpdatedAt: { type: Date },
     firstPublishedAt: { type: Date, default: null },
   },

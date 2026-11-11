@@ -144,6 +144,8 @@ export async function cloneProject(
       coverImage: sourceProject.coverImage || '',
       readOnly: false,
       public: false,
+      // A fork of a subtitle project stays one: it opens in the studio, not the song editor.
+      kind: sourceProject.kind ?? 'song',
       forkedFrom: {
         publicId: sourcepublicId,
         userId: ((sourceProject.userId as unknown as { _id?: unknown })?._id || sourceProject.userId || null) as mongoose.Types.ObjectId | null,

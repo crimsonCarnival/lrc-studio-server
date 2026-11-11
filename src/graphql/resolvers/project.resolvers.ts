@@ -508,6 +508,8 @@ export const projectResolvers = {
     id: (project: IProject) => project._id?.toString() || project.id || null,
     // Stored for every migrated row; computed for anything the backfill hasn't reached yet.
     slug: (project: IProject) => project.slug || projectSlug(project),
+    // Lean reads skip the schema default, and rows older than the field have none.
+    kind: (project: IProject) => project.kind ?? 'song',
     createdAt: (project: IProject) => project.createdAt ? new Date(project.createdAt).toISOString() : null,
     updatedAt: (project: IProject) => project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
     contentUpdatedAt: (project: IProject) => project.contentUpdatedAt ? new Date(project.contentUpdatedAt).toISOString() : null,
