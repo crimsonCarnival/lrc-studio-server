@@ -41,7 +41,7 @@ beforeEach(async () => {
 async function setup(): Promise<{ userId: string; publicId: string }> {
   const { insertedId } = await User.collection.insertOne({ accountName: 'guard1', email: 'guard1@x.test', passwordHash: 'x' });
   const userId = insertedId.toString();
-  const res = await createProject({ title: 'T' }, userId, '127.0.0.1');
+  const res = await createProject({ title: 'T', lyrics: { editorMode: 'lrc', sections: [{ label: 'V', lines: [{ text: 'a', timestamp: 1 }] }] } }, userId, '127.0.0.1');
   if (!('publicId' in res)) throw new Error('create failed');
   return { userId, publicId: res.publicId as string };
 }

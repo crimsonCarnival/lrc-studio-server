@@ -1,6 +1,7 @@
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
 import { notifyProjectsPrivatized } from '../notifications/notifications.service.js';
+import { countTimedLines, type ReadinessSections } from './publish-readiness.js';
 
 export type PrivatizeMatch = { publicId: string; title: string; timed: number; total: number };
 export type PrivatizeFailure = { publicId: string; error: string };
@@ -113,21 +114,9 @@ export function redactSecrets(text: string, uri = ''): string {
   return out.replace(/mongodb(\+srv)?:\/\/\S+/gi, '<redacted-uri>');
 }
 
-type LyricsLines = { sections?: { lines?: { type?: string; timestamp?: number | null; words?: { time?: number | null }[] | null }[] }[] } | null;
+type LyricsLines = { sections?: ReadinessSections } | null;
 
-/** Section markers are not lyric lines; a timestamp of 0 is timed; a word time also counts. */
-function countLines(lyrics: LyricsLines): { timed: number; total: number } {
-  let timed = 0;
-  let total = 0;
-  for (const section of lyrics?.sections ?? []) {
-    for (const line of section.lines ?? []) {
-      if (line.type === 'section') continue;
-      total++;
-      if (line.timestamp != null || (line.words ?? []).some((w) => w?.time != null)) timed++;
-    }
-  }
-  return { timed, total };
-}
+const countLines = (lyrics: LyricsLines): { timed: number; total: number } => countTimedLines(lyrics?.sections);
 
 /**
  * Makes public projects with any untimed lyric line (or no lyric lines at all)

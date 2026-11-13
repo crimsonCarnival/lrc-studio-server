@@ -36,7 +36,7 @@ async function mkUser(): Promise<string> {
 }
 
 async function mkProject(owner: string): Promise<string> {
-  const res = await createProject({ title: 'Song', lyrics: { editorMode: 'lrc', sections: [{ label: 'V', lines: [{ text: 'a' }] }] } }, owner, '127.0.0.1');
+  const res = await createProject({ title: 'Song', lyrics: { editorMode: 'lrc', sections: [{ label: 'V', lines: [{ text: 'a', timestamp: 1 }] }] } }, owner, '127.0.0.1');
   if (!('publicId' in res)) throw new Error('create failed');
   return res.publicId;
 }

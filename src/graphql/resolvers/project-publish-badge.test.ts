@@ -65,7 +65,7 @@ describe('project_publish badge check', () => {
 
   it('still fires on updateProject public:true', async () => {
     const u = await mkUser();
-    const created = await m.createProject({}, { input: { title: 'T', recaptchaToken: 'x' } }, ctx(u)) as { publicId: string };
+    const created = await m.createProject({}, { input: { title: 'T', lyrics: { editorMode: 'lrc', sections: [{ label: 'V', lines: [{ text: 'a', timestamp: 1 }] }] }, recaptchaToken: 'x' } }, ctx(u)) as { publicId: string };
     triggerBadgeCheck.mockClear();
     await m.updateProject({}, { id: created.publicId, input: { public: true } }, ctx(u));
     await flush();

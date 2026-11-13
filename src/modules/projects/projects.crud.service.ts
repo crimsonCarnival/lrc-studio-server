@@ -25,6 +25,7 @@ import { visibilityForNewContent } from '../users/owner-visibility.service.js';
 import {
   PROJECT_IDENTITY_REQUIRED, cleanTitle, cleanIdentityMetadata, hasProjectIdentity, slugFor, resolveMetadataArtists,
 } from './project-identity.js';
+import { isPublishable, PROJECT_INCOMPLETE, type ReadinessSections } from './publish-readiness.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
   _id: mongoose.Types.ObjectId;
@@ -473,6 +474,33 @@ async function resyncLiveSongMeta(publicId: string): Promise<void> {
 
 const touchesSong = (update: Record<string, unknown>): boolean => SONG_FIELDS.some((k) => k in update);
 
+/**
+ * Refuses a private -> public flip (listed or unlisted) unless the project as it will stand after
+ * this write is finished: a title and every lyric line timed. Judged on the post-update title and,
+ * when the same request carries full `sections`, on those; otherwise on the stored lyrics. A
+ * positional lyrics patch cannot be judged without applying it, so it is refused alongside a
+ * publish — no client sends both, the editor saves first and publishes in a second request.
+ * Runs after applyProjectIdentity so the title is already cleaned.
+ */
+async function publishBlocked(
+  publicId: string,
+  project: { public?: boolean; title?: string },
+  data: UpdateProjectData,
+  projectUpdate: Record<string, unknown>,
+): Promise<ServiceResult | null> {
+  if (data.public !== true || project.public) return null;
+  const title = 'title' in projectUpdate ? (projectUpdate.title as string | undefined) : project.title;
+  let sections: ReadinessSections;
+  if (data.lyrics !== undefined && Array.isArray(data.lyrics.sections)) {
+    sections = data.lyrics.sections as ReadinessSections;
+  } else if (data.lyrics !== undefined && ('lines' in data.lyrics || 'line' in data.lyrics)) {
+    return { error: 'Save lyrics before publishing', status: 400, code: 'publish_with_partial_lyrics' } as ServiceResult;
+  } else {
+    sections = await resolveSections(await Lyrics.findOne({ publicId })) as ReadinessSections;
+  }
+  return isPublishable(title, sections) ? null : ({ ...PROJECT_INCOMPLETE } as ServiceResult);
+}
+
 export async function updateProject(
   publicId: string,
   rawData: unknown,
@@ -511,6 +539,8 @@ export async function updateProject(
 
   const identityError = applyProjectIdentity(project, projectUpdate);
   if (identityError) return identityError as ServiceResult;
+  const incomplete = await publishBlocked(publicId, project, data, projectUpdate);
+  if (incomplete) return incomplete;
   await linkMetadataArtists(userId, projectUpdate.metadata);
   const songChanged = touchesSong(projectUpdate);
   if (songChanged) await syncLiveSongMeta(publicId, songSourceAfter(project as unknown as SongSource, projectUpdate));
@@ -636,6 +666,8 @@ export async function patchProject(
 
   const identityError = applyProjectIdentity(project, projectUpdate);
   if (identityError) return identityError as ServiceResult;
+  const incomplete = await publishBlocked(publicId, project, data, projectUpdate);
+  if (incomplete) return incomplete;
   await linkMetadataArtists(userId, projectUpdate.metadata);
   const songChanged = touchesSong(projectUpdate);
   if (songChanged) await syncLiveSongMeta(publicId, songSourceAfter(project as unknown as SongSource, projectUpdate));
