@@ -1,123 +1,109 @@
 import { PriorityQueue } from '@crimson-carnival/ds-js';
 import ProjectStar from '../modules/projects/project-star.model.js';
 import Project from '../modules/projects/project.model.js';
+import User from '../modules/users/user.model.js';
 import SavedPlaylist from '../modules/playlists/saved-playlist.model.js';
 import Playlist from '../modules/playlists/playlist.model.js';
+import { computeProjectScores, type EngagementEvent, type ScoreInput } from './trending.score.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type CandidateDoc = {
+  publicId: string;
+  userId?: { toString(): string } | null;
+  createdAt: Date;
+  viewCount?: number;
+  metadata?: { description?: string; genre?: string; tags?: string[]; singers?: string[] };
+};
+
+const hasMetadata = (m: CandidateDoc['metadata']): boolean =>
+  !!(m && (m.description || m.genre || m.tags?.length || m.singers?.length));
+
+async function recomputeProjectScores(now: Date): Promise<void> {
+  const ago24h = new Date(now.getTime() - DAY_MS);
+  const ago30d = new Date(now.getTime() - 30 * DAY_MS);
+
+  // Every public project is scored, not just those with recent activity: without
+  // a base score all idle projects tie at 0 and fall back to createdAt order.
+  const candidates = await Project.find({ public: true })
+    .select('publicId userId createdAt viewCount metadata')
+    .lean<CandidateDoc[]>();
+  if (candidates.length === 0) return;
+  const ownerOf = new Map(candidates.map((c) => [c.publicId, c.userId?.toString() ?? null]));
+
+  const [stars, forks] = await Promise.all([
+    ProjectStar.find({ createdAt: { $gte: ago30d } }).select('publicId userId createdAt').lean<{ publicId: string; userId: { toString(): string }; createdAt: Date }[]>(),
+    Project.find({ 'forkedFrom.publicId': { $ne: null }, createdAt: { $gte: ago30d } })
+      .select('userId createdAt forkedFrom.publicId forkedFrom.userId')
+      .lean<{ userId?: { toString(): string } | null; createdAt: Date; forkedFrom: { publicId: string; userId?: { toString(): string } | null } }[]>(),
+  ]);
+
+  type Raw = { publicId: string; kind: 'star' | 'fork'; at: Date; actor: string | null };
+  const raw: Raw[] = [];
+  for (const s of stars) {
+    // An owner starring their own project is a bookmark, not a signal.
+    if (ownerOf.has(s.publicId) && ownerOf.get(s.publicId) !== s.userId.toString()) {
+      raw.push({ publicId: s.publicId, kind: 'star', at: s.createdAt, actor: s.userId.toString() });
+    }
+  }
+  for (const f of forks) {
+    const target = f.forkedFrom.publicId;
+    const actor = f.userId?.toString() ?? null;
+    // Forking your own project is a copy, not social proof.
+    if (ownerOf.has(target) && (!actor || actor !== f.forkedFrom.userId?.toString())) {
+      raw.push({ publicId: target, kind: 'fork', at: f.createdAt, actor });
+    }
+  }
+
+  const actorIds = [...new Set(raw.map((r) => r.actor).filter((a): a is string => !!a))];
+  const actorDocs = actorIds.length
+    ? await User.find({ _id: { $in: actorIds } }).select('createdAt').lean<{ _id: { toString(): string }; createdAt?: Date }[]>()
+    : [];
+  const actorCreated = new Map(actorDocs.map((u) => [u._id.toString(), u.createdAt ?? null]));
+
+  const actions24h = new Map<string, number>();
+  for (const r of raw) {
+    if (r.actor && r.at >= ago24h) actions24h.set(r.actor, (actions24h.get(r.actor) ?? 0) + 1);
+  }
+
+  const eventsByProject = new Map<string, EngagementEvent[]>();
+  for (const r of raw) {
+    const ev: EngagementEvent = {
+      kind: r.kind,
+      at: r.at,
+      actorCreatedAt: r.actor ? actorCreated.get(r.actor) ?? null : null,
+      actorActions24h: r.actor ? actions24h.get(r.actor) ?? 0 : 0,
+    };
+    const list = eventsByProject.get(r.publicId);
+    if (list) list.push(ev);
+    else eventsByProject.set(r.publicId, [ev]);
+  }
+
+  const inputs: ScoreInput[] = candidates.map((c) => ({
+    publicId: c.publicId,
+    ownerId: c.userId?.toString() ?? null,
+    createdAt: c.createdAt,
+    hasMetadata: hasMetadata(c.metadata),
+    viewCount: c.viewCount ?? 0,
+    events: eventsByProject.get(c.publicId) ?? [],
+  }));
+  const scores = computeProjectScores(inputs, now);
+
+  await Project.bulkWrite(
+    [...scores].map(([publicId, trendingScore]) => ({
+      updateOne: { filter: { publicId, public: true }, update: { $set: { trendingScore } } },
+    })),
+    { ordered: false, timestamps: false },
+  );
+}
 
 export async function recomputeTrendingScores(): Promise<void> {
   const now = new Date();
-  const ago24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const ago7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const ago30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const ago24h = new Date(now.getTime() - DAY_MS);
+  const ago7d = new Date(now.getTime() - 7 * DAY_MS);
+  const ago30d = new Date(now.getTime() - 30 * DAY_MS);
 
-  // --- Project stars ---
-  const starStats = await ProjectStar.aggregate<{
-    _id: string;
-    stars24h: number;
-    stars7d: number;
-    stars30d: number;
-  }>([
-    { $match: { createdAt: { $gte: ago30d } } },
-    {
-      $lookup: {
-        from: 'projects',
-        localField: 'publicId',
-        foreignField: 'publicId',
-        as: 'project',
-      },
-    },
-    { $unwind: '$project' },
-    // An owner starring their own project is a bookmark, not a signal.
-    { $match: { 'project.public': true, $expr: { $ne: ['$userId', '$project.userId'] } } },
-    {
-      $group: {
-        _id: '$publicId',
-        stars24h: { $sum: { $cond: [{ $gte: ['$createdAt', ago24h] }, 1, 0] } },
-        stars7d: { $sum: { $cond: [{ $gte: ['$createdAt', ago7d] }, 1, 0] } },
-        stars30d: { $sum: 1 },
-      },
-    },
-  ]);
-
-  // --- Project forks ---
-  const forkStats = await Project.aggregate<{
-    _id: string;
-    forks24h: number;
-    forks7d: number;
-    forks30d: number;
-  }>([
-    {
-      $match: {
-        'forkedFrom.publicId': { $ne: null },
-        createdAt: { $gte: ago30d },
-        // Forking your own project is a copy, not social proof.
-        $expr: { $ne: ['$userId', '$forkedFrom.userId'] },
-      },
-    },
-    {
-      $group: {
-        _id: '$forkedFrom.publicId',
-        forks24h: { $sum: { $cond: [{ $gte: ['$createdAt', ago24h] }, 1, 0] } },
-        forks7d: { $sum: { $cond: [{ $gte: ['$createdAt', ago7d] }, 1, 0] } },
-        forks30d: { $sum: 1 },
-      },
-    },
-    {
-      $lookup: {
-        from: 'projects',
-        localField: '_id',
-        foreignField: 'publicId',
-        as: 'project',
-      },
-    },
-    { $unwind: '$project' },
-    { $match: { 'project.public': true } },
-  ]);
-
-  // Merge stars and forks by publicId
-  const forkMap = new Map(forkStats.map((f) => [f._id, f]));
-  const starMap = new Map(starStats.map((s) => [s._id, s]));
-  const allpublicIds = new Set([...starMap.keys(), ...forkMap.keys()]);
-
-  if (allpublicIds.size > 0) {
-    const projectPQ = new PriorityQueue<{ publicId: string; score: number }>(
-      (a, b) => b.score - a.score  // max-heap: higher scores first
-    );
-
-    // Enqueue each project's score as it's computed
-    for (const pid of allpublicIds) {
-      const s = starMap.get(pid);
-      const f = forkMap.get(pid);
-      const score =
-        7 * (s?.stars24h ?? 0) +
-        3 * (s?.stars7d ?? 0) +
-        1 * (s?.stars30d ?? 0) +
-        14 * (f?.forks24h ?? 0) +
-        6 * (f?.forks7d ?? 0) +
-        2 * (f?.forks30d ?? 0);
-      projectPQ.enqueue({ publicId: pid, score });
-    }
-
-    // Extract in sorted order (highest scores first) and prepare bulk writes
-    const projectWrites: Array<{ updateOne: { filter: { publicId: string; public: boolean }; update: { $set: { trendingScore: number } } } }> = [];
-    while (!projectPQ.isEmpty()) {
-      const item = projectPQ.dequeue()!;
-      projectWrites.push({
-        updateOne: {
-          filter: { publicId: item.publicId, public: true },
-          update: { $set: { trendingScore: item.score } },
-        },
-      });
-    }
-
-    await Project.bulkWrite(projectWrites, { ordered: false, timestamps: false });
-  }
-
-  await Project.updateMany(
-    { public: true, publicId: { $nin: Array.from(allpublicIds) } },
-    { $set: { trendingScore: 0 } },
-    { timestamps: false }
-  );
+  await recomputeProjectScores(now);
 
   // --- Playlists ---
   const playlistStats = await SavedPlaylist.aggregate<{
