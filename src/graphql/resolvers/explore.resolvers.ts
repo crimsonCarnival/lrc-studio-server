@@ -1,4 +1,5 @@
 import { getTrendingProjects, getPopularPlaylists, getSuggestedUsers, getExploreStats } from '../../modules/explore/explore.service.js';
+import { recordExploreEvents, type ExploreEventInput } from '../../modules/explore/explore-event.service.js';
 import { Context } from './context.js';
 
 export const exploreResolvers = {
@@ -26,6 +27,12 @@ export const exploreResolvers = {
     },
     exploreStats: async () => {
       return getExploreStats();
+    },
+  },
+  Mutation: {
+    trackExploreEvents: async (_root: unknown, { events }: { events: ExploreEventInput[] }) => {
+      await recordExploreEvents(events);
+      return true;
     },
   },
 };

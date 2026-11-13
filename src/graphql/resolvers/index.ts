@@ -42,6 +42,7 @@ export const resolvers = {
     ...uploadResolvers.Mutation,
     ...settingsResolvers.Mutation,
     ...playlistResolvers.Mutation,
+    ...exploreResolvers.Mutation,
     ...reactionResolvers.Mutation,
     ...statsResolvers.Mutation,
     ...requestResolvers.Mutation,
