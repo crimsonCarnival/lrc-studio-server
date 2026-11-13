@@ -84,7 +84,7 @@ async function activityTargetPath(project: Pick<IProject, 'publicId' | 'slug' | 
   );
 }
 
-async function evictNonOwnersFromProjectRoom(publicId: string, ownerId: string): Promise<void> {
+export async function evictNonOwnersFromProjectRoom(publicId: string, ownerId: string): Promise<void> {
   try {
     const room = `project:${publicId}`;
     for (const socket of await getIO().in(room).fetchSockets()) {
@@ -213,10 +213,11 @@ export const projectResolvers = {
         if (result.code) Object.assign(statusErr, { extensions: { code: result.code, status: result.status } });
         throw statusErr;
       }
-      const patched = result as { project: unknown };
+      const patched = result as { project: unknown; autoUnpublished?: boolean };
       // Before the broadcast: viewers admitted while it was public must not
-      // receive this update (or any later one) once it is private.
-      if (input.public === false && context.userId) await evictNonOwnersFromProjectRoom(id, context.userId);
+      // receive this update (or any later one) once it is private — including
+      // when the save itself unpublished it for being unfinished.
+      if ((input.public === false || patched.autoUnpublished) && context.userId) await evictNonOwnersFromProjectRoom(id, context.userId);
       emitProjectUpdated(id, input, context.socketId);
       try {
         if (context.socketId) {

@@ -25,7 +25,7 @@ import { visibilityForNewContent } from '../users/owner-visibility.service.js';
 import {
   PROJECT_IDENTITY_REQUIRED, cleanTitle, cleanIdentityMetadata, hasProjectIdentity, slugFor, resolveMetadataArtists,
 } from './project-identity.js';
-import { isPublishable, PROJECT_INCOMPLETE, type ReadinessSections } from './publish-readiness.js';
+import { isPublishable, unpublishIfIncomplete, PROJECT_INCOMPLETE, type ReadinessSections } from './publish-readiness.js';
 // Shape of a lean project from listProjects query (populated uploadId is an object)
 interface LeanProjectListItem {
   _id: mongoose.Types.ObjectId;
@@ -595,6 +595,10 @@ export async function updateProject(
     ? { editorMode: updatedLyrics.editorMode, sections: updateSections }
     : { editorMode: 'lrc', sections: [] };
 
+  if (updatedProject && await unpublishIfIncomplete(
+    publicId, updatedProject, updateSections as ReadinessSections, lyrics !== undefined || 'title' in projectUpdate,
+  )) pub.public = false;
+
   logUserAction({
     userId: userId || null,
     action: 'PROJECT_UPDATE',
@@ -624,7 +628,7 @@ export async function patchProject(
   publicId: string,
   rawData: unknown,
   userId: string | null | undefined
-): Promise<ServiceResult<{ project: ProjectPublic }>> {
+): Promise<ServiceResult<{ project: ProjectPublic; autoUnpublished?: boolean }>> {
   const data = rawData as UpdateProjectData;
   const project = await Project.findOne({ publicId })
     .populate('uploadId', 'source fileName youtubeUrl uploadUrl duration title artist');
@@ -781,6 +785,11 @@ export async function patchProject(
     ? { editorMode: updatedLyrics.editorMode, sections: patchSections }
     : { editorMode: 'lrc', sections: [] };
 
+  const autoUnpublished = await unpublishIfIncomplete(
+    publicId, updatedProject, patchSections as ReadinessSections, data.lyrics !== undefined || 'title' in projectUpdate,
+  );
+  if (autoUnpublished) pub.public = false;
+
   logUserAction({
     userId: userId || null,
     action: 'PROJECT_UPDATE',
@@ -843,7 +852,7 @@ export async function patchProject(
   if (trackForHeatmap && userId && contentChanged) {
     recordHeatmapEvent(userId, 'project_edited', publicId).catch(() => {});
     // Followers who asked to hear about edits. Publishing already told the others.
-    if (!firstPublish && updatedProject?.public && updatedProject.listed !== false) {
+    if (!firstPublish && !autoUnpublished && updatedProject?.public && updatedProject.listed !== false) {
       User.findById(userId).select('accountName avatarUrl').lean<{ accountName?: string; avatarUrl?: string | null }>()
         .then((owner) => {
           if (!owner?.accountName) return;
@@ -858,7 +867,7 @@ export async function patchProject(
     }
   }
 
-  return { project: pub as unknown as ProjectPublic };
+  return { project: pub as unknown as ProjectPublic, autoUnpublished };
 }
 
 const plainMetadata = (m: unknown): Record<string, unknown> | null =>

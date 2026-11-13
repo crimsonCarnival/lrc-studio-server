@@ -4,6 +4,8 @@ import Lyrics from '../../modules/lyrics/lyrics.model.js';
 import { Context } from './context.js';
 import { scheduleSyncStatsRefresh, updateStreak } from '../../modules/badges/badge.service.js';
 import { collabSessionBlocks, assertValidSectionsTiming } from '../../modules/projects/projects.crud.service.js';
+import { unpublishIfIncomplete, type ReadinessSections } from '../../modules/projects/publish-readiness.js';
+import { evictNonOwnersFromProjectRoom } from './project.resolvers.js';
 
 export interface LyricsInput {
   [key: string]: unknown;
@@ -46,6 +48,9 @@ export const lyricsResolvers = {
         updateStreak(context.userId).catch(() => {});
       }
       scheduleSyncStatsRefresh(context.userId);
+      if (input.sections !== undefined && await unpublishIfIncomplete(publicId, project, result?.sections as ReadinessSections, true)) {
+        await evictNonOwnersFromProjectRoom(publicId, context.userId);
+      }
       return result;
     },
   },

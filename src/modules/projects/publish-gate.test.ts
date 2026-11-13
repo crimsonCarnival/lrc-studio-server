@@ -9,6 +9,7 @@ vi.mock('../../lib/job-queue.js', async (orig) => ({ ...(await orig<Record<strin
 
 import Project from './project.model.js';
 import Lyrics from '../lyrics/lyrics.model.js';
+import Notification from '../notifications/notification.model.js';
 import { patchProject, updateProject } from './projects.crud.service.js';
 import { isPublishable } from './publish-readiness.js';
 
@@ -23,7 +24,7 @@ afterAll(async () => {
   await repl.stop();
 });
 beforeEach(async () => {
-  await Promise.all([Project.deleteMany({}), Lyrics.deleteMany({})]);
+  await Promise.all([Project.deleteMany({}), Lyrics.deleteMany({}), Notification.deleteMany({})]);
 });
 
 type L = { text: string; timestamp?: number | null; words?: { word: string; time: number | null }[]; type?: string };
@@ -76,6 +77,30 @@ describe('publish gate', () => {
     const res = await patchProject('position001', { public: true, lyrics: { sectionIdx: 0, lineIdx: 0, line: { text: 'a', timestamp: null } } }, uid);
     expect(codeOf(res)).toBe('publish_with_partial_lyrics');
     expect(await isPublic('position001')).toBe(false);
+  });
+
+  it('unpublishes a public project saved into an unfinished state, and notifies the owner once', async () => {
+    await seed('drift000001', [{ text: 'a', timestamp: 1 }]);
+    await Project.collection.updateOne({ publicId: 'drift000001' }, { $set: { public: true } });
+    const untimed = { sections: [{ label: '', timestamp: null, lines: [{ text: 'a', timestamp: 1 }, { text: 'b', timestamp: null }] }] };
+    const res = await patchProject('drift000001', { lyrics: untimed }, uid) as { project: { public?: boolean }; autoUnpublished?: boolean };
+    expect(res.autoUnpublished).toBe(true);
+    expect(res.project.public).toBe(false);
+    expect(await isPublic('drift000001')).toBe(false);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await Notification.countDocuments({ userId: owner, 'meta.kind': 'projects_privatized' })).toBe(1);
+  });
+
+  it('keeps a public project public when the save leaves it finished, or does not touch lyrics/title', async () => {
+    await seed('stays000001', [{ text: 'a', timestamp: null }]);
+    await Project.collection.updateOne({ publicId: 'stays000001' }, { $set: { public: true } });
+    // Legacy unfinished public row: an unrelated save (state only) does not flip it.
+    await patchProject('stays000001', { state: { activeLineIndex: 0 } }, uid);
+    expect(await isPublic('stays000001')).toBe(true);
+    const timed = { sections: [{ label: '', timestamp: null, lines: [{ text: 'a', timestamp: 2 }] }] };
+    const res = await patchProject('stays000001', { lyrics: timed }, uid) as { autoUnpublished?: boolean };
+    expect(res.autoUnpublished).toBe(false);
+    expect(await isPublic('stays000001')).toBe(true);
   });
 
   it('does not block unpublishing or ordinary edits', async () => {

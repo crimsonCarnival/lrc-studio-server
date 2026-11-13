@@ -32,6 +32,8 @@ import { createLockTable } from './collab.locks.js'
 import { createRevocationLog, type RevocationCapture } from './collab.revocations.js'
 import { docToMeta, docToSections, sanitizeSectionsForLyrics, seedDocFromProject, validEditorMode } from './collab.projection.js'
 import { cleanTitle, hasProjectIdentity, PROJECT_SONG_NAME_MAX, slugFor } from '../projects/project-identity.js'
+import { unpublishIfIncomplete, type ReadinessSections } from '../projects/publish-readiness.js'
+import type mongoose from 'mongoose'
 import { stripHtml } from '../../utils/sanitize.js'
 import { CollabAuthError, resolvePrincipal, type CollabPrincipal } from './collab.auth.js'
 import type { CollabMeta } from './collab.types.js'
@@ -393,13 +395,21 @@ async function storeState(docName: string, document: Y.Doc, state: Buffer, log: 
     // A crash right here leaves lyricsVersion behind Lyrics; fetchState recognises
     // that case by content and keeps the doc (docMatchesLyrics).
     await CollabDoc.updateOne({ name: docName }, { $set: { lyricsVersion: lyrics.version } })
-    const project = await Project.findOne({ publicId }).select('title metadata').lean<SongSource>()
+    const project = await Project.findOne({ publicId }).select('title metadata public userId')
+      .lean<SongSource & { public?: boolean; userId?: mongoose.Types.ObjectId | null }>()
     const metaSet = project ? metaWriteBack(project, docToMeta(document)) : {}
     await Project.updateOne(
       { publicId },
       { $set: { ...metaSet, contentUpdatedAt: new Date() }, $inc: { version: 1 } },
       { runValidators: true },
     )
+    // A session that leaves a public project unfinished unpublishes it, same as a solo save.
+    // Best effort: the lyrics are already stored, and a failure here must not fail the store.
+    if (project) {
+      const title = 'title' in metaSet ? (metaSet as { title?: string }).title : project.title
+      await unpublishIfIncomplete(publicId, { ...project, title }, $set.sections as ReadinessSections, true)
+        .catch((err) => log.error({ err, docName }, 'collab: unpublishing an unfinished project failed'))
+    }
     return true
   } catch (err) {
     // The CollabDoc already holds the truth; a projection failure must not keep the doc from persisting.
