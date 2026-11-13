@@ -24,9 +24,12 @@ export async function getTrendingProjects(offset: number, limit: number, viewerI
   if (blockedSet.size > 0) {
     filter.userId = { $nin: [...blockedSet].map((id) => new mongoose.Types.ObjectId(id)) };
   }
+  // Covered projects first (hasCover, derived from coverImage), then ranking
+  // (recency, engagement decay, owner diversity — baked into trendingScore by
+  // jobs/trending.job.ts). All three keys are in one index, so no in-memory sort.
   const [projects, total] = await Promise.all([
     Project.find(filter)
-      .sort({ trendingScore: -1, createdAt: -1 })
+      .sort({ hasCover: -1, trendingScore: -1, createdAt: -1 })
       .skip(offset)
       .limit(limit)
       .populate('userId', 'accountName displayName avatarUrl'),

@@ -18,6 +18,7 @@ export interface IProject extends Document {
   state?: ProjectState;
   metadata?: ProjectMetadata;
   coverImage?: string;
+  hasCover: boolean;
   readOnly: boolean;
   public: boolean;
   /**
@@ -205,6 +206,8 @@ const projectSchema = new mongoose.Schema(
     state: { type: stateSchema, default: () => ({}) },
     metadata: { type: metadataSchema, default: () => ({}) },
     coverImage: { type: String, default: '', maxlength: 2000, set: textSetter },
+    // Derived from coverImage (see the hooks below); never set directly.
+    hasCover: { type: Boolean, default: false },
     readOnly: { type: Boolean, default: true },
     // Private by default: a project is only discoverable/shareable once the owner
     // explicitly publishes it. Guarding the public surface (search, public profile,
@@ -270,16 +273,40 @@ projectSchema.index({ 'metadata.tags': 1 });
 // Supports public project discovery and trending sorts
 projectSchema.index({ public: 1, starCount: -1 });
 projectSchema.index({ public: 1, createdAt: -1 });
-// createdAt is the explore sort's tiebreak — without it in the key the sort runs
-// in memory. `ownerListed` sits directly after `public` so both equality
+// The explore sort is (hasCover, trendingScore, createdAt): covered projects first,
+// then ranking, createdAt as the tiebreak. All three must be in the key or the sort
+// runs in memory. `ownerListed` sits directly after `public` so both equality
 // predicates form the index prefix and the sort still comes from the key;
 // appending it after the sort fields instead would not be usable.
-projectSchema.index({ public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 });
+projectSchema.index({ public: 1, ownerListed: 1, hasCover: -1, trendingScore: -1, createdAt: -1 });
 projectSchema.index({ forksEnabled: 1 });
 
 projectSchema.pre('validate', function (this: mongoose.Document & IProject) {
   this.slug = projectSlug({ title: this.title, metadata: this.metadata });
+  this.hasCover = !!this.coverImage;
 });
+
+// hasCover is derived from coverImage and exists only so the explore sort can use
+// an index. Keep it in step on every update that touches coverImage, so no writer
+// has to remember. Raw collection writes and bulkWrite bypass this: the backfill
+// script (scripts/backfill-has-cover.ts) repairs any drift.
+function syncHasCover(this: mongoose.Query<unknown, IProject>) {
+  const update = this.getUpdate();
+  if (!update || Array.isArray(update)) return;
+  const u = update as Record<string, unknown>;
+  const set = (u.$set ?? {}) as Record<string, unknown>;
+  const unset = u.$unset as Record<string, unknown> | undefined;
+  // coverImage can arrive in $set, as a bare key (an implicit $set; by the time
+  // this runs the timestamps plugin has often added a $set beside it), or in $unset.
+  let hasCover: boolean | undefined;
+  if ('coverImage' in set) hasCover = !!set.coverImage;
+  else if ('coverImage' in u) hasCover = !!u.coverImage;
+  else if (unset && 'coverImage' in unset) hasCover = false;
+  if (hasCover !== undefined) this.setUpdate({ ...u, $set: { ...set, hasCover } });
+}
+projectSchema.pre('findOneAndUpdate', syncHasCover);
+projectSchema.pre('updateOne', { document: false, query: true }, syncHasCover);
+projectSchema.pre('updateMany', syncHasCover);
 
 export interface IProjectModel extends Model<IProject & IProjectMethods> {}
 

@@ -36,8 +36,9 @@ describe('dropSupersededIndexes', () => {
       'users.rankScore_-1_stats.syncedLines_-1_isDeleted_1',
     ]);
 
-    // The trending indexes now carry `ownerListed` as a second equality key.
-    expect(await names(Project)).toContain('public_1_ownerListed_1_trendingScore_-1_createdAt_-1');
+    // The trending indexes now carry `ownerListed` as a second equality key,
+    // and the project one also `hasCover` (covered projects sort first).
+    expect(await names(Project)).toContain('public_1_ownerListed_1_hasCover_-1_trendingScore_-1_createdAt_-1');
     expect(await names(Project)).not.toContain('public_1_trendingScore_-1');
     expect(await names(Playlist)).toContain('isPublic_1_ownerListed_1_trendingScore_-1_createdAt_-1');
     // Both earlier rankScore indexes are retired in favour of the one that
@@ -52,7 +53,7 @@ describe('dropSupersededIndexes', () => {
   });
 
   it('leaves the old index alone while its replacement is missing', async () => {
-    await Project.collection.dropIndex('public_1_ownerListed_1_trendingScore_-1_createdAt_-1');
+    await Project.collection.dropIndex('public_1_ownerListed_1_hasCover_-1_trendingScore_-1_createdAt_-1');
     await Project.collection.createIndex({ public: 1, trendingScore: -1 });
     // init() is memoised, so the replacement is not rebuilt here — the same
     // state as a replacement build that failed.

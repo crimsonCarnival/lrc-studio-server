@@ -30,8 +30,15 @@ const SUPERSEDED_INDEXES: SupersededIndex[] = [
   // `{public, createdAt}` were left as they are: no query filters `public` and
   // sorts by those off an index (project search sorts after a $search stage or
   // over an $or filter), so widening them would have been churn for nothing.
-  superseded(Project, { public: 1, trendingScore: -1 }, { public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
-  superseded(Project, { public: 1, trendingScore: -1, createdAt: -1 }, { public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
+  // The project form later gained `hasCover` (covered projects sort first), so
+  // the ownerListed form is retired too. All three point at the current index.
+  superseded(Project, { public: 1, trendingScore: -1 }, { public: 1, ownerListed: 1, hasCover: -1, trendingScore: -1, createdAt: -1 }),
+  superseded(Project, { public: 1, trendingScore: -1, createdAt: -1 }, { public: 1, ownerListed: 1, hasCover: -1, trendingScore: -1, createdAt: -1 }),
+  superseded(
+    Project,
+    { public: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 },
+    { public: 1, ownerListed: 1, hasCover: -1, trendingScore: -1, createdAt: -1 },
+  ),
   superseded(Playlist, { isPublic: 1, trendingScore: -1 }, { isPublic: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
   superseded(Playlist, { isPublic: 1, trendingScore: -1, createdAt: -1 }, { isPublic: 1, ownerListed: 1, trendingScore: -1, createdAt: -1 }),
   // Both earlier rankScore indexes are prefixes of the current one, so it
