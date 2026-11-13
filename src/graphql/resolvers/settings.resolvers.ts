@@ -28,6 +28,10 @@ export const settingsResolvers = {
       if (typeof custom === 'string' && custom.length > MAX_CUSTOM_THEME_LENGTH) {
         throw new mercurius.ErrorWithProps('custom_theme_too_large', { code: 'custom_theme_too_large' });
       }
+      const tourShown = (input.interface as { editorTourShown?: unknown } | undefined)?.editorTourShown;
+      if (tourShown != null && !(Number.isInteger(tourShown) && (tourShown as number) >= 0 && (tourShown as number) <= 1000)) {
+        throw new mercurius.ErrorWithProps('invalid_tour_count', { code: 'invalid_tour_count' });
+      }
       return Settings.findOneAndUpdate(
         { userId: context.userId },
         // Per-field paths: a partial group (e.g. only `export.stripEmptyLines`) must not erase its siblings.

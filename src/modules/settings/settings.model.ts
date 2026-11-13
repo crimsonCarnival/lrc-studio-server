@@ -119,6 +119,9 @@ const interfaceSchema = sub({
   mobileTab: { type: String, enum: ['editor', 'preview'], default: 'editor' },
   toastPosition: { type: String, enum: ['bottom-right', 'bottom-center', 'bottom-left'], default: 'bottom-right' },
   keepThemeOnSignOut: { type: Boolean, default: true },
+  // Editor tour: times shown automatically on a new project, and the opt-out. The count's range is enforced in updateSettings.
+  editorTourShown: { type: Number, min: 0, max: 1000, default: 0 },
+  editorTourEnabled: { type: Boolean, default: true },
 });
 
 const shortcutString = { type: String, maxlength: 50, match: /^[a-zA-Z0-9+\-_.?!@#$%^&*()=[\]{}|;:',<>/~`]+$/ };
