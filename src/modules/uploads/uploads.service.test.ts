@@ -17,13 +17,13 @@ const sign = (fileName: string) =>
 describe('generateAudioSignature transcoding', () => {
   it('signs an AAC transcode for lossless input, so the client cannot drop it', async () => {
     const res = await sign('song.wav');
-    expect(res).toMatchObject({ format: 'm4a', transformation: 'ac_aac,br_128k' });
+    expect(res).toMatchObject({ format: 'm4a', transformation: 'ac_aac,br_128k,f_m4a' });
     const expected = cloudinary.utils.api_sign_request({
       timestamp: res.timestamp as number,
       folder: res.folder as string,
       allowed_formats: res.allowedFormats as string,
       format: 'm4a',
-      transformation: 'ac_aac,br_128k',
+      transformation: 'ac_aac,br_128k,f_m4a',
     }, 'secret');
     expect(res.signature).toBe(expected);
   });
