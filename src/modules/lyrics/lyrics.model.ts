@@ -30,7 +30,11 @@ export function assertLineTimesInRange(line: unknown, context: string): void {
   assertTimeInRange(l.endTime, context);
   assertTimeInRange(l.adLibOf, context);
   for (const list of [l.words, l.secondaryWords]) {
-    if (Array.isArray(list)) for (const w of list) assertTimeInRange((w as { time?: unknown } | null)?.time, context);
+    if (Array.isArray(list)) for (const w of list) {
+      const word = w as { time?: unknown; end?: unknown } | null;
+      assertTimeInRange(word?.time, context);
+      assertTimeInRange(word?.end, context);
+    }
   }
 }
 
@@ -39,6 +43,8 @@ const wordSchema = new mongoose.Schema(
   {
     word: { type: String, default: '', maxlength: 500, set: textSetter },
     time: timeField,
+    // Where the word stops, when it is not simply where the next one starts (a pause).
+    end: timeField,
     reading: { type: String, default: '', maxlength: 500, set: textSetter },
     singerIndex: { type: Number, default: null, min: 0 },
   },

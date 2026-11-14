@@ -3,6 +3,8 @@
 export interface WordEntry {
   word: string;
   time: number | null;
+  /** Where the word stops when that is not where the next one starts. */
+  end?: number | null;
   reading?: string;
   singerIndex?: number;
 }

@@ -978,7 +978,7 @@ function assertValidLineSource(line: { source?: unknown }, context: string): voi
     throw Object.assign(new Error(`${context}: invalid source`), { statusCode: 422 });
   }
 }
-const WORD_FIELDS = new Set(['id', 'word', 'time', 'reading', 'singerIndex']);
+const WORD_FIELDS = new Set(['id', 'word', 'time', 'end', 'reading', 'singerIndex']);
 
 function isValidIndex(n: unknown, max: number): n is number {
   return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max;

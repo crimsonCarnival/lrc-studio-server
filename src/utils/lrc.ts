@@ -10,12 +10,14 @@ export type { SrtConfig } from './srt.js';
 export interface WordEntry {
   word: string;
   time?: number | null;
+  end?: number | null;
   reading?: string;
 }
 
 export interface SecondaryWordEntry {
   word: string;
   time?: number | null;
+  end?: number | null;
 }
 
 export interface LineEntry {
@@ -50,7 +52,7 @@ function buildSecondaryText(line: LineEntry, wordPrecision?: string): string | n
   return line.secondary || null;
 }
 
-function formatWordsToLrc(words: Array<{ word: string; time?: number | null }>, precision = 'hundredths'): string {
+function formatWordsToLrc(words: Array<{ word: string; time?: number | null; end?: number | null }>, precision = 'hundredths'): string {
   const cjk = (ch: string): boolean => {
     const c = ch?.codePointAt(0) ?? 0;
     return (c >= 0x3000 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF) ||
@@ -58,8 +60,12 @@ function formatWordsToLrc(words: Array<{ word: string; time?: number | null }>, 
   };
   return words.map((w, i, arr) => {
     const ts = w.time != null ? formatWordTimestamp(w.time, precision) : '';
-    const token = `${ts}${w.word}`;
     const next = arr[i + 1];
+    // A word that stops before the next one starts (a pause, or the last word ending
+    // before the line does) closes with an empty timed token, as enhanced LRC writes it.
+    const closes = w.time != null && w.end != null && w.end > w.time
+      && (next?.time == null || next.time - w.end > 0.005);
+    const token = `${ts}${w.word}${closes ? formatWordTimestamp(w.end!, precision) : ''}`;
     if (!next) return token;
     const lastChar = w.word.slice(-1);
     const firstChar = next.word.slice(0, 1);
@@ -171,6 +177,8 @@ export function parseWordTimestamps(text: string): WordEntry[] {
     const time = parseInt(match[1], 10) * 60 + parseFloat(match[2]);
     const word = match[3].trimEnd();
     if (word) words.push({ word, time });
+    // An empty timed token closes the word before it: that word ends there.
+    else if (words.length && time > (words[words.length - 1].time ?? -1)) words[words.length - 1].end = time;
   }
   const hasCJK = words.some(w => CJK_CHAR_RE.test(w.word));
   if (hasCJK && words.length > 0) {
@@ -200,7 +208,9 @@ export function parseWordTimestamps(text: string): WordEntry[] {
         const t = duration != null
           ? w.time! + (duration * si / subTokens.length)
           : w.time! + si * 0.1;
-        expanded.push({ word: token, time: parseFloat(t.toFixed(3)) });
+        const piece: WordEntry = { word: token, time: parseFloat(t.toFixed(3)) };
+        if (si === subTokens.length - 1 && w.end != null) piece.end = w.end;
+        expanded.push(piece);
       });
     });
     return expanded;
