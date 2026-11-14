@@ -83,9 +83,15 @@ export type CollabSessionSummary = {
   /** The caller's role in it. */
   role: CollabRole
   memberCount: number
+  /** Up to MEMBER_PREVIEW members, for the avatar stack. */
+  members: CollabMemberPreview[]
+  coverImage: string | null
   createdAt: string
   lastActivityAt: string
 }
+
+export type CollabMemberPreview = { name: string; avatarUrl: string | null; colorIndex: number }
+const MEMBER_PREVIEW = 5
 
 /** Live sessions the caller owns or is a signed-in member of (not kicked), newest activity first. */
 export async function listMySessions(userId: string | null | undefined): Promise<CollabSessionSummary[]> {
@@ -101,8 +107,8 @@ export async function listMySessions(userId: string | null | undefined): Promise
     .lean<Array<SessionDoc & { createdAt: Date; lastActivityAt: Date }>>()
   if (sessions.length === 0) return []
   const projects = await Project.find({ publicId: { $in: sessions.map((s) => s.publicId) } })
-    .select('publicId title metadata')
-    .lean<Array<{ publicId: string; title?: string; metadata?: { songName?: string; songArtist?: string } }>>()
+    .select('publicId title metadata coverImage')
+    .lean<Array<{ publicId: string; title?: string; coverImage?: string | null; metadata?: { songName?: string; songArtist?: string } }>>()
   const byId = new Map(projects.map((p) => [p.publicId, p]))
   return sessions.map((s) => {
     const p = byId.get(s.publicId)
@@ -114,6 +120,8 @@ export async function listMySessions(userId: string | null | undefined): Promise
       songArtist: p?.metadata?.songArtist ?? '',
       role: owner ? 'owner' : (s.members.find((m) => m.subject === subject)?.role ?? 'viewer'),
       memberCount: s.members.length,
+      members: s.members.slice(0, MEMBER_PREVIEW).map((m) => ({ name: m.name, avatarUrl: m.avatarUrl ?? null, colorIndex: m.colorIndex })),
+      coverImage: p?.coverImage ?? null,
       createdAt: s.createdAt.toISOString(),
       lastActivityAt: s.lastActivityAt.toISOString(),
     }

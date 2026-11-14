@@ -57,45 +57,97 @@ export async function getPopularPlaylists(offset: number, limit: number, viewerI
   return { playlists, total, hasMore: offset + playlists.length < total };
 }
 
-export async function getSuggestedUsers(viewerId: string, limit: number) {
-  if (!viewerId) return [];
+/** Why a user is suggested, so the client can say it ("Followed by Ana", "Radiohead in common"). */
+export type SuggestionReason = {
+  kind: 'MUTUAL' | 'TASTE' | 'NEW';
+  /** MUTUAL: how many people the viewer follows also follow this user, and one of them by name. */
+  mutualCount: number;
+  mutualName: string | null;
+  /** TASTE: artists in both music libraries (up to three, as this user spelled them) and their total. */
+  sharedArtistCount: number;
+  sharedArtists: string[];
+};
+
+export type SuggestedUser = {
+  id: string;
+  accountName: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  staffRole: string | null;
+  /** Always false: everyone the viewer follows is left out. */
+  isFollowedByMe: false;
+  suggestionReason: SuggestionReason;
+};
+
+interface SuggestedUserLean extends UserLean {
+  role?: string | null;
+}
+
+const SUGGESTED_USER_FIELDS = 'accountName displayName avatarUrl role';
+const MAX_SHARED_ARTISTS = 3;
+
+type Candidate = { score: number; mutualIds: string[]; sharedArtists: string[] };
+
+function toSuggested(u: SuggestedUserLean, reason: SuggestionReason): SuggestedUser {
+  return {
+    id: u._id.toString(),
+    accountName: u.accountName ?? null,
+    displayName: u.displayName ?? null,
+    avatarUrl: u.avatarUrl ?? null,
+    staffRole: u.role && u.role !== 'user' ? u.role : null,
+    isFollowedByMe: false,
+    suggestionReason: reason,
+  };
+}
+
+const NEW_USER_REASON: SuggestionReason = { kind: 'NEW', mutualCount: 0, mutualName: null, sharedArtistCount: 0, sharedArtists: [] };
+
+/**
+ * People the viewer might follow, best first: friends of friends (someone the viewer
+ * follows follows them) and music-taste matches, topped up with the newest users when
+ * those run short. Never the viewer, anyone they follow, or anyone blocked either way.
+ */
+export async function getSuggestedUsers(viewerId: string, limit: number): Promise<SuggestedUser[]> {
+  if (!viewerId || !mongoose.isValidObjectId(viewerId)) return [];
 
   const viewerObjectId = new mongoose.Types.ObjectId(viewerId);
   const blockedSet = await getBlockedSet(viewerId);
-  const blockedOids = [...blockedSet].map((id) => new mongoose.Types.ObjectId(id));
 
   const following = await Follow.find({ followerId: viewerObjectId }).select('followingId').lean();
   const followingIds = following.map((f) => f.followingId);
-  const followingSet = new Set(followingIds.map(id => id.toString()));
+  const followingSet = new Set(followingIds.map((id) => id.toString()));
+  const excluded = (id: string) => id === viewerId || followingSet.has(id) || blockedSet.has(id);
 
-  // Collect candidates from two sources: friends-of-friends AND music taste matches.
-  const candidateScores = new Map<string, number>();
+  const candidates = new Map<string, Candidate>();
+  const candidate = (id: string): Candidate => {
+    let c = candidates.get(id);
+    if (!c) { c = { score: 0, mutualIds: [], sharedArtists: [] }; candidates.set(id, c); }
+    return c;
+  };
 
-  // Source 1: friends-of-friends via in-memory Graph BFS (replaces DB aggregation)
-  const myNeighbors = socialGraph.neighbors(viewerId);
-  for (const neighborId of myNeighbors) {
+  // Source 1: friends of friends via the in-memory follow graph (directed: neighbors = followees).
+  for (const neighborId of socialGraph.neighbors(viewerId)) {
     if (blockedSet.has(neighborId)) continue;
-    const theirNeighbors = socialGraph.neighbors(neighborId);
-    for (const candidateId of theirNeighbors) {
-      if (candidateId === viewerId) continue;
-      if (followingSet.has(candidateId)) continue; // already following
-      if (blockedSet.has(candidateId)) continue;
-      candidateScores.set(candidateId, (candidateScores.get(candidateId) ?? 0) + 2);
+    for (const candidateId of socialGraph.neighbors(neighborId)) {
+      if (excluded(candidateId)) continue;
+      const c = candidate(candidateId);
+      c.score += 2;
+      c.mutualIds.push(neighborId);
     }
   }
 
-  // Source 2: music taste — users sharing artists from viewer's musicLibrary
+  // Source 2: music taste, users sharing artists from the viewer's musicLibrary.
   const viewer = await User.findById(viewerObjectId).select('musicLibrary').lean<{ musicLibrary?: Array<{ artist: string }> }>();
   const viewerArtists = new Set(
     (viewer?.musicLibrary ?? [])
-      .map(e => e.artist?.toLowerCase().trim())
-      .filter(Boolean)
+      .map((e) => e.artist?.toLowerCase().trim())
+      .filter(Boolean),
   );
 
   if (viewerArtists.size > 0) {
     const tasteMatches = await User.find({
-      _id: { $ne: viewerObjectId, $nin: blockedOids },
-      'musicLibrary.artist': { $in: [...viewerArtists].map(a => new RegExp(`^${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) },
+      _id: { $ne: viewerObjectId, $nin: [...blockedSet].map((id) => new mongoose.Types.ObjectId(id)) },
+      'musicLibrary.artist': { $in: [...viewerArtists].map((a) => new RegExp(`^${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) },
       ...ACTIVE_USER_FILTER,
     })
       .select('_id musicLibrary')
@@ -104,61 +156,64 @@ export async function getSuggestedUsers(viewerId: string, limit: number) {
 
     for (const u of tasteMatches) {
       const id = u._id.toString();
-      if (followingSet.has(id) || blockedSet.has(id)) continue;
-      const overlap = (u.musicLibrary ?? []).filter(e =>
-        viewerArtists.has(e.artist?.toLowerCase().trim())
-      ).length;
-      if (overlap > 0) {
-        candidateScores.set(id, (candidateScores.get(id) ?? 0) + overlap);
+      if (excluded(id)) continue;
+      const shared = new Map<string, string>();
+      for (const e of u.musicLibrary ?? []) {
+        const key = e.artist?.toLowerCase().trim();
+        if (key && viewerArtists.has(key) && !shared.has(key)) shared.set(key, e.artist.trim());
       }
+      if (shared.size === 0) continue;
+      const c = candidate(id);
+      c.score += shared.size;
+      c.sharedArtists = [...shared.values()];
     }
   }
 
-  // Fetch and return top candidates by score
-  if (candidateScores.size > 0) {
-    const ranked = [...candidateScores.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, limit * 2)
-      .map(([id]) => id);
+  const ranked = [...candidates.entries()]
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, limit * 2)
+    .map(([id]) => id);
 
-    const users = await User.find({
-      _id: { $in: ranked },
-      ...ACTIVE_USER_FILTER,
-    })
-      .select('accountName displayName avatarUrl')
-      .lean<UserLean[]>();
+  const results: SuggestedUser[] = [];
+  if (ranked.length > 0) {
+    const users = await User.find({ _id: { $in: ranked }, ...ACTIVE_USER_FILTER })
+      .select(SUGGESTED_USER_FIELDS)
+      .lean<SuggestedUserLean[]>();
+    const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+    const top = ranked.filter((id) => userMap.has(id)).slice(0, limit);
 
-    // Re-sort by score
-    const userMap = new Map(users.map(u => [u._id.toString(), u]));
-    const sorted = ranked
-      .map(id => userMap.get(id))
-      .filter((u): u is UserLean => !!u)
-      .slice(0, limit);
+    // One query names a mutual follow for every MUTUAL row.
+    const mutualIds = [...new Set(top.map((id) => candidates.get(id)!.mutualIds[0]).filter(Boolean))];
+    const mutualUsers = mutualIds.length > 0
+      ? await User.find({ _id: { $in: mutualIds }, ...ACTIVE_USER_FILTER }).select('accountName displayName').lean<UserLean[]>()
+      : [];
+    const mutualName = new Map(mutualUsers.map((u) => [u._id.toString(), u.displayName || u.accountName || null]));
 
-    return sorted.map((u) => ({
-      id: u._id.toString(),
-      accountName: u.accountName ?? null,
-      displayName: u.displayName ?? null,
-      avatarUrl: u.avatarUrl ?? null,
-    }));
+    for (const id of top) {
+      const c = candidates.get(id)!;
+      const named = c.mutualIds.map((m) => mutualName.get(m)).find(Boolean) ?? null;
+      results.push(toSuggested(userMap.get(id)!, {
+        kind: c.mutualIds.length > 0 ? 'MUTUAL' : 'TASTE',
+        mutualCount: c.mutualIds.length,
+        mutualName: named,
+        sharedArtistCount: c.sharedArtists.length,
+        sharedArtists: c.sharedArtists.slice(0, MAX_SHARED_ARTISTS),
+      }));
+    }
   }
 
-  // Fallback: newest users
-  const users = await User.find({
-    _id: { $ne: viewerObjectId, $nin: blockedOids },
-    ...ACTIVE_USER_FILTER,
-  })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .select('accountName displayName avatarUrl')
-    .lean<UserLean[]>();
+  // Top up with the newest users, still leaving out anyone followed or already listed.
+  if (results.length < limit) {
+    const skip = [viewerObjectId, ...followingIds, ...[...blockedSet].map((id) => new mongoose.Types.ObjectId(id)), ...results.map((r) => new mongoose.Types.ObjectId(r.id))];
+    const newest = await User.find({ _id: { $nin: skip }, ...ACTIVE_USER_FILTER })
+      .sort({ createdAt: -1 })
+      .limit(limit - results.length)
+      .select(SUGGESTED_USER_FIELDS)
+      .lean<SuggestedUserLean[]>();
+    for (const u of newest) results.push(toSuggested(u, NEW_USER_REASON));
+  }
 
-  return users.map((u) => ({
-    id: u._id.toString(),
-    accountName: u.accountName ?? null,
-    displayName: u.displayName ?? null,
-    avatarUrl: u.avatarUrl ?? null,
-  }));
+  return results;
 }
 
 // Three full-collection counts for three numbers that change slowly — same

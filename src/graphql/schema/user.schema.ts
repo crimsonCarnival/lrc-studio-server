@@ -161,6 +161,29 @@ export const userSchema = `
     followerCount: Int
     # Same privacy rules as PublicUser.country (preferences.countryVisibility).
     country: String
+    # suggestedUsers only: why this person is suggested. Null everywhere else.
+    suggestionReason: SuggestionReason
+  }
+
+  enum SuggestionReasonKind {
+    "Someone the viewer follows follows them."
+    MUTUAL
+    "They share artists with the viewer's music library."
+    TASTE
+    "A new account, used when the other sources run short."
+    NEW
+  }
+
+  type SuggestionReason {
+    kind: SuggestionReasonKind!
+    "MUTUAL: how many people the viewer follows follow this user."
+    mutualCount: Int!
+    "MUTUAL: one of them, by display name (else account name)."
+    mutualName: String
+    "TASTE: how many artists both libraries share."
+    sharedArtistCount: Int!
+    "TASTE: up to three of those artists."
+    sharedArtists: [String!]!
   }
 
   type FollowListResult {
