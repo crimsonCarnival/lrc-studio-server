@@ -1,0 +1,875 @@
+<title>LRC Studio Data Model</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: one-screen canvas app. Toolbar on top, pan/zoom world below; entity boxes grouped
+   by domain in four columns, relationship curves on an SVG layer underneath, detail panel on the right. */
+:root {
+  /* Rosé Pine Dawn: the app's own light theme */
+  --color-bg: #faf4ed;
+  --color-surface: #fffaf3;
+  --color-overlay: #f2e9e1;
+  --color-text: #575279;
+  --color-subtle: #797593;
+  --color-muted: #9893a5;
+  --color-hl-low: #f4ede8;
+  --color-hl-med: #dfdad9;
+  --color-hl-high: #cecacd;
+  --color-love: #b4637a;
+  --color-gold: #ea9d34;
+  --color-rose: #d7827e;
+  --color-pine: #286983;
+  --color-foam: #56949f;
+  --color-iris: #907aa9;
+  --color-shadow: rgba(87, 82, 121, .14);
+  --color-dot: rgba(87, 82, 121, .12);
+
+  --font-display: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    /* Rosé Pine Moon: the app's dark theme */
+    --color-bg: #232136; --color-surface: #2a273f; --color-overlay: #393552;
+    --color-text: #e0def4; --color-subtle: #908caa; --color-muted: #6e6a86;
+    --color-hl-low: #2a283e; --color-hl-med: #44415a; --color-hl-high: #56526e;
+    --color-love: #eb6f92; --color-gold: #f6c177; --color-rose: #ea9a97;
+    --color-pine: #3e8fb0; --color-foam: #9ccfd8; --color-iris: #c4a7e7;
+    --color-shadow: rgba(0, 0, 0, .35); --color-dot: rgba(224, 222, 244, .07);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --color-bg: #232136; --color-surface: #2a273f; --color-overlay: #393552;
+  --color-text: #e0def4; --color-subtle: #908caa; --color-muted: #6e6a86;
+  --color-hl-low: #2a283e; --color-hl-med: #44415a; --color-hl-high: #56526e;
+  --color-love: #eb6f92; --color-gold: #f6c177; --color-rose: #ea9a97;
+  --color-pine: #3e8fb0; --color-foam: #9ccfd8; --color-iris: #c4a7e7;
+  --color-shadow: rgba(0, 0, 0, .35); --color-dot: rgba(224, 222, 244, .07);
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--color-bg); color: var(--color-text);
+  font-family: var(--font-ui); font-size: 13px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--color-iris); outline-offset: 2px; }
+
+/* ---------- top bar ---------- */
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--color-hl-med);
+  background: var(--color-surface);
+  position: relative; z-index: 5;
+}
+.brand { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.brand h1 { margin: 0; font: 600 17px/1.15 var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
+.brand p { margin: 0; font: 11px/1.3 var(--font-mono); color: var(--color-subtle); font-variant-numeric: tabular-nums; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; min-width: 0; }
+.search { position: relative; }
+.search input {
+  width: 220px; max-width: 60vw; padding: 6px 10px 6px 28px; border-radius: 6px;
+  border: 1px solid var(--color-hl-high); background: var(--color-bg);
+}
+.search svg { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; stroke: var(--color-muted); fill: none; }
+.search .count { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font: 11px var(--font-mono); color: var(--color-muted); pointer-events: none; }
+.toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 6px;
+  border: 1px solid var(--color-hl-high); background: var(--color-bg); cursor: pointer; font-size: 12px; white-space: nowrap;
+}
+.toggle[aria-pressed="false"] { color: var(--color-muted); background: transparent; }
+.toggle[aria-pressed="false"] .sw { opacity: .3; }
+.sw { width: 18px; height: 0; border-top: 2px solid currentColor; display: inline-block; }
+.sw.dash { border-top-style: dashed; }
+
+.chips {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin;
+  padding-block: 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--color-hl-med); background: var(--color-surface);
+  position: relative; z-index: 5;
+}
+.chip {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 3px 10px 3px 8px; border-radius: 999px; font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--g) 45%, transparent);
+  background: color-mix(in srgb, var(--g) 12%, transparent);
+}
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--g); }
+.chip b { font: 500 11px var(--font-mono); color: var(--color-subtle); }
+.chip[aria-pressed="false"] { background: transparent; border-color: var(--color-hl-high); color: var(--color-muted); }
+.chip[aria-pressed="false"] i { background: transparent; border: 1px solid var(--color-muted); }
+
+/* ---------- canvas ---------- */
+.stage { position: relative; flex: 1; min-height: 0; display: flex; }
+.viewport {
+  position: relative; flex: 1; min-width: 0; overflow: hidden; touch-action: none; cursor: grab;
+  /* Dragging pans the canvas; without this a drag that starts on a box selects its text instead. */
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  background-color: var(--color-bg);
+  background-image: radial-gradient(var(--color-dot) 1px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+.viewport.panning { cursor: grabbing; }
+.world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+
+.groupframe {
+  position: absolute; border-radius: 14px; pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--g) 35%, transparent);
+  background: color-mix(in srgb, var(--g) 5%, transparent);
+}
+.groupframe.raw { border-style: dashed; }
+.groupframe h2 {
+  position: absolute; left: 18px; top: 12px; margin: 0;
+  font: 600 15px var(--font-display); color: var(--g); letter-spacing: .01em; white-space: nowrap;
+}
+.groupframe h2 span { font: 500 11px var(--font-mono); color: var(--color-subtle); margin-left: 8px; }
+
+.entity {
+  position: absolute; width: 300px; background: var(--color-surface);
+  border: 1px solid var(--color-hl-high); border-radius: 8px;
+  box-shadow: 0 1px 2px var(--color-shadow), 0 6px 18px -10px var(--color-shadow);
+  transition: opacity .15s, box-shadow .15s, border-color .15s;
+  font: 11.5px/1.25 var(--font-mono);
+}
+.entity.raw { border-style: dashed; background: color-mix(in srgb, var(--color-surface) 60%, transparent); }
+.entity header {
+  padding: 8px 10px 7px; border-radius: 7px 7px 0 0; cursor: pointer;
+  background: color-mix(in srgb, var(--g) 16%, var(--color-surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--g) 30%, var(--color-hl-med));
+  display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; align-items: baseline;
+}
+.entity header strong { font: 600 14px/1.2 var(--font-display); color: var(--color-text); min-width: 0; overflow-wrap: anywhere; }
+.entity header em { font-style: normal; color: var(--color-subtle); font-size: 10.5px; grid-column: 1; min-width: 0; overflow-wrap: anywhere; }
+.entity header .n { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-size: 10.5px; color: var(--g); font-weight: 600; }
+.entity .tag { font: 600 9.5px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--color-love); margin-left: 6px; }
+.rows { padding: 4px 0 5px; }
+.row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center;
+  padding: 1.5px 10px 1.5px calc(10px + var(--d, 0) * 12px); position: relative; min-height: 18px;
+}
+.row:hover { background: var(--color-hl-low); }
+.row .k { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.row .k span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .t { color: var(--color-subtle); white-space: nowrap; display: flex; gap: 4px; align-items: center; }
+.row .t .ref { color: var(--rg, var(--color-pine)); font-weight: 600; }
+.row .t .en { color: var(--color-gold); }
+.row.pk .k span { font-weight: 600; text-decoration: underline; text-decoration-color: var(--color-hl-high); text-underline-offset: 2px; }
+.row.fk .k span { color: var(--rg, var(--color-pine)); font-weight: 500; }
+.row.ts { color: var(--color-muted); }
+.row[style*="--d"]::before {
+  content: ""; position: absolute; top: 0; bottom: 0;
+  left: calc(4px + var(--d) * 12px); border-left: 1px solid var(--color-hl-med);
+}
+.caret {
+  width: 14px; height: 14px; display: inline-grid; place-items: center; flex: none; cursor: pointer;
+  border: 0; padding: 0; background: none; color: var(--color-subtle); transition: transform .12s;
+}
+.caret svg { width: 9px; height: 9px; fill: currentColor; }
+.row.open .caret { transform: rotate(90deg); }
+.row .grp { color: var(--color-muted); }
+.fl { display: inline-flex; gap: 2px; }
+.fl b {
+  font: 600 8.5px/1 var(--font-ui); letter-spacing: .03em; padding: 2px 3px; border-radius: 3px;
+  background: var(--color-overlay); color: var(--color-subtle);
+}
+.fl b.PK { background: color-mix(in srgb, var(--color-gold) 25%, transparent); color: var(--color-text); }
+.fl b.FK { background: color-mix(in srgb, var(--color-pine) 20%, transparent); color: var(--color-text); }
+.fl b.UQ, .fl b.CU { background: color-mix(in srgb, var(--color-iris) 22%, transparent); color: var(--color-text); }
+.fl b.TTL { background: color-mix(in srgb, var(--color-love) 18%, transparent); color: var(--color-text); }
+
+/* focus + search states */
+.world.focusing .entity:not(.on) { opacity: .2; }
+.world.focusing .groupframe { opacity: .45; }
+.entity.on.sel { border-color: var(--g); box-shadow: 0 0 0 2px color-mix(in srgb, var(--g) 45%, transparent), 0 10px 26px -10px var(--color-shadow); }
+.row.hit { background: color-mix(in srgb, var(--color-gold) 22%, transparent); }
+.entity.match { border-color: var(--color-gold); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-gold) 55%, transparent); }
+.world.searching .entity:not(.match) { opacity: .25; }
+.entity[hidden], .groupframe[hidden] { display: none !important; }
+
+.edge path { fill: none; stroke: var(--ec); stroke-width: 1.4; opacity: .38; transition: opacity .15s, stroke-width .15s; }
+.edge .cf { stroke-width: 1.4; }
+.edge.soft path { stroke-dasharray: 6 4; }
+.edge.poly path { stroke-dasharray: 1.5 3.5; stroke-linecap: round; }
+.edge.noref path { stroke-dasharray: 10 3 2 3; }
+.world.focusing .edge path, .world.searching .edge path { opacity: .05; }
+.world .edge.on path { opacity: .95; stroke-width: 2; }
+.edge[hidden] { display: none; }
+
+/* ---------- floating UI ---------- */
+.zoom {
+  position: absolute; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; border-radius: 8px; overflow: hidden; z-index: 3;
+  border: 1px solid var(--color-hl-high); background: var(--color-surface); box-shadow: 0 4px 14px -6px var(--color-shadow);
+}
+.zoom button { width: 34px; height: 32px; border: 0; background: none; cursor: pointer; display: grid; place-items: center; }
+.zoom button + button { border-top: 1px solid var(--color-hl-med); }
+.zoom button:hover { background: var(--color-hl-low); }
+.zoom svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+.zoom output { font: 10px var(--font-mono); text-align: center; padding: 4px 0; border-top: 1px solid var(--color-hl-med); color: var(--color-subtle); font-variant-numeric: tabular-nums; }
+
+.legend {
+  position: absolute; left: calc(12px + env(safe-area-inset-left, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 3;
+  max-width: min(330px, calc(100% - 80px));
+  border: 1px solid var(--color-hl-high); background: var(--color-surface); border-radius: 8px;
+  box-shadow: 0 4px 14px -6px var(--color-shadow); font-size: 11.5px;
+}
+.legend summary { cursor: pointer; padding: 7px 11px; font: 600 12px var(--font-display); list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+.legend summary::-webkit-details-marker { display: none; }
+.legend summary span { font: 400 11px var(--font-ui); color: var(--color-muted); }
+.legend .body { padding: 0 11px 10px; display: grid; gap: 10px; }
+.legend h3 { margin: 0 0 4px; font: 600 10px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--color-subtle); }
+.legend ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.legend li { display: grid; grid-template-columns: 54px 1fr; gap: 8px; align-items: center; }
+.legend li svg { width: 54px; height: 14px; overflow: visible; }
+.legend li svg path, .legend li svg line { stroke: var(--color-text); fill: none; stroke-width: 1.4; }
+.legend .flags { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.legend .flags span { display: inline-flex; gap: 4px; align-items: center; }
+.legend .hint { color: var(--color-muted); }
+
+.tip {
+  position: fixed; z-index: 20; max-width: 340px; pointer-events: none;
+  background: var(--color-surface); border: 1px solid var(--color-hl-high); border-radius: 8px;
+  padding: 10px 12px; box-shadow: 0 10px 30px -8px var(--color-shadow); font-size: 12px; line-height: 1.45;
+}
+.tip h4 { margin: 0 0 2px; font: 600 14px var(--font-display); }
+.tip .sub { font: 11px var(--font-mono); color: var(--color-subtle); margin-bottom: 6px; overflow-wrap: anywhere; }
+.tip p { margin: 6px 0 0; }
+.tip .meta { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin-top: 8px; font: 11px var(--font-mono); }
+.tip .meta dt { color: var(--color-muted); }
+.tip .meta dd { margin: 0; overflow-wrap: anywhere; }
+.tip .en { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.tip .en code { font: 10.5px var(--font-mono); background: var(--color-overlay); padding: 1px 5px; border-radius: 3px; }
+.tip .note { color: var(--color-love); }
+.tip .foot { margin-top: 8px; color: var(--color-muted); font-size: 11px; }
+
+.panel {
+  width: 360px; flex: none; border-left: 1px solid var(--color-hl-med); background: var(--color-surface);
+  overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px;
+  padding-right: max(18px, env(safe-area-inset-right, 0px));
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+}
+.panel header { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.panel h2 { margin: 0; font: 600 20px/1.15 var(--font-display); overflow-wrap: anywhere; }
+.panel .coll { font: 12px var(--font-mono); color: var(--color-subtle); overflow-wrap: anywhere; }
+.panel .close { border: 0; background: var(--color-overlay); border-radius: 6px; width: 28px; height: 28px; cursor: pointer; flex: none; }
+.panel .gchip { align-self: flex-start; }
+.panel p.desc { margin: 0; line-height: 1.55; max-width: 62ch; }
+.panel h3 { margin: 0 0 6px; font: 600 10.5px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--color-subtle); }
+.panel dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font: 11.5px var(--font-mono); }
+.panel dt { color: var(--color-muted); }
+.panel dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font: 11.5px var(--font-mono); }
+.panel li.idx { overflow-wrap: anywhere; padding: 2px 0; }
+.panel .rel {
+  display: grid; grid-template-columns: 1fr auto; gap: 8px; width: 100%; text-align: left;
+  border: 0; background: none; padding: 4px 6px; border-radius: 5px; cursor: pointer; font: inherit;
+}
+.panel .rel:hover { background: var(--color-hl-low); }
+.panel .rel span { min-width: 0; overflow-wrap: anywhere; }
+.panel .rel small { color: var(--color-muted); font-size: 10.5px; }
+.panel .empty { color: var(--color-muted); font: 11.5px var(--font-ui); }
+.panel .intro { color: var(--color-subtle); line-height: 1.55; }
+.panel .intro strong { color: var(--color-text); }
+.panel .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.panel .stats div { background: var(--color-bg); border-radius: 8px; padding: 8px 10px; }
+.panel .stats b { display: block; font: 600 20px var(--font-display); font-variant-numeric: tabular-nums; }
+.panel .stats span { font-size: 11px; color: var(--color-subtle); }
+.copy { border: 1px solid var(--color-hl-high); background: var(--color-bg); border-radius: 5px; font-size: 11px; padding: 1px 6px; cursor: pointer; margin-left: 6px; }
+
+@media (max-width: 900px) {
+  .panel {
+    position: absolute; left: 0; right: 0; bottom: 0; width: auto; max-height: 55%;
+    border-left: 0; border-top: 1px solid var(--color-hl-high); border-radius: 14px 14px 0 0; z-index: 6;
+    box-shadow: 0 -12px 30px -12px var(--color-shadow);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .panel.idle { display: none; }
+  .search input { width: 160px; }
+  .tools { margin-left: 0; }
+  .legend:not([open]) .body { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="bar">
+  <div class="brand">
+    <h1>LRC Studio Data Model</h1>
+    <p id="prov"></p>
+  </div>
+  <div class="tools">
+    <label class="search" for="q">
+      <svg viewBox="0 0 16 16" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>
+      <input id="q" type="search" placeholder="Find a collection or field" autocomplete="off" spellcheck="false" aria-label="Find a collection or field">
+      <span class="count" id="qcount"></span>
+    </label>
+    <button class="toggle" id="t-user" aria-pressed="true" title="Lines pointing at User (most of the graph)"><span class="sw"></span>Links to User</button>
+    <button class="toggle" id="t-soft" aria-pressed="true" title="Joins by a string key such as publicId, with no Mongoose ref"><span class="sw dash"></span>Key joins</button>
+    <button class="toggle" id="t-expand" aria-pressed="false" title="Expand or collapse every embedded subdocument">Expand all</button>
+  </div>
+</div>
+<div class="chips" id="chips" role="group" aria-label="Domains"></div>
+
+<div class="stage">
+  <div class="viewport" id="vp" tabindex="0" aria-label="Entity relationship diagram. Scroll or pinch to zoom, drag to pan.">
+    <div class="world" id="world">
+      <svg class="edges" id="edges" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <details class="legend" id="legend" open>
+      <summary>Legend <span>scroll to zoom · drag to pan</span></summary>
+      <div class="body">
+        <div>
+          <h3>Relationships</h3>
+          <ul>
+            <li><svg viewBox="0 0 54 14"><path d="M2 7H52"/></svg><span>ObjectId with <code>ref</code></span></li>
+            <li><svg viewBox="0 0 54 14"><path d="M2 7H52" stroke-dasharray="6 4"/></svg><span>String key join (publicId, id)</span></li>
+            <li><svg viewBox="0 0 54 14"><path d="M2 7H52" stroke-dasharray="1.5 3.5" stroke-linecap="round"/></svg><span>Polymorphic (by targetType)</span></li>
+            <li><svg viewBox="0 0 54 14"><path d="M2 7H52" stroke-dasharray="10 3 2 3"/></svg><span>ObjectId with no <code>ref</code></span></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Ends</h3>
+          <ul>
+            <li><svg viewBox="0 0 54 14"><path d="M14 7H52M2 1L14 7L2 13M2 7H14"/></svg>many (crow's foot)</li>
+            <li><svg viewBox="0 0 54 14"><path d="M2 7H52M8 1V13"/></svg>one (unique key)</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Field flags</h3>
+          <div class="flags fl">
+            <span><b class="PK">PK</b>primary key</span><span><b class="FK">FK</b>ref</span>
+            <span><b class="UQ">UQ</b>unique</span><span><b>IX</b>indexed</span>
+            <span><b class="CU">CU</b>/<b>CX</b>compound</span><span><b class="TTL">TTL</b>expiry</span>
+            <span><b>REQ</b>required</span><span><b>HID</b>select:false</span>
+          </div>
+        </div>
+        <div class="hint">Hover a box or field for details. Click a box to pin it and list its relationships.</div>
+      </div>
+    </details>
+    <div class="zoom">
+      <button id="z-in" aria-label="Zoom in"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+      <button id="z-out" aria-label="Zoom out"><svg viewBox="0 0 16 16"><path d="M3 8h10"/></svg></button>
+      <button id="z-fit" aria-label="Fit diagram"><svg viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg></button>
+      <output id="z-pct">100%</output>
+    </div>
+  </div>
+  <aside class="panel idle" id="panel" aria-live="polite"></aside>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const DATA = /*__DATA__*/null;
+
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem('erd:' + k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem('erd:' + k, JSON.stringify(v)); } catch {} },
+  };
+
+  const vp = $('#vp'), world = $('#world'), svg = $('#edges'), tip = $('#tip'), panel = $('#panel');
+  const G = Object.fromEntries(DATA.groups.map((g) => [g.id, g]));
+  const E = Object.fromEntries(DATA.entities.map((e) => [e.name, e]));
+  const gcolor = (gid) => `var(--color-${G[gid].color})`;
+  const BOX_W = 300, GAP = 22, PAD = 22, HEAD = 46, GROUP_GAP = 56, COL_GAP = 150;
+
+  const FLAG_TEXT = { PK: 'primary key', FK: 'reference (ref)', UQ: 'unique index', IX: 'indexed', CU: 'part of a compound unique index', CX: 'part of a compound index', TTL: 'TTL expiry index', REQ: 'required', HID: 'select: false (hidden by default)' };
+  const KIND_TEXT = { ref: 'ObjectId ref', soft: 'string key join', poly: 'polymorphic', noref: 'ObjectId, no ref' };
+
+  // ---------- provenance ----------
+  const g = DATA.generated;
+  const nEdges = DATA.edges.length, nModels = DATA.entities.filter((e) => !e.raw).length, nRaw = DATA.entities.length - nModels;
+  $('#prov').textContent = `${nModels} models · ${nRaw} raw collections · ${nEdges} relationships · server ${g.branch}@${g.commit}${g.dirty.length ? ' + uncommitted ' + g.dirty.join(', ') : ''} · ${g.date}`;
+
+  // ---------- entity DOM ----------
+  const openState = {}; // `${entity}.${path}` -> bool
+  const saved = store.get('open') || {};
+  const countDesc = (n) => (n.ch || []).reduce((a, c) => a + 1 + countDesc(c), 0);
+  const hasRef = (n) => !!n.ref || (n.ch || []).some(hasRef);
+  function isOpen(e, n) {
+    const key = e.name + '.' + n.path;
+    if (key in openState) return openState[key];
+    if (key in saved) return saved[key];
+    return n.open || hasRef(n) || countDesc(n) <= 8;
+  }
+
+  const caretSvg = '<svg viewBox="0 0 10 10"><path d="M3 1l5 4-5 4z"/></svg>';
+  function typeHtml(n) {
+    if (n.ref) {
+      const rg = gcolor(E[n.ref].group);
+      return `<span class="ref" style="--rg:${rg}">→ ${esc(n.ref)}${n.refArr ? '[]' : ''}</span>`;
+    }
+    if (n.ch) return `<span class="grp">${n.t === 'arr' ? '[{…}]' : '{…}'}</span>`;
+    if (n.en) return `<span class="en">enum·${n.en.length}</span>`;
+    return esc(n.t);
+  }
+  function rowsHtml(e, nodes, d) {
+    let h = '';
+    for (const n of nodes) {
+      const fl = (n.f || []).filter((x) => x !== 'REQ' && x !== 'FK');
+      const cls = ['row'];
+      if ((n.f || []).includes('PK')) cls.push('pk');
+      if (n.ref) cls.push('fk');
+      if (n.path === 'createdAt' || n.path === 'updatedAt') cls.push('ts');
+      const open = n.ch && isOpen(e, n);
+      if (open) cls.push('open');
+      const rg = n.ref ? ` --rg:${gcolor(E[n.ref].group)};` : '';
+      const style = d || rg ? ` style="${d ? `--d:${d};` : ''}${rg}"` : '';
+      h += `<div class="${cls.join(' ')}" data-path="${esc(n.path)}"${style}>` +
+        `<div class="k">${n.ch ? `<button class="caret" aria-label="${open ? 'Collapse' : 'Expand'} ${esc(n.k)}" aria-expanded="${!!open}">${caretSvg}</button>` : ''}<span>${esc(n.k)}${(n.f || []).includes('REQ') ? '<sup style="color:var(--color-love)">*</sup>' : ''}</span></div>` +
+        `<div class="t">${typeHtml(n)}${n.ch && !open ? `<span class="grp">${countDesc(n)}</span>` : ''}${fl.length ? `<span class="fl">${fl.map((x) => `<b class="${x}">${x}</b>`).join('')}</span>` : ''}</div></div>`;
+      if (open) h += rowsHtml(e, n.ch, d + 1);
+    }
+    return h;
+  }
+
+  const boxes = {}, frames = {};
+  for (const e of DATA.entities) {
+    const el = document.createElement('div');
+    el.className = 'entity' + (e.raw ? ' raw' : '');
+    el.style.setProperty('--g', gcolor(e.group));
+    el.dataset.name = e.name;
+    world.appendChild(el);
+    boxes[e.name] = el;
+  }
+  function renderBox(e) {
+    const el = boxes[e.name];
+    const nFields = (function c(ns) { return ns.reduce((a, n) => a + 1 + (n.ch ? c(n.ch) : 0), 0); })(e.fields);
+    el.innerHTML = `<header tabindex="0" role="button" aria-label="${esc(e.name)} details"><strong>${esc(e.name)}${e.legacy ? '<span class="tag">legacy</span>' : e.raw ? '<span class="tag" style="color:var(--color-muted)">no schema</span>' : ''}</strong><em>${esc(e.collection)}</em><span class="n">${e.raw ? '' : nFields}</span></header><div class="rows">${rowsHtml(e, e.fields, 0)}</div>`;
+  }
+  for (const gr of DATA.groups) {
+    const f = document.createElement('div');
+    const members = DATA.entities.filter((e) => e.group === gr.id);
+    f.className = 'groupframe' + (gr.id === 'system' ? ' raw' : '');
+    f.style.setProperty('--g', gcolor(gr.id));
+    f.innerHTML = `<h2>${esc(gr.label)}<span>${members.length}</span></h2>`;
+    world.insertBefore(f, svg); // frames under edges, edges under boxes
+    frames[gr.id] = f;
+  }
+
+  // ---------- layout ----------
+  const pos = {}; // name -> {x,y,w,h}
+  let worldW = 0, worldH = 0;
+  function layout() {
+    DATA.entities.forEach(renderBox);
+    const cols = [...new Set(DATA.groups.map((g) => g.col))].sort();
+    let x = 0;
+    worldH = 0;
+    for (const c of cols) {
+      let y = 0, colW = 0;
+      for (const gr of DATA.groups.filter((g) => g.col === c)) {
+        const members = DATA.entities.filter((e) => e.group === gr.id);
+        const n = members.length;
+        const sub = n <= 2 ? 1 : n <= 6 ? 2 : 3;
+        const heights = Array(sub).fill(0);
+        const gx = x, gy = y;
+        for (const e of members) {
+          let i = heights.indexOf(Math.min(...heights));
+          const el = boxes[e.name];
+          const h = el.offsetHeight;
+          const bx = gx + PAD + i * (BOX_W + GAP), by = gy + HEAD + heights[i];
+          pos[e.name] = { x: bx, y: by, w: BOX_W, h };
+          el.style.left = bx + 'px'; el.style.top = by + 'px';
+          heights[i] += h + GAP;
+        }
+        const gw = PAD * 2 + sub * BOX_W + (sub - 1) * GAP;
+        const gh = HEAD + Math.max(...heights) - GAP + PAD;
+        Object.assign(frames[gr.id].style, { left: gx + 'px', top: gy + 'px', width: gw + 'px', height: gh + 'px' });
+        y += gh + GROUP_GAP; colW = Math.max(colW, gw);
+      }
+      worldW = Math.max(worldW, x + colW);
+      worldH = Math.max(worldH, y - GROUP_GAP);
+      x += colW + COL_GAP;
+    }
+    worldW = x - COL_GAP;
+    world.style.width = worldW + 'px'; world.style.height = worldH + 'px';
+    svg.setAttribute('width', worldW); svg.setAttribute('height', worldH);
+    drawEdges();
+    applyVisibility();
+    applyFocus();
+  }
+
+  // Anchor y for a path: its row, or the nearest visible ancestor row when collapsed.
+  function anchorY(name, path) {
+    const el = boxes[name];
+    let p = path;
+    while (true) {
+      const row = el.querySelector(`.row[data-path="${CSS.escape(p)}"]`);
+      if (row) return pos[name].y + row.offsetTop + row.offsetHeight / 2;
+      const i = p.lastIndexOf('.');
+      if (i < 0) return pos[name].y + 22;
+      p = p.slice(0, i);
+    }
+  }
+
+  const edgeEls = [];
+  function crow(x, y, dir, many) {
+    // dir: +1 means the line leaves to the right of x.
+    if (many) return `M${x} ${y - 6}L${x + dir * 12} ${y}L${x} ${y + 6}M${x} ${y}H${x + dir * 12}`;
+    return `M${x + dir * 7} ${y - 6}V${y + 6}`;
+  }
+  function drawEdges() {
+    svg.innerHTML = '';
+    edgeEls.length = 0;
+    const ns = 'http://www.w3.org/2000/svg';
+    for (const ed of DATA.edges) {
+      const a = pos[ed.from], b = pos[ed.to];
+      const y1 = anchorY(ed.from, ed.fp), y2 = anchorY(ed.to, ed.tp);
+      let d, x1, x2, s1, s2;
+      if (ed.from === ed.to) {
+        x1 = x2 = a.x + a.w; s1 = s2 = 1;
+        const bulge = 46 + Math.abs(y2 - y1) * 0.08;
+        d = `M${x1} ${y1}C${x1 + bulge} ${y1} ${x2 + bulge} ${y2} ${x2} ${y2}`;
+      } else {
+        const ac = a.x + a.w / 2, bc = b.x + b.w / 2;
+        if (Math.abs(ac - bc) < a.w * 0.6) { // same column: loop out on the right
+          x1 = a.x + a.w; x2 = b.x + b.w; s1 = s2 = 1;
+          const bulge = 40 + Math.min(160, Math.abs(y2 - y1) * 0.12);
+          d = `M${x1} ${y1}C${x1 + bulge} ${y1} ${x2 + bulge} ${y2} ${x2} ${y2}`;
+        } else {
+          const right = bc > ac;
+          x1 = right ? a.x + a.w : a.x; s1 = right ? 1 : -1;
+          x2 = right ? b.x : b.x + b.w; s2 = right ? -1 : 1;
+          const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
+          d = `M${x1} ${y1}C${x1 + s1 * dx} ${y1} ${x2 + s2 * dx} ${y2} ${x2} ${y2}`;
+        }
+      }
+      const gEl = document.createElementNS(ns, 'g');
+      gEl.setAttribute('class', 'edge ' + ed.kind);
+      gEl.style.setProperty('--ec', gcolor(E[ed.from].group));
+      gEl.innerHTML = `<path d="${d}"/><path class="cf" d="${crow(x1, y1, s1, ed.srcMany)}"/><path class="cf" d="${crow(x2, y2, s2, ed.dstMany)}"/>`;
+      svg.appendChild(gEl);
+      edgeEls[ed.id] = gEl;
+    }
+  }
+
+  // ---------- visibility (domain chips + toggles) ----------
+  const hiddenGroups = new Set(store.get('hiddenGroups') || []);
+  const opts = Object.assign({ user: true, soft: true }, store.get('opts') || {});
+  const chips = $('#chips');
+  for (const gr of DATA.groups) {
+    const b = document.createElement('button');
+    const n = DATA.entities.filter((e) => e.group === gr.id).length;
+    b.className = 'chip'; b.style.setProperty('--g', gcolor(gr.id));
+    b.setAttribute('aria-pressed', String(!hiddenGroups.has(gr.id)));
+    b.innerHTML = `<i></i>${esc(gr.label)}<b>${n}</b>`;
+    b.onclick = () => {
+      hiddenGroups.has(gr.id) ? hiddenGroups.delete(gr.id) : hiddenGroups.add(gr.id);
+      b.setAttribute('aria-pressed', String(!hiddenGroups.has(gr.id)));
+      store.set('hiddenGroups', [...hiddenGroups]);
+      applyVisibility();
+    };
+    chips.appendChild(b);
+  }
+  function setToggle(id, key) {
+    const b = $(id);
+    b.setAttribute('aria-pressed', String(opts[key]));
+    b.onclick = () => { opts[key] = !opts[key]; b.setAttribute('aria-pressed', String(opts[key])); store.set('opts', opts); applyVisibility(); applyFocus(); };
+  }
+  setToggle('#t-user', 'user'); setToggle('#t-soft', 'soft');
+  const visible = (name) => !hiddenGroups.has(E[name].group);
+  function edgeShown(ed, focusName) {
+    if (!visible(ed.from) || !visible(ed.to)) return false;
+    const involved = focusName && (ed.from === focusName || ed.to === focusName);
+    if (!opts.user && ed.to === 'User' && ed.from !== 'User' && !involved) return false;
+    if (!opts.soft && ed.kind !== 'ref' && !involved) return false;
+    return true;
+  }
+  function applyVisibility() {
+    for (const e of DATA.entities) boxes[e.name].hidden = !visible(e.name);
+    for (const gr of DATA.groups) frames[gr.id].hidden = hiddenGroups.has(gr.id);
+    for (const ed of DATA.edges) edgeEls[ed.id].hidden = !edgeShown(ed, focus());
+  }
+
+  $('#t-expand').onclick = (ev) => {
+    const on = ev.currentTarget.getAttribute('aria-pressed') !== 'true';
+    ev.currentTarget.setAttribute('aria-pressed', String(on));
+    ev.currentTarget.textContent = on ? 'Collapse all' : 'Expand all';
+    for (const e of DATA.entities) (function w(ns) { ns.forEach((n) => { if (n.ch) { openState[e.name + '.' + n.path] = on; w(n.ch); } }); })(e.fields);
+    store.set('open', openState);
+    layout();
+  };
+
+  // ---------- focus (hover / pinned) ----------
+  let hovered = null, pinned = null;
+  const focus = () => pinned || hovered;
+  function applyFocus() {
+    const f = focus();
+    world.classList.toggle('focusing', !!f);
+    for (const el of Object.values(boxes)) el.classList.remove('on', 'sel');
+    for (const ed of DATA.edges) edgeEls[ed.id].classList.remove('on');
+    if (!f) { applyVisibility(); return; }
+    boxes[f].classList.add('on', 'sel');
+    for (const ed of DATA.edges) {
+      if (ed.from === f || ed.to === f) {
+        edgeEls[ed.id].classList.add('on');
+        boxes[ed.from].classList.add('on'); boxes[ed.to].classList.add('on');
+      }
+    }
+    applyVisibility();
+  }
+
+  // ---------- tooltips ----------
+  function placeTip(ev) {
+    const r = tip.getBoundingClientRect();
+    let x = ev.clientX + 16, y = ev.clientY + 16;
+    if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 16;
+    if (y + r.height > innerHeight - 8) y = innerHeight - r.height - 8;
+    tip.style.left = Math.max(8, x) + 'px'; tip.style.top = Math.max(8, y) + 'px';
+  }
+  function findNode(e, path) {
+    const w = (ns) => { for (const n of ns) { if (n.path === path) return n; if (n.ch) { const r = w(n.ch); if (r) return r; } } };
+    return w(e.fields);
+  }
+  function entityTip(e) {
+    const out = DATA.edges.filter((d) => d.from === e.name).length, inn = DATA.edges.filter((d) => d.to === e.name).length;
+    return `<h4>${esc(e.name)}</h4><div class="sub">${esc(e.collection)} · ${esc(G[e.group].label)}</div><p>${esc(e.desc)}</p>` +
+      `<dl class="meta"><dt>timestamps</dt><dd>${esc(e.timestamps)}</dd>${e.ttl ? `<dt>TTL</dt><dd>${esc(e.ttl)}</dd>` : ''}<dt>indexes</dt><dd>${e.indexes.length}</dd><dt>links</dt><dd>${out} out · ${inn} in</dd></dl>` +
+      `<div class="foot">Click to pin and list relationships</div>`;
+  }
+  function fieldTip(e, n) {
+    const rels = DATA.edges.filter((d) => (d.from === e.name && d.fp === n.path) || (d.to === e.name && d.tp === n.path));
+    let h = `<h4>${esc(n.k)}</h4><div class="sub">${esc(e.name)}.${esc(n.path)} : ${esc(n.ref ? 'ObjectId' + (n.refArr ? '[]' : '') : n.t === 'obj' ? 'subdocument' : n.t === 'arr' ? 'array of subdocuments' : n.t)}</div>`;
+    if (n.doc) h += `<p>${esc(n.doc)}</p>`;
+    if (n.note) h += `<p class="note">${esc(n.note)}</p>`;
+    const meta = [];
+    if (n.f) meta.push(['flags', n.f.map((x) => FLAG_TEXT[x] || x).join(', ')]);
+    if (n.def !== undefined) meta.push(['default', n.def]);
+    if (n.lim) meta.push(['limits', n.lim]);
+    const fwd = rels.filter((d) => d.from === e.name && d.fp === n.path);
+    const back = rels.filter((d) => d.to === e.name && d.tp === n.path);
+    if (fwd.length) meta.push(['points to', fwd.map((d) => `${d.to}.${d.tp} (${KIND_TEXT[d.kind]})`).join('; ')]);
+    if (back.length) meta.push(['referenced by', back.length > 6 ? `${back.length} fields` : back.map((d) => `${d.from}.${d.fp}`).join(', ')]);
+    if (meta.length) h += `<dl class="meta">${meta.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+    const notes = fwd.filter((d) => d.note).map((d) => d.note);
+    if (notes.length) h += `<p class="note">${esc(notes.join(' '))}</p>`;
+    if (n.en) h += `<div class="en">${n.en.map((v) => `<code>${esc(v)}</code>`).join('')}</div>`;
+    if (!n.doc && !n.note && !meta.length && !n.en) h += `<p style="color:var(--color-muted)">No constraints or doc comment.</p>`;
+    return h;
+  }
+
+  let dragMoved = false;
+  world.addEventListener('pointerover', (ev) => {
+    if (ev.pointerType === 'touch' || panning) return;
+    const box = ev.target.closest('.entity'); if (!box) return;
+    const e = E[box.dataset.name];
+    const row = ev.target.closest('.row');
+    tip.innerHTML = row ? fieldTip(e, findNode(e, row.dataset.path)) : entityTip(e);
+    tip.hidden = false; placeTip(ev);
+    if (hovered !== e.name) { hovered = e.name; if (!pinned) applyFocus(); }
+  });
+  world.addEventListener('pointermove', (ev) => { if (!tip.hidden) placeTip(ev); });
+  world.addEventListener('pointerout', (ev) => {
+    if (panning) return; // no full restyle mid-drag
+    const box = ev.target.closest('.entity');
+    if (box && !box.contains(ev.relatedTarget)) { tip.hidden = true; hovered = null; if (!pinned) applyFocus(); }
+  });
+
+  // ---------- panel ----------
+  function relButton(name, path, label, small) {
+    return `<button class="rel" data-go="${esc(name)}"><span>${label}</span><small>${esc(small)}</small></button>`;
+  }
+  function renderPanel() {
+    if (!pinned) {
+      panel.classList.add('idle');
+      const biggest = DATA.entities.map((e) => [e.name, DATA.edges.filter((d) => d.to === e.name).length]).sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const soft = DATA.edges.filter((d) => d.kind !== 'ref').length;
+      panel.innerHTML = `<h2 style="font-size:17px">How to read it</h2>
+        <div class="stats"><div><b>${nModels}</b><span>models</span></div><div><b>${nEdges}</b><span>relationships</span></div><div><b>${soft}</b><span>without a ref</span></div></div>
+        <p class="intro">Every box is a MongoDB collection, introspected from its Mongoose schema. Embedded subdocuments nest inside their parent, since they live in the same document. Lines start at the field holding the key and end at the field it matches.</p>
+        <p class="intro"><strong>${soft} of the ${nEdges} relationships</strong> are invisible to Mongoose: string joins on <code>publicId</code>, polymorphic report targets, or ObjectIds declared without <code>ref</code>. They are drawn dashed or dotted, and <code>populate()</code> cannot follow them.</p>
+        <div><h3>Most referenced</h3><ul>${biggest.map(([n, c]) => `<li>${relButton(n, '', esc(n), c + ' in')}</li>`).join('')}</ul></div>`;
+      return;
+    }
+    const e = E[pinned];
+    panel.classList.remove('idle');
+    const out = DATA.edges.filter((d) => d.from === e.name);
+    const inn = DATA.edges.filter((d) => d.to === e.name && d.from !== e.name);
+    panel.innerHTML = `<header><div><h2>${esc(e.name)}</h2><div class="coll">db.${esc(e.collection)}</div></div><button class="close" aria-label="Close details">✕</button></header>
+      <span class="chip gchip" style="--g:${gcolor(e.group)}"><i></i>${esc(G[e.group].label)}</span>
+      <p class="desc">${esc(e.desc)}</p>
+      <dl><dt>source</dt><dd>${esc(e.file)}<button class="copy" data-copy="${esc(e.file)}">copy</button></dd><dt>timestamps</dt><dd>${esc(e.timestamps)}</dd>${e.ttl ? `<dt>TTL</dt><dd>${esc(e.ttl)}</dd>` : ''}</dl>
+      <div><h3>Indexes (${e.indexes.length})</h3>${e.indexes.length ? `<ul>${e.indexes.map((i) => `<li class="idx">${esc(i)}</li>`).join('')}</ul>` : '<div class="empty">Only the default _id index.</div>'}</div>
+      <div><h3>References out (${out.length})</h3>${out.length ? `<ul>${out.map((d) => `<li>${relButton(d.to, d.tp, `${esc(d.fp)} → <b>${esc(d.to)}</b>.${esc(d.tp)}`, `${d.srcMany ? 'N' : '1'}:${d.dstMany ? 'N' : '1'} · ${KIND_TEXT[d.kind]}`)}</li>`).join('')}</ul>` : '<div class="empty">None.</div>'}</div>
+      <div><h3>Referenced by (${inn.length})</h3>${inn.length ? `<ul>${inn.map((d) => `<li>${relButton(d.from, d.fp, `<b>${esc(d.from)}</b>.${esc(d.fp)} → ${esc(d.tp)}`, KIND_TEXT[d.kind])}</li>`).join('')}</ul>` : '<div class="empty">Nothing points here.</div>'}</div>`;
+  }
+  panel.addEventListener('click', async (ev) => {
+    const go = ev.target.closest('[data-go]');
+    if (go) { setPinned(go.dataset.go); centerOn(go.dataset.go); return; }
+    if (ev.target.closest('.close')) { setPinned(null); return; }
+    const cp = ev.target.closest('[data-copy]');
+    if (cp) {
+      try { await navigator.clipboard.writeText(cp.dataset.copy); cp.textContent = 'copied'; }
+      catch { const r = document.createRange(); r.selectNodeContents(cp.parentNode.firstChild); getSelection().removeAllRanges(); getSelection().addRange(r); }
+      setTimeout(() => (cp.textContent = 'copy'), 1200);
+    }
+  });
+  function setPinned(name) { pinned = name; renderPanel(); applyFocus(); }
+  const pin = (name) => setPinned(name && pinned !== name ? name : null); // toggle
+
+  vp.addEventListener('click', (ev) => {
+    if (dragMoved || ev.target.closest('.zoom, .legend')) return;
+    const caret = ev.target.closest('.caret');
+    if (caret) {
+      const box = caret.closest('.entity'), row = caret.closest('.row');
+      const e = E[box.dataset.name], n = findNode(e, row.dataset.path);
+      const key = e.name + '.' + n.path;
+      openState[key] = !isOpen(e, n);
+      Object.assign(saved, openState); store.set('open', saved);
+      layout();
+      return;
+    }
+    const box = ev.target.closest('.entity');
+    if (box) pin(box.dataset.name);
+    else if (pinned) pin(null);
+  });
+  world.addEventListener('keydown', (ev) => {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('.entity header')) { ev.preventDefault(); pin(ev.target.parentNode.dataset.name); }
+  });
+
+  // ---------- pan / zoom ----------
+  let tx = 0, ty = 0, sc = 1;
+  const MIN = 0.08, MAX = 2.5;
+  function apply() {
+    world.style.transform = `translate(${tx}px, ${ty}px) scale(${sc})`;
+    let grid = 22 * sc;
+    while (grid < 14) grid *= 2; // keep the dot grid from turning into a hatch when zoomed out
+    vp.style.backgroundSize = `${grid}px ${grid}px`;
+    vp.style.backgroundPosition = `${tx}px ${ty}px`;
+    $('#z-pct').textContent = Math.round(sc * 100) + '%';
+  }
+  function zoomAt(f, cx, cy) {
+    const ns = Math.min(MAX, Math.max(MIN, sc * f));
+    tx = cx - (cx - tx) * (ns / sc); ty = cy - (cy - ty) * (ns / sc); sc = ns; apply();
+  }
+  function fit() {
+    const r = vp.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    sc = Math.min(MAX, Math.max(MIN, Math.min((r.width - 40) / worldW, (r.height - 40) / worldH)));
+    tx = (r.width - worldW * sc) / 2; ty = (r.height - worldH * sc) / 2; apply();
+  }
+  function centerOn(name, targetScale) {
+    const p = pos[name], r = vp.getBoundingClientRect();
+    sc = targetScale || Math.max(sc, 0.75);
+    tx = r.width / 2 - (p.x + p.w / 2) * sc;
+    ty = r.height / 2 - (p.y + Math.min(p.h, r.height / sc * 0.8) / 2) * sc;
+    apply();
+  }
+  vp.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const r = vp.getBoundingClientRect();
+    const k = ev.deltaMode === 1 ? 0.05 : 0.0018;
+    zoomAt(Math.exp(-ev.deltaY * k * (ev.ctrlKey ? 2.5 : 1)), ev.clientX - r.left, ev.clientY - r.top);
+  }, { passive: false });
+
+  const ptrs = new Map();
+  let panning = false, start = null, pinchD = 0;
+  vp.addEventListener('pointerdown', (ev) => {
+    // Only real controls block a pan; the legend's body is plain text and can be dragged from.
+    if (ev.target.closest('.zoom, .legend summary, .caret')) return;
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return; // right/middle press never pans
+    // A pointerup lost outside the frame would leave a stale entry; a stale touch id
+    // would make the next one-finger drag run the pinch branch. Start clean.
+    if (ev.pointerType !== 'touch' || ptrs.size >= 2) { ptrs.clear(); panning = false; }
+    ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    dragMoved = false;
+    start = { x: ev.clientX, y: ev.clientY, tx, ty };
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()]; pinchD = Math.hypot(a.x - b.x, a.y - b.y);
+      for (const id of ptrs.keys()) try { vp.setPointerCapture(id); } catch {}
+    }
+  });
+  vp.addEventListener('pointermove', (ev) => {
+    if (!ptrs.has(ev.pointerId)) return;
+    if (ev.pointerType !== 'touch' && ev.buttons === 0) { end(ev); return; } // button released where we couldn't see it
+    ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    const r = vp.getBoundingClientRect();
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchD) zoomAt(d / pinchD, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+      pinchD = d; dragMoved = true; return;
+    }
+    const dx = ev.clientX - start.x, dy = ev.clientY - start.y;
+    if (!panning && Math.hypot(dx, dy) > 4) {
+      // Capture only once it is a drag: capturing on pointerdown would retarget the click to the viewport.
+      panning = true; dragMoved = true; vp.classList.add('panning'); tip.hidden = true;
+      try { vp.setPointerCapture(ev.pointerId); } catch {}
+    }
+    if (panning) { tx = start.tx + dx; ty = start.ty + dy; apply(); }
+  });
+  const end = (ev) => {
+    ptrs.delete(ev.pointerId);
+    if (ptrs.size < 2) pinchD = 0;
+    if (ptrs.size === 1) { const [p] = [...ptrs.values()]; start = { x: p.x, y: p.y, tx, ty }; }
+    if (!ptrs.size) { panning = false; vp.classList.remove('panning'); setTimeout(() => (dragMoved = false), 0); }
+  };
+  vp.addEventListener('pointerup', end); vp.addEventListener('pointercancel', end);
+  vp.addEventListener('lostpointercapture', (ev) => { if (ptrs.has(ev.pointerId)) end(ev); });
+
+  const mid = () => { const r = vp.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+  $('#z-in').onclick = () => zoomAt(1.25, ...mid());
+  $('#z-out').onclick = () => zoomAt(0.8, ...mid());
+  $('#z-fit').onclick = fit;
+  document.addEventListener('keydown', (ev) => {
+    if (ev.target.matches('input')) { if (ev.key === 'Escape') ev.target.blur(); return; }
+    if (ev.key === '/') { ev.preventDefault(); $('#q').focus(); }
+    else if (ev.key === '+' || ev.key === '=') zoomAt(1.2, ...mid());
+    else if (ev.key === '-') zoomAt(1 / 1.2, ...mid());
+    else if (ev.key === '0') fit();
+    else if (ev.key === 'Escape') setPinned(null);
+    else if (ev.key.startsWith('Arrow')) {
+      const s = 60; tx += ev.key === 'ArrowLeft' ? s : ev.key === 'ArrowRight' ? -s : 0; ty += ev.key === 'ArrowUp' ? s : ev.key === 'ArrowDown' ? -s : 0; apply();
+    }
+  });
+
+  // ---------- search ----------
+  let matches = [], mi = -1;
+  const q = $('#q');
+  q.addEventListener('input', () => {
+    const s = q.value.trim().toLowerCase();
+    world.querySelectorAll('.match, .hit').forEach((el) => el.classList.remove('match', 'hit'));
+    matches = []; mi = -1;
+    world.classList.toggle('searching', !!s);
+    if (!s) { $('#qcount').textContent = ''; return; }
+    const ranked = [];
+    for (const e of DATA.entities) {
+      const nm = e.name.toLowerCase(), cl = e.collection.toLowerCase();
+      let rank = nm === s || cl === s ? 0 : nm.includes(s) || cl.includes(s) ? 1 : 3;
+      boxes[e.name].querySelectorAll('.row').forEach((r) => {
+        if (r.dataset.path.toLowerCase().split('.').pop().includes(s)) { r.classList.add('hit'); rank = Math.min(rank, 2); }
+      });
+      if (rank < 3) { boxes[e.name].classList.add('match'); ranked.push([rank, e.name]); }
+    }
+    matches = ranked.sort((a, b) => a[0] - b[0]).map((r) => r[1]); // name hits before field hits
+    $('#qcount').textContent = matches.length ? matches.length : '0';
+  });
+  q.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && matches.length) { mi = (mi + 1) % matches.length; centerOn(matches[mi], Math.max(sc, 0.9)); }
+  });
+
+  // ---------- boot ----------
+  renderPanel();
+  const boot = () => { layout(); fit(); };
+  if (vp.clientHeight < 700 || innerWidth < 700) $('#legend').open = false;
+  // Box heights depend on the web fonts, so lay out once they are in.
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(boot);
+  // Keep the whole diagram fitted while the viewer resizes, until they pan or zoom themselves.
+  let touched = false;
+  ['wheel', 'pointerdown', 'keydown'].forEach((t) => vp.addEventListener(t, () => (touched = true), { passive: true }));
+  new ResizeObserver(() => { if (!touched && worldW) fit(); }).observe(vp);
+})();
+</script>
