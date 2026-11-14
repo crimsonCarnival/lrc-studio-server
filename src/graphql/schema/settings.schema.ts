@@ -166,6 +166,11 @@ export const settingsSchema = `
     openVisualizer: [String!]
     toggleFullLyrics: [String!]
     togglePlayer: [String!]
+    searchLyrics: [String!]
+    loopLine: [String!]
+    prevLine: [String!]
+    nextLine: [String!]
+    duplicateLine: [String!]
   }
 
 
@@ -363,6 +368,11 @@ export const settingsSchema = `
     openVisualizer: [String!]
     toggleFullLyrics: [String!]
     togglePlayer: [String!]
+    searchLyrics: [String!]
+    loopLine: [String!]
+    prevLine: [String!]
+    nextLine: [String!]
+    duplicateLine: [String!]
   }
 
 
