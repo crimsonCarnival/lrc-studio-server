@@ -161,6 +161,11 @@ const shortcutsSchema = sub({
   openVisualizer: { type: [shortcutString] },
   toggleFullLyrics: { type: [shortcutString] },
   togglePlayer: { type: [shortcutString] },
+  searchLyrics: { type: [shortcutString] },
+  loopLine: { type: [shortcutString] },
+  prevLine: { type: [shortcutString] },
+  nextLine: { type: [shortcutString] },
+  duplicateLine: { type: [shortcutString] },
 });
 
 
