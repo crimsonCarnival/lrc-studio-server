@@ -16,7 +16,7 @@ async function guarded<T>(run: () => Promise<T>): Promise<T> {
 }
 
 function requireUser(ctx: Context): string {
-  if (!ctx.userId) throw new mercurius.ErrorWithProps('UNAUTHORIZED', { code: 'UNAUTHORIZED' });
+  if (!ctx.userId) throw new mercurius.ErrorWithProps('unauthorized', { code: 'unauthorized' });
   return ctx.userId;
 }
 
