@@ -96,6 +96,8 @@ function wordsOf(v: unknown): WordEntry[] | undefined {
     .filter((w): w is Obj => isObj(w) && typeof w.word === 'string')
     .map((w) => {
       const out: WordEntry = { word: (w.word as string).slice(0, LIMITS.word), time: finite(w.time) }
+      const end = finite(w.end)
+      if (end != null) out.end = end
       if (typeof w.reading === 'string') out.reading = w.reading.slice(0, LIMITS.word)
       if (typeof w.singerIndex === 'number' && Number.isInteger(w.singerIndex) && w.singerIndex >= 0) out.singerIndex = w.singerIndex
       return out

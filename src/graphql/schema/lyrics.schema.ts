@@ -43,6 +43,7 @@ export const lyricsSchema = `
   type Word {
     word: String!
     time: Float
+    end: Float
     reading: String
     singerIndex: Int
   }

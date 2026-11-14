@@ -148,6 +148,7 @@ export const projectSchema = `
     id: String
     word: String!
     time: Float
+    end: Float
     reading: String
     singerIndex: Int
   }
