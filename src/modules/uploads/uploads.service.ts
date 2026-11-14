@@ -19,7 +19,10 @@ const UPLOAD_FOLDER = 'lyrics-syncer/audio';
 // the local copy.
 const TRANSCODED_AUDIO_EXTENSIONS = ['wav', 'flac', 'wma', 'mp4', 'webm'];
 const AUDIO_STORAGE_FORMAT = 'm4a';
-const AUDIO_TRANSCODE_TRANSFORMATION = 'ac_aac,br_128k';
+// The target container has to be part of the incoming transformation itself. Cloudinary runs that
+// transformation before applying the `format` upload param, so without `f_m4a` here it tries to
+// write AAC into the source container and rejects the upload ("Unsupported codec aac for format wav").
+const AUDIO_TRANSCODE_TRANSFORMATION = 'ac_aac,br_128k,f_m4a';
 
 export function audioTranscodeParams(ext: string): { format: string; transformation: string } | null {
   return TRANSCODED_AUDIO_EXTENSIONS.includes(ext)
