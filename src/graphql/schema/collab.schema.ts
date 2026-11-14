@@ -34,6 +34,14 @@ export const collabSchema = `
     revokedInviteId: ID
   }
 
+  "A member shown on a session list row."
+  type CollabMemberPreview {
+    name: String!
+    avatarUrl: String
+    "1-8, maps to --color-collab-<n>."
+    colorIndex: Int!
+  }
+
   "A live session in the caller's session list, with the project it is about."
   type CollabSessionSummary {
     publicId: String!
@@ -43,6 +51,9 @@ export const collabSchema = `
     "The caller's role: owner, editor or viewer."
     role: String!
     memberCount: Int!
+    "The first few members, for an avatar stack. memberCount has the full count."
+    members: [CollabMemberPreview!]!
+    coverImage: String
     createdAt: String!
     lastActivityAt: String!
   }

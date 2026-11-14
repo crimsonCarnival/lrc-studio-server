@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import User from '../../modules/users/user.model.js';
+import Follow from '../../modules/users/follow.model.js';
 import { getFeed, getUserActivity, getUserActivityHeatmap } from '../../modules/activity/activity.service.js';
 import { Context } from './context.js';
 
@@ -70,10 +72,10 @@ export const activityResolvers = {
         .lean<{ avatarUrl?: string | null }>();
       return target ? target.avatarUrl ?? null : a.coverImage ?? null;
     },
-    actor: async (a: ActivityDoc) => {
+    actor: async (a: ActivityDoc, _args: unknown, context: Context) => {
       const user = await User.findById(a.actorId)
-        .select('accountName displayName avatarUrl')
-        .lean<LeanUser>();
+        .select('accountName displayName avatarUrl role')
+        .lean<LeanUser & { role?: string | null }>();
       // User may have been deleted after the activity was written — return a
       // sentinel rather than null so the non-nullable `actor: FollowUser!`
       // field doesn't null-bubble the entire Activity object.
@@ -82,12 +84,20 @@ export const activityResolvers = {
         accountName: '[deleted]',
         displayName: null,
         avatarUrl: null,
+        staffRole: null,
+        isFollowedByMe: false,
       };
+      const id = user._id.toString();
+      // Lets a "followed you" card offer "Follow back" only to someone not following yet.
+      const isFollowedByMe = !!context.userId && context.userId !== id
+        && !!(await Follow.exists({ followerId: new mongoose.Types.ObjectId(context.userId), followingId: new mongoose.Types.ObjectId(id) }));
       return {
-        id: user._id.toString(),
+        id,
         accountName: user.accountName,
         displayName: user.displayName ?? null,
         avatarUrl:   user.avatarUrl ?? null,
+        staffRole: user.role && user.role !== 'user' ? user.role : null,
+        isFollowedByMe,
       };
     },
   },
