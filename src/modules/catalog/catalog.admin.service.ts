@@ -18,6 +18,7 @@ import { logAdminAction } from '../admin/admin.service.js';
 const MAX_DISAMBIGUATION = 80;
 
 export type AdminArtistInput = ArtistInput & { disambiguation?: string };
+/** In a patch, `undefined` leaves a field unchanged; `null` on imageUrl/coverUrl clears it. */
 export type AdminArtistPatch = Partial<AdminArtistInput>;
 export type AdminAlbumPatch = Partial<Omit<AlbumInput, 'artistId'>>;
 

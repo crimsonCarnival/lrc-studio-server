@@ -140,6 +140,18 @@ describe('admin catalog update', () => {
     expect(errOf(await adminUpdateCatalogEntry(admin, 'artist', String(uk._id), { disambiguation: '' })).code).toBe('CATALOG_DISAMBIGUATION_REQUIRED');
   });
 
+  it('clears an image or cover with an explicit null and leaves it alone when undefined', async () => {
+    const admin = await seedUser();
+    const { artist } = (await adminCreateCatalogArtist(admin, { name: 'Pic', imageUrl: img() })) as { artist: any };
+    const { album } = (await adminCreateCatalogAlbum(admin, { artistId: String(artist._id), title: 'Cover', coverUrl: img() })) as { album: any };
+    const kept = (await adminUpdateCatalogEntry(admin, 'artist', String(artist._id), { bio: 'x', imageUrl: undefined })) as { artist: any };
+    expect(kept.artist.imageUrl).toBe(img());
+    const cleared = (await adminUpdateCatalogEntry(admin, 'artist', String(artist._id), { imageUrl: null })) as { artist: any };
+    expect(cleared.artist.imageUrl).toBeNull();
+    const clearedAlbum = (await adminUpdateCatalogEntry(admin, 'album', String(album._id), { coverUrl: null })) as { album: any };
+    expect(clearedAlbum.album.coverUrl).toBeNull();
+  });
+
   it('edits fields of a pending community entry without changing status or slug', async () => {
     const admin = await seedUser();
     const u = await seedUser({}, []);
