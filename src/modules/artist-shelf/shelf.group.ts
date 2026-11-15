@@ -1,4 +1,9 @@
 import { artistKey } from '../artists/artist.service.js'
+
+/** Album grouping and visibility key: NFC + lowercase, whitespace runs collapsed, trimmed. '' = singles. */
+export function albumKey(raw: string): string {
+  return artistKey(raw.replace(/\s+/g, ' ').trim())
+}
 import type { GroupedAlbum, GroupedArtist, ShelfRow, VisibilityRow } from './shelf.types.js'
 
 const editedAt = (r: ShelfRow): number => (r.contentUpdatedAt ?? r.updatedAt)?.getTime() ?? 0
@@ -30,7 +35,7 @@ export function groupShelf<R extends ShelfRow>(
 
   for (const r of rows) {
     if (r.kind === 'subtitles') continue
-    const key = artistKey((r.metadata?.songAlbum ?? '').trim())
+    const key = albumKey(r.metadata?.songAlbum ?? '')
     const seen = new Set<string>()
     for (const c of r.metadata?.artists ?? []) {
       if (c.role !== 'primary') continue

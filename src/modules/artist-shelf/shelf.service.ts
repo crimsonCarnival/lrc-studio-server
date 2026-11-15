@@ -2,9 +2,8 @@ import mongoose from 'mongoose';
 import Project, { type IProject } from '../projects/project.model.js';
 import Artist from '../artists/artist.model.js';
 import ShelfVisibility from './shelf-visibility.model.js';
-import { artistKey } from '../artists/artist.service.js';
 import { resolveProfileAccess } from '../users/profile-access.js';
-import { groupShelf } from './shelf.group.js';
+import { albumKey as toAlbumKey, groupShelf } from './shelf.group.js';
 import type { ShelfRow, VisibilityRow } from './shelf.types.js';
 
 export type ShelfTrackOut = { project: IProject; trackNumber: number | null };
@@ -111,8 +110,8 @@ export async function setShelfVisibility(
   albumKey: string | null,
   isPublic: boolean
 ): Promise<void> {
-  // Grouping keys albums by artistKey(trim); store the same form or the row never matches.
-  const key = albumKey === null ? null : artistKey(albumKey.trim());
+  // Store the same form groupShelf keys albums by, or the row never matches.
+  const key = albumKey === null ? null : toAlbumKey(albumKey);
   if (key !== null && key.length > MAX_ALBUM_KEY) {
     throw Object.assign(new Error('bad_album_key'), { status: 400, extensions: { code: 'bad_album_key' } });
   }
