@@ -4,6 +4,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
 vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Error('no socket'); } }));
 const { revokeCatalogCredit } = vi.hoisted(() => ({ revokeCatalogCredit: vi.fn(async () => undefined) }));
+vi.mock('../badges/badge.service.js', () => ({ triggerBadgeCheck: async () => [] }));
 vi.mock('./catalog.rewards.js', () => ({ awardCatalogCredit: async () => undefined, revokeCatalogCredit }));
 
 import User from '../users/user.model.js';
@@ -16,6 +17,7 @@ import {
   adminUpdateCatalogEntry,
   adminDeleteCatalogEntry,
 } from './catalog.admin.service.js';
+import { reviewCatalogEntry } from './catalog.review.service.js';
 
 let repl: MongoMemoryReplSet;
 
@@ -159,6 +161,38 @@ describe('admin catalog update', () => {
   });
 });
 
+describe('admin input edge cases', () => {
+  it('returns CATALOG_INVALID_INPUT for null input and patch', async () => {
+    const admin = await seedUser();
+    expect(errOf(await adminCreateCatalogArtist(admin, null as never)).code).toBe('CATALOG_INVALID_INPUT');
+    expect(errOf(await adminCreateCatalogAlbum(admin, undefined as never)).code).toBe('CATALOG_INVALID_INPUT');
+    const { artist } = (await adminCreateCatalogArtist(admin, { name: 'N' })) as { artist: any };
+    expect(errOf(await adminUpdateCatalogEntry(admin, 'artist', String(artist._id), null as never)).code).toBe('CATALOG_INVALID_INPUT');
+  });
+
+  it('treats an empty patch as a no-op: no write, no audit', async () => {
+    const admin = await seedUser();
+    const { artist } = (await adminCreateCatalogArtist(admin, { name: 'N' })) as { artist: any };
+    await AdminLog.deleteMany({});
+    const r = (await adminUpdateCatalogEntry(admin, 'artist', String(artist._id), {})) as { artist: any };
+    expect(r.artist.name).toBe('N');
+    expect(String(r.artist.updatedAt)).toBe(String((await CatalogArtist.findById(artist._id))!.updatedAt));
+    expect(await AdminLog.countDocuments()).toBe(0);
+  });
+
+  it('an admin edit of a pending entry makes a review with the pre-edit updatedAt fail CATALOG_CHANGED', async () => {
+    const admin = await seedUser();
+    const u = await seedUser({}, []);
+    const reviewer = await seedUser({}, ['catalog.review']);
+    const pending = await seedCommunity(CatalogArtist, u, { name: 'P', nameKey: 'p', status: 'pending', creditAwarded: false });
+    const seen = (await CatalogArtist.findById(pending._id))!.updatedAt!;
+    await new Promise((r) => setTimeout(r, 15));
+    await adminUpdateCatalogEntry(admin, 'artist', String(pending._id), { bio: 'edited' });
+    const r = errOf(await reviewCatalogEntry({ userId: reviewer, permissions: ['catalog.review'] }, 'artist', String(pending._id), 'approve', undefined, { expectedUpdatedAt: seen }));
+    expect(r.code).toBe('CATALOG_CHANGED');
+  });
+});
+
 describe('admin catalog delete', () => {
   const setup = async () => {
     const admin = await seedUser();
@@ -195,12 +229,58 @@ describe('admin catalog delete', () => {
     expect(revokeCatalogCredit).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the entry and its credit flag when revocation throws', async () => {
+  it('still deletes the entry when revocation throws, leaving the flag false', async () => {
     const { admin, approved } = await setup();
     revokeCatalogCredit.mockRejectedValueOnce(new Error('boom'));
-    await expect(adminDeleteCatalogEntry(admin, 'album', String(approved._id), { revokeCredit: true })).rejects.toThrow('boom');
-    const still = await CatalogAlbum.findById(approved._id);
-    expect(still?.creditAwarded).toBe(true);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await adminDeleteCatalogEntry(admin, 'album', String(approved._id), { revokeCredit: true })).toEqual({ ok: true });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+    expect(await CatalogAlbum.findById(approved._id)).toBeNull();
+    // Flag was flipped before the revoke and never restored: a re-run cannot double revoke.
+    await CatalogAlbum.create({ _id: approved._id, artistId: approved.artistId, title: 'X', titleKey: 'x', status: 'approved', source: 'community', submittedBy: approved.submittedBy, creditAwarded: false });
+    revokeCatalogCredit.mockClear();
+    await adminDeleteCatalogEntry(admin, 'album', String(approved._id), { revokeCredit: true });
+    expect(revokeCatalogCredit).not.toHaveBeenCalled();
+  });
+
+  it('continues the cascade when one album fails and audits the counts', async () => {
+    const { admin, artist, approved, pending, rejected } = await setup();
+    const real = CatalogAlbum.deleteOne.bind(CatalogAlbum);
+    const spy = vi.spyOn(CatalogAlbum, 'deleteOne').mockImplementation(((filter: { _id?: unknown }) => {
+      if (String(filter?._id) === String(pending._id)) throw new Error('db down');
+      return real(filter as never);
+    }) as never);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await adminDeleteCatalogEntry(admin, 'artist', String(artist._id), { revokeCredit: true })).toEqual({ ok: true });
+    spy.mockRestore();
+    log.mockRestore();
+    const left = await CatalogAlbum.find({}).lean();
+    expect(left.map((a) => String(a._id))).toEqual([String(pending._id)]);
+    expect(await CatalogAlbum.countDocuments({ _id: { $in: [approved._id, rejected._id] } })).toBe(0);
+    const entry = await AdminLog.findOne({ action: 'catalog.delete' }).lean();
+    expect(JSON.parse(entry!.details as string)).toMatchObject({ albumsDeleted: 2, albumsFailed: 1, failedAlbumIds: [String(pending._id)] });
+  });
+
+  it('revokes a credit awarded after the entry was first read (flip is conditional at delete time)', async () => {
+    const { admin, u } = await setup();
+    const a = await seedCommunity(CatalogArtist, u, { name: 'Late', nameKey: 'late', slug: 'late', creditAwarded: false });
+    const late = await seedCommunity(CatalogAlbum, u, { artistId: a._id, title: 'L', titleKey: 'l', slug: 'l', creditAwarded: false });
+    // A concurrent approval lands its award after the cascade list was read.
+    const realFind = CatalogAlbum.find.bind(CatalogAlbum);
+    const spy = vi.spyOn(CatalogAlbum, 'find').mockImplementation(((...args: unknown[]) => {
+      const q = (realFind as (...a: unknown[]) => { lean: () => Promise<unknown> })(...args);
+      const lean = q.lean.bind(q);
+      q.lean = async () => {
+        const docs = await lean();
+        await CatalogAlbum.updateOne({ _id: late._id }, { creditAwarded: true });
+        return docs;
+      };
+      return q;
+    }) as never);
+    await adminDeleteCatalogEntry(admin, 'artist', String(a._id), { revokeCredit: true });
+    spy.mockRestore();
+    expect(revokeCatalogCredit).toHaveBeenCalledWith(u, 'album');
   });
 
   it('refuses non-managers', async () => {

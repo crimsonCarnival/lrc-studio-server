@@ -68,7 +68,8 @@ async function audit(adminId: string, action: 'catalog.create' | 'catalog.update
 export async function adminCreateCatalogArtist(adminId: string, input: AdminArtistInput): Promise<{ artist: ICatalogArtist } | CatalogError> {
   const denied = await assertManager(adminId);
   if (denied) return denied;
-  const name = cleanName(input?.name, CATALOG_LIMITS.maxArtistName, 'Name');
+  if (!input || typeof input !== 'object') return invalid('Input is required');
+  const name = cleanName(input.name, CATALOG_LIMITS.maxArtistName, 'Name');
   if (isError(name)) return name;
   const bio = cleanBio(input.bio);
   if (isError(bio)) return bio;
@@ -92,7 +93,8 @@ export async function adminCreateCatalogArtist(adminId: string, input: AdminArti
 export async function adminCreateCatalogAlbum(adminId: string, input: AlbumInput): Promise<{ album: ICatalogAlbum } | CatalogError> {
   const denied = await assertManager(adminId);
   if (denied) return denied;
-  const title = cleanName(input?.title, CATALOG_LIMITS.maxAlbumTitle, 'Title');
+  if (!input || typeof input !== 'object') return invalid('Input is required');
+  const title = cleanName(input.title, CATALOG_LIMITS.maxAlbumTitle, 'Title');
   if (isError(title)) return title;
   const year = cleanYear(input.year);
   if (isError(year)) return year;
@@ -128,6 +130,16 @@ export async function adminUpdateCatalogEntry(
   const denied = await assertManager(adminId);
   if (denied) return denied;
   if (!validId(id)) return notFound();
+  if (!patch || typeof patch !== 'object') return invalid('Patch is required');
+  if (Object.values(patch).every((v) => v === undefined)) {
+    // Nothing to write: no update, no timestamp bump, no audit entry.
+    if (kind === 'artist') {
+      const unchanged = await CatalogArtist.findById(oid(id));
+      return unchanged ? { artist: unchanged } : notFound();
+    }
+    const unchanged = await CatalogAlbum.findById(oid(id));
+    return unchanged ? { album: unchanged } : notFound();
+  }
   // Only whitelisted fields are ever written: status, slug and source are never patchable.
   const set: Record<string, unknown> = {};
 
@@ -200,19 +212,22 @@ export async function adminUpdateCatalogEntry(
   return { album };
 }
 
-type Deletable = { _id: mongoose.Types.ObjectId; status: string; submittedBy: mongoose.Types.ObjectId; creditAwarded: boolean };
+type Deletable = { _id: mongoose.Types.ObjectId; submittedBy: mongoose.Types.ObjectId };
 
-/** Revokes at most once per entry: the true->false flip is the guard, restored if the revoke throws. */
+/**
+ * Revokes at most once per entry. The conditional true->false flip is evaluated at delete
+ * time (never from a value read earlier) so a concurrent approval's fresh credit is still
+ * revoked. A failing revoke is logged for manual repair and neither restores the flag nor
+ * aborts the delete: revokeCatalogCredit is idempotent and re-runnable by contract.
+ */
 async function revokeOnce(kind: 'artist' | 'album', entry: Deletable): Promise<void> {
-  if (!entry.creditAwarded) return;
   const Model = (kind === 'artist' ? CatalogArtist : CatalogAlbum) as mongoose.Model<ICatalogArtist | ICatalogAlbum>;
   const flipped = await Model.updateOne({ _id: entry._id, creditAwarded: true }, { $set: { creditAwarded: false } });
   if (flipped.modifiedCount !== 1) return;
   try {
     await revokeCatalogCredit(String(entry.submittedBy), kind);
   } catch (err) {
-    await Model.updateOne({ _id: entry._id }, { $set: { creditAwarded: true } }).catch((e) => logFailure('credit flag restore', e));
-    throw err;
+    logFailure(`credit revoke (${kind} ${String(entry._id)}, user ${String(entry.submittedBy)})`, err);
   }
 }
 
@@ -247,14 +262,25 @@ export async function adminDeleteCatalogEntry(
   if (res.deletedCount !== 1) return notFound();
   if (artist.status === 'approved') await onCatalogDeleted('artist', id).catch((err) => logFailure('onCatalogDeleted', err));
 
+  // One failing album must not strand the rest: errors are collected and audited.
   const albums = await CatalogAlbum.find({ artistId: artist._id }).lean();
+  let deleted = 0;
+  const failedIds: string[] = [];
   for (const album of albums) {
-    if (revoke) await revokeOnce('album', album);
-    const del = await CatalogAlbum.deleteOne({ _id: album._id });
-    if (del.deletedCount === 1 && album.status === 'approved') {
-      await onCatalogDeleted('album', String(album._id)).catch((err) => logFailure('onCatalogDeleted', err));
+    try {
+      if (revoke) await revokeOnce('album', album);
+      const del = await CatalogAlbum.deleteOne({ _id: album._id });
+      if (del.deletedCount === 1) {
+        deleted++;
+        if (album.status === 'approved') await onCatalogDeleted('album', String(album._id));
+      }
+    } catch (err) {
+      failedIds.push(String(album._id));
+      logFailure(`album cascade (${String(album._id)})`, err);
     }
   }
-  await audit(adminId, 'catalog.delete', id, artist.name, { kind, name: artist.name, revokeCredit: revoke, albumsDeleted: albums.length });
+  await audit(adminId, 'catalog.delete', id, artist.name, {
+    kind, name: artist.name, revokeCredit: revoke, albumsDeleted: deleted, albumsFailed: failedIds.length, failedAlbumIds: failedIds,
+  });
   return { ok: true };
 }
