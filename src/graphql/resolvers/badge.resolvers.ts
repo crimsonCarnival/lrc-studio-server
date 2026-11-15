@@ -108,8 +108,15 @@ export const badgeResolvers = {
       };
     },
 
-    adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId }: { userIdentifier: string; badgeId: string }, context: Context) => {
+    adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId, expiresAt }: { userIdentifier: string; badgeId: string; expiresAt?: string | null }, context: Context) => {
       const { userId: adminId } = await requirePermission(context, 'badges.manage');
+      let expiry: Date | null = null;
+      if (expiresAt) {
+        expiry = new Date(expiresAt);
+        if (Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) {
+          throw new mercurius.ErrorWithProps('expiresAt must be a valid future date', { code: 'invalid_input' });
+        }
+      }
       // Accept accountName or MongoDB _id
       let resolvedId = userIdentifier.trim();
       if (!/^[a-f\d]{24}$/i.test(resolvedId)) {
@@ -118,7 +125,7 @@ export const badgeResolvers = {
         resolvedId = target._id.toString();
       }
       const { grantBadge } = await import('../../modules/badges/badge.service.js');
-      const result = await grantBadge(resolvedId, badgeId, adminId);
+      const result = await grantBadge(resolvedId, badgeId, adminId, { expiresAt: expiry });
       logAdminAction({ adminId, action: 'grant_badge', targetId: resolvedId, targetName: badgeId, ip: context.ip }).catch(() => {});
       return result;
     },

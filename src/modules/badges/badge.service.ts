@@ -225,13 +225,13 @@ export async function grantBadge(
   userId: string,
   badgeId: string,
   grantedBy: string = 'system',
-  { recompute = true }: { recompute?: boolean } = {}
+  { recompute = true, expiresAt = null }: { recompute?: boolean; expiresAt?: Date | null } = {}
 ): Promise<boolean> {
   // An id with no definition would still be pushed and earn the 50-XP default.
   if (!(await BadgeDefinition.exists({ id: badgeId }))) return false;
   const result = await User.findOneAndUpdate(
     { _id: userId, 'badges.id': { $ne: badgeId } },
-    { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy } } },
+    { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy, expiresAt } } },
     { returnDocument: 'after' }
   );
   if (!result) return false; // already had it or user not found
@@ -256,11 +256,19 @@ export async function setNameTag(
   return updated ? { ok: true } : { ok: false, code: 'not_owned' };
 }
 
-export async function revokeBadge(userId: string, badgeId: string): Promise<boolean> {
-  const result = await User.updateOne(
-    { _id: userId },
-    { $pull: { badges: { id: badgeId } } }
-  );
+export async function revokeBadge(
+  userId: string,
+  badgeId: string,
+  { expiredBy }: { expiredBy?: Date } = {}
+): Promise<boolean> {
+  // expiredBy limits the pull to a grant that has expired, so a sweep racing an admin
+  // re-grant (revoke, then grant without expiry) cannot remove the new grant.
+  // The guard lives in the filter: one update on one document is atomic, and grantBadge keeps
+  // at most one grant per id, so pulling by id then removes exactly the expired grant.
+  const filter = expiredBy
+    ? { _id: userId, badges: { $elemMatch: { id: badgeId, expiresAt: { $lte: expiredBy } } } }
+    : { _id: userId };
+  const result = await User.updateOne(filter, { $pull: { badges: { id: badgeId } } });
   if ((result.modifiedCount ?? 0) > 0) {
     // Also remove from showcase if present
     await User.updateOne({ _id: userId }, { $pull: { showcasedBadges: badgeId } });
@@ -269,6 +277,24 @@ export async function revokeBadge(userId: string, badgeId: string): Promise<bool
     return true;
   }
   return false;
+}
+
+/**
+ * Revokes every grant whose expiresAt has passed, through revokeBadge so showcase, name tag and XP
+ * are cleaned by the same path as a manual revoke. Returns the number of grants revoked.
+ */
+export async function sweepExpiredBadges(now: Date = new Date()): Promise<number> {
+  const holders = await User.find({ badges: { $elemMatch: { expiresAt: { $lte: now } } } })
+    .select('badges')
+    .lean<IUser[]>();
+  let revoked = 0;
+  for (const user of holders) {
+    for (const b of user.badges ?? []) {
+      if (!b.expiresAt || b.expiresAt.getTime() > now.getTime()) continue;
+      if (await revokeBadge(user._id.toString(), b.id, { expiredBy: now })) revoked++;
+    }
+  }
+  return revoked;
 }
 
 // ─── Badge definition CRUD (shared by GraphQL resolvers + request executor) ──

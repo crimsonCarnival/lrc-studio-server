@@ -44,6 +44,7 @@ export interface IUserBadge {
   id: string;
   grantedAt: Date;
   grantedBy: string;
+  expiresAt?: Date | null;
 }
 
 export interface IMusicLibraryEntry {
@@ -223,6 +224,7 @@ const userBadgeSchema = new mongoose.Schema<IUserBadge>(
     id: { type: String, required: true },
     grantedAt: { type: Date, default: Date.now },
     grantedBy: { type: String, default: "system" },
+    expiresAt: { type: Date, default: null },
   },
   { _id: false },
 );

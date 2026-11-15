@@ -151,7 +151,7 @@ export const rootSchema = `
     reactToProject(publicId: String!, emoji: String!): ProjectReactions!
     setNameTag(badgeId: String): Boolean!
     updateShowcase(badgeIds: [String!]!, showcasePublic: Boolean): UpdateShowcaseResult!
-    adminGrantBadge(userIdentifier: String!, badgeId: String!): Boolean!
+    adminGrantBadge(userIdentifier: String!, badgeId: String!, expiresAt: String): Boolean!
     adminRevokeBadge(userId: ID!, badgeId: String!): Boolean!
     adminCreateBadge(input: BadgeDefInput!): BadgeDef!
     adminUpdateBadge(id: String!, input: BadgeDefInput!): BadgeDef!
