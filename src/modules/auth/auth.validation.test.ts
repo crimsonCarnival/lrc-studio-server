@@ -5,6 +5,11 @@ import { registerSchema, loginSchema, appealSchema } from './auth.schema.js';
 import { handleFastifyError } from '../../shared/error-handler.js';
 
 describe('reserved names', () => {
+  it('artists is a reserved username', () => {
+    expect(isReservedAccountName('artists')).toBe(true);
+    expect(isReservedAccountName('Artists')).toBe(true);
+  });
+
   it('covers every top-level client route segment', () => {
     for (const n of [
       'admin', 'auth', 'explore', 'feed', 'guide', 'home', 'leaderboard', 'library', 'login',
