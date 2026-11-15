@@ -13,6 +13,7 @@ import { requirePermission } from './auth-guards.js';
 import { hasPermission, rankOf, ROLE_RANK } from '../../shared/permissions.js';
 import { toggleShadowBan } from '../../modules/admin/admin.service.js';
 import AccountNameHistory from '../../modules/users/account-name-history.model.js';
+import { resolveProfileAccess } from '../../modules/users/profile-access.js';
 import { findUserByAccountName, isAccountNameInHistoryOfOther, recordAccountNameChange } from '../../modules/users/account-name.service.js';
 import { isReservedAccountName } from '../../modules/auth/auth.validation.js';
 import EmailHistory from '../../modules/users/email-history.model.js';
@@ -288,27 +289,10 @@ export const userResolvers = {
       { accountName, asVisitor }: { accountName: string; asVisitor?: boolean | null },
       context: Context
     ) => {
-      // Old account names keep resolving; the payload carries the current one so
-      // the client can redirect to it.
-      const user = await findUserByAccountName<IUser>(accountName);
-      if (!user || user.isDeleted || user.ban?.active) return null;
-
-      // asVisitor: project the profile exactly as an anonymous visitor sees it
-      // (owner's "view as others" preview). It can only remove data, never add.
-      const viewerId = asVisitor ? null : (context.userId ?? null);
-
-      // A user blocked by the profile owner cannot view that profile; a user the
-      // viewer blocked shows as a name only, with nothing they made or said.
-      if (context.userId && context.userId !== user._id.toString()) {
-        if (await hasBlocked(user._id.toString(), context.userId)) return null;
-        if (await hasBlocked(context.userId, user._id.toString())) return blockedProfileStub(user);
-      }
-
-      const isOwner = !!viewerId && viewerId === user._id.toString();
-      // Unlisted projects are not on a profile: only their owner sees them there.
-      const projectFilter = isOwner ? { userId: user._id } : { userId: user._id, public: true, listed: { $ne: false } };
-
-      const playlistFilter = isOwner ? { userId: user._id } : { userId: user._id, isPublic: true, listed: { $ne: false } };
+      const access = await resolveProfileAccess(accountName, !!asVisitor, context.userId ?? null);
+      if (access.kind === 'missing' || access.kind === 'hidden') return null;
+      if (access.kind === 'stub') return blockedProfileStub(access.user);
+      const { user, isOwner, viewerId, projectFilter, playlistFilter } = access;
 
       const [projects, projectCount, playlistCount, socialTotals] = await Promise.all([
         Project.find(projectFilter)

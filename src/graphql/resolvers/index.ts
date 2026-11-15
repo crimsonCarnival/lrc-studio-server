@@ -11,6 +11,7 @@ import { reactionResolvers } from './reaction.resolvers.js';
 import { statsResolvers }    from './stats.resolvers.js';
 import { requestResolvers }  from './request.resolvers.js';
 import { artistResolvers }   from './artist.resolvers.js';
+import { shelfResolvers }    from './shelf.resolvers.js';
 import { badgeResolvers }    from './badge.resolvers.js';
 import { wallResolvers }     from './wall.resolvers.js';
 import { reportResolvers }   from './report.resolvers.js';
@@ -30,6 +31,7 @@ export const resolvers = {
     ...statsResolvers.Query,
     ...requestResolvers.Query,
     ...artistResolvers.Query,
+    ...shelfResolvers.Query,
     ...badgeResolvers.Query,
     ...wallResolvers.Query,
     ...reportResolvers.Query,
@@ -46,6 +48,7 @@ export const resolvers = {
     ...reactionResolvers.Mutation,
     ...statsResolvers.Mutation,
     ...requestResolvers.Mutation,
+    ...shelfResolvers.Mutation,
     ...badgeResolvers.Mutation,
     ...wallResolvers.Mutation,
     ...reportResolvers.Mutation,
