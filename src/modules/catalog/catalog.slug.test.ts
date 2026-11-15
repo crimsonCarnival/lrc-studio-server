@@ -60,6 +60,17 @@ describe('assignArtistSlug', () => {
     expect((await CatalogArtist.findById(a._id))?.slug).toBe(first);
   });
 
+  it('concurrent assigns on one entry both return the same stored slug', async () => {
+    const a = await mkArtist('Ghostemane');
+    const [x, y] = await Promise.all([assignArtistSlug(a._id, a.name), assignArtistSlug(a._id, a.name)]);
+    expect(x).toBe(y);
+    expect((await CatalogArtist.findById(a._id))?.slug).toBe(x);
+  });
+
+  it('assigning a slug for a missing document throws catalog_entry_not_found', async () => {
+    await expect(assignArtistSlug(new mongoose.Types.ObjectId(), 'Nobody')).rejects.toThrow('catalog_entry_not_found');
+  });
+
   it('two pending entries reserve nothing', async () => {
     const a = await CatalogArtist.create({ name: 'Dup', nameKey: 'dup', status: 'pending', source: 'community', submittedBy: submitter });
     const b = await CatalogArtist.create({ name: 'Dup', nameKey: 'dup', status: 'pending', source: 'community', submittedBy: submitter });
