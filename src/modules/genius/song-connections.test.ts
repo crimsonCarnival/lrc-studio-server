@@ -67,6 +67,22 @@ describe('getSongConnections', () => {
     expect((await getSongConnections(stronger))!.geniusId).toBe(525);
   });
 
+  it('prefers an exact title over a higher-ranked longer title by the same artist', async () => {
+    const fx = load();
+    const mk = (id: number, title: string) => ({ result: { id, title, url: `https://genius.com/x-${id}`, primary_artist: { name: 'Kanye West' } } });
+    fx.search.response.hits = [mk(900, 'Stronger Than Me'), mk(525, 'Stronger')] as never;
+    const fn = stubFetch(fx);
+    await getSongConnections(stronger);
+    expect(String(fn.mock.calls[1][0])).toContain('/songs/525');
+  });
+
+  it('does not match a different song that merely starts with the track name', async () => {
+    const fx = load();
+    fx.search.response.hits = [{ result: { id: 901, title: 'Love Story', url: 'https://genius.com/x', primary_artist: { name: 'Kanye West' } } }] as never;
+    stubFetch(fx);
+    expect(await getSongConnections({ track: 'Love', artist: 'Kanye West' })).toBeNull();
+  });
+
   it('returns null when no hit matches', async () => {
     stubFetch(load());
     expect(await getSongConnections({ track: 'Nonexistent', artist: 'Kanye West' })).toBeNull();

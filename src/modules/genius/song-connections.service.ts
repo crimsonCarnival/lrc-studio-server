@@ -76,16 +76,15 @@ async function findGeniusId(track: string, artist: string): Promise<number | nul
   if (!trackKey || !wantArtist) return null;
   const hits = await searchSong(`${track} ${artist}`);
   if (!hits) return null;
-  const hit = hits.find((h) => {
-    if (typeof h?.primary_artist?.name !== 'string' || typeof h.title !== 'string') return false;
-    if (matchKey(h.primary_artist.name) !== wantArtist) return false;
-    const title = matchKey(h.title);
-    return title === trackKey
-      || title.startsWith(`${trackKey} `)
-      || title.startsWith(`${trackKey} (`)
-      || title.startsWith(`${trackKey} -`);
-  });
-  return hit ? hit.id : null;
+  const sameArtist = hits.filter((h) => typeof h?.primary_artist?.name === 'string'
+    && typeof h.title === 'string' && matchKey(h.primary_artist.name) === wantArtist);
+  // Exact title anywhere in the hits wins; Genius ranks by popularity, so a first-match
+  // prefix rule would let "Love" resolve to a more popular "Love Story".
+  const exact = sameArtist.find((h) => matchKey(h.title) === trackKey);
+  if (exact) return exact.id;
+  const suffixes = [`${trackKey} (`, `${trackKey} [`, `${trackKey} -`];
+  const suffixed = sameArtist.find((h) => suffixes.some((p) => matchKey(h.title).startsWith(p)));
+  return suffixed ? suffixed.id : null;
 }
 
 async function load(geniusId: number): Promise<SongConnections | null> {
