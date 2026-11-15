@@ -149,8 +149,9 @@ export const rootSchema = `
     incrementPlaylistView(id: ID!): Boolean!
     incrementPlaylistShare(id: ID!): Boolean!
     reactToProject(publicId: String!, emoji: String!): ProjectReactions!
+    setNameTag(badgeId: String): Boolean!
     updateShowcase(badgeIds: [String!]!, showcasePublic: Boolean): UpdateShowcaseResult!
-    adminGrantBadge(userIdentifier: String!, badgeId: String!): Boolean!
+    adminGrantBadge(userIdentifier: String!, badgeId: String!, expiresAt: String): Boolean!
     adminRevokeBadge(userId: ID!, badgeId: String!): Boolean!
     adminCreateBadge(input: BadgeDefInput!): BadgeDef!
     adminUpdateBadge(id: String!, input: BadgeDefInput!): BadgeDef!
@@ -302,6 +303,7 @@ export const rootSchema = `
     # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
     # Unlike User.role it never says "user" and is safe on public surfaces.
     staffRole: String
+    nameTag: NameTag
     badges: [UserBadge!]!
     stats: UserStats
     progression: UserProgression
@@ -334,6 +336,14 @@ export const rootSchema = `
   input LocalizedStringInput {
     en: String!
     es: String
+  }
+
+  type NameTag {
+    id: String!
+    label: LocalizedString!
+    description: LocalizedString!
+    icon: String!
+    color: String!
   }
 
   type ShowcasedBadge {

@@ -44,6 +44,7 @@ export interface IUserBadge {
   id: string;
   grantedAt: Date;
   grantedBy: string;
+  expiresAt?: Date | null;
 }
 
 export interface IMusicLibraryEntry {
@@ -151,6 +152,7 @@ export interface IUser extends Document {
   // Badges
   badges: IUserBadge[];
   showcasedBadges: string[];
+  nameTagBadgeId: string | null;
   showcasePublic: boolean;
   // Music library: previously used artists/albums for autofill
   musicLibrary: IMusicLibraryEntry[];
@@ -222,6 +224,7 @@ const userBadgeSchema = new mongoose.Schema<IUserBadge>(
     id: { type: String, required: true },
     grantedAt: { type: Date, default: Date.now },
     grantedBy: { type: String, default: "system" },
+    expiresAt: { type: Date, default: null },
   },
   { _id: false },
 );
@@ -401,6 +404,7 @@ const userSchema = new mongoose.Schema<IUser>(
     streak: { type: streakSchema, default: () => ({}) },
     badges: { type: [userBadgeSchema], default: [] },
     showcasedBadges: { type: [String], default: [] },
+    nameTagBadgeId: { type: String, default: null },
     showcasePublic: { type: Boolean, default: true },
     progression: { type: progressionSchema, default: () => ({}) },
     musicLibrary: {
@@ -531,6 +535,7 @@ userSchema.methods.toPublic = function (this: IUser): Record<string, unknown> {
       : { connected: false },
     badges: this.badges ?? [],
     showcasedBadges: this.showcasedBadges ?? [],
+    nameTagBadgeId: this.nameTagBadgeId ?? null,
     showcasePublic: this.showcasePublic ?? true,
     stats: {
       minutesSynced: this.stats?.minutesSynced ?? 0,

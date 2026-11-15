@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import ProfileShare from '../modules/projects/profile-share.model.js';
 import Follow from '../modules/users/follow.model.js';
 import User from '../modules/users/user.model.js';
+import BadgeDefinition from '../modules/badges/badge-definition.model.js';
 import { hasTimedWord, loaders } from './loaders.js';
 
 type Obj = Record<string, unknown>;
@@ -110,6 +111,84 @@ describe('staffRole', () => {
 
   it('is null for an unknown or unusable id', async () => {
     expect(await run('PublicUser', 'staffRole', [{ id: oid() }, { id: 'not-an-id' }, {}])).toEqual([null, null, null]);
+  });
+});
+
+describe('nameTag', () => {
+  const def = { id: 'b1', label: { en: 'Open Mic', es: 'Micro abierto' }, description: { en: 'd', es: 'd' }, icon: '🎤', color: 'amber' };
+  const tag = { ...def };
+  const makeUser = async (extra: Record<string, unknown> = {}) => {
+    const id = new mongoose.Types.ObjectId();
+    await User.collection.insertOne({ _id: id, accountName: `u${id.toString()}`, ...extra });
+    return id.toString();
+  };
+
+  beforeEach(async () => {
+    await BadgeDefinition.deleteMany({});
+    await BadgeDefinition.create({ ...def, conditionType: 'manual', conditionValue: null, autoGrant: false, createdBy: null });
+  });
+
+  it('returns the equipped badge', async () => {
+    const id = await makeUser({ nameTagBadgeId: 'b1' });
+    expect(await run('PublicUser', 'nameTag', [{ id }])).toEqual([tag]);
+  });
+
+  it('null when nothing is equipped and the user is not staff', async () => {
+    const id = await makeUser({ nameTagBadgeId: null, permissions: [] });
+    expect(await run('PublicUser', 'nameTag', [{ id }])).toEqual([null]);
+  });
+
+  it('staff with nothing equipped get builtin:staff', async () => {
+    const id = await makeUser({ permissions: ['users.view'] });
+    const [result] = (await run('PublicUser', 'nameTag', [{ id }])) as Array<{ id: string; color: string }>;
+    expect(result.id).toBe('builtin:staff');
+    expect(result.color).toBe('primary');
+  });
+
+  it('staff who equipped a tag keep it', async () => {
+    const id = await makeUser({ permissions: ['users.view'], nameTagBadgeId: 'b1' });
+    expect(await run('FollowUser', 'nameTag', [{ id }])).toEqual([tag]);
+  });
+
+  it('equipped id whose definition no longer exists → null (or builtin:staff for staff)', async () => {
+    const plain = await makeUser({ nameTagBadgeId: 'gone' });
+    const staff = await makeUser({ nameTagBadgeId: 'gone', permissions: ['users.view'] });
+    const [a, b] = (await run('LeaderboardUser', 'nameTag', [{ id: plain }, { id: staff }])) as Array<{ id: string } | null>;
+    expect(a).toBeNull();
+    expect(b?.id).toBe('builtin:staff');
+  });
+
+  it('unknown, malformed or missing ids → null without throwing', async () => {
+    expect(await run('WallAuthor', 'nameTag', [{ id: oid() }, { id: 'not-an-id' }, {}])).toEqual([null, null, null]);
+  });
+
+  it('one user query and one definition query for a batch', async () => {
+    const ids = await Promise.all([1, 2, 3, 4, 5].map((i) => makeUser(i % 2 ? { nameTagBadgeId: 'b1' } : { permissions: ['users.view'] })));
+    const userFind = vi.spyOn(User, 'find');
+    const defFind = vi.spyOn(BadgeDefinition, 'find');
+    try {
+      const result = await run('User', 'nameTag', ids.map((id) => ({ id })));
+      expect(result).toHaveLength(5);
+      expect(userFind).toHaveBeenCalledTimes(1);
+      expect(defFind).toHaveBeenCalledTimes(1);
+    } finally {
+      userFind.mockRestore();
+      defFind.mockRestore();
+    }
+  });
+
+  it('uses fields already on the parent', async () => {
+    const userFind = vi.spyOn(User, 'find');
+    try {
+      const result = await run('User', 'nameTag', [
+        { id: oid(), nameTagBadgeId: 'b1', permissions: [] },
+        { id: oid(), nameTagBadgeId: null, permissions: ['users.view'] },
+      ]);
+      expect(result).toEqual([tag, expect.objectContaining({ id: 'builtin:staff' })]);
+      expect(userFind).not.toHaveBeenCalled();
+    } finally {
+      userFind.mockRestore();
+    }
   });
 });
 

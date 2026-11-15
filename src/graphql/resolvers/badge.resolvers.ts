@@ -1,3 +1,4 @@
+import mercurius from 'mercurius';
 import User from '../../modules/users/user.model.js';
 import type { IUser, IUserBadge } from '../../modules/users/user.model.js';
 import { Context } from './context.js';
@@ -7,6 +8,7 @@ import { findUserByAccountName } from '../../modules/users/account-name.service.
 import { isHiddenByBlock } from '../../modules/blocks/block.service.js';
 import {
   updateShowcase as updateShowcaseService,
+  setNameTag as setNameTagService,
   getBadgeRarity,
   getShowcaseSlots,
   listBadgeDefsWithHolders,
@@ -85,6 +87,13 @@ export const badgeResolvers = {
   },
 
   Mutation: {
+    setNameTag: async (_root: unknown, { badgeId }: { badgeId?: string | null }, context: Context) => {
+      if (!context.userId) throw new mercurius.ErrorWithProps('unauthorized', { code: 'unauthorized' });
+      const result = await setNameTagService(context.userId, badgeId ?? null);
+      if (!result.ok) throw new mercurius.ErrorWithProps(result.code, { code: result.code });
+      return true;
+    },
+
     updateShowcase: async (_root: unknown, { badgeIds, showcasePublic }: { badgeIds: string[]; showcasePublic?: boolean }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await updateShowcaseService(context.userId, badgeIds, showcasePublic);
@@ -99,8 +108,15 @@ export const badgeResolvers = {
       };
     },
 
-    adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId }: { userIdentifier: string; badgeId: string }, context: Context) => {
+    adminGrantBadge: async (_root: unknown, { userIdentifier, badgeId, expiresAt }: { userIdentifier: string; badgeId: string; expiresAt?: string | null }, context: Context) => {
       const { userId: adminId } = await requirePermission(context, 'badges.manage');
+      let expiry: Date | null = null;
+      if (expiresAt) {
+        expiry = new Date(expiresAt);
+        if (Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) {
+          throw new mercurius.ErrorWithProps('expiresAt must be a valid future date', { code: 'invalid_input' });
+        }
+      }
       // Accept accountName or MongoDB _id
       let resolvedId = userIdentifier.trim();
       if (!/^[a-f\d]{24}$/i.test(resolvedId)) {
@@ -109,7 +125,7 @@ export const badgeResolvers = {
         resolvedId = target._id.toString();
       }
       const { grantBadge } = await import('../../modules/badges/badge.service.js');
-      const result = await grantBadge(resolvedId, badgeId, adminId);
+      const result = await grantBadge(resolvedId, badgeId, adminId, { expiresAt: expiry });
       logAdminAction({ adminId, action: 'grant_badge', targetId: resolvedId, targetName: badgeId, ip: context.ip }).catch(() => {});
       return result;
     },

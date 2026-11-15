@@ -5,6 +5,7 @@ export const wallSchema = `
     displayName: String
     avatarUrl: String
     staffRole: String
+    nameTag: NameTag
     "False when this author switched tagging off."
     allowsTags: Boolean!
     "Title of their addiction level (the app calls it Melomaniac Level). Only loaded on wall comments."

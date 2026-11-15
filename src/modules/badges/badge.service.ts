@@ -65,6 +65,19 @@ const BUILTIN_RARITY: Record<string, BadgeRarity> = {
 };
 
 /**
+ * Name tag shown for staff (any user with permissions) who have not equipped one. It is not a
+ * BadgeDefinition, so it can never be held, equipped or revoked; the id is namespaced to keep it
+ * clear of real badge ids.
+ */
+export const STAFF_NAME_TAG = {
+  id: 'builtin:staff',
+  label: { en: 'Staff', es: 'Staff' },
+  description: { en: 'Part of the LRC Studio team', es: 'Parte del equipo de LRC Studio' },
+  icon: '',
+  color: 'primary',
+} as const;
+
+/**
  * Built-in badges that were removed from BUILTIN_BADGES. Seeding only inserts, so a retired badge
  * would otherwise live on in the database and on every holder's profile.
  * 'admin': staff are marked by the role ring instead, which is subtler than a badge.
@@ -83,6 +96,7 @@ export async function retireBuiltinBadges(): Promise<number> {
     await BadgeDefinition.deleteOne({ id, isBuiltin: true });
     if (holders.length === 0) continue;
     await User.updateMany({ 'badges.id': id }, { $pull: { badges: { id }, showcasedBadges: id } });
+    await User.updateMany({ nameTagBadgeId: id }, { nameTagBadgeId: null });
     await UserPreferences.updateMany({ miniProfileBadgeIds: id }, { $pull: { miniProfileBadgeIds: id } });
     for (const h of holders) await recomputeXP(h._id.toString(), 'backfill').catch(() => 0);
     holdersChanged += holders.length;
@@ -211,13 +225,13 @@ export async function grantBadge(
   userId: string,
   badgeId: string,
   grantedBy: string = 'system',
-  { recompute = true }: { recompute?: boolean } = {}
+  { recompute = true, expiresAt = null }: { recompute?: boolean; expiresAt?: Date | null } = {}
 ): Promise<boolean> {
   // An id with no definition would still be pushed and earn the 50-XP default.
   if (!(await BadgeDefinition.exists({ id: badgeId }))) return false;
   const result = await User.findOneAndUpdate(
     { _id: userId, 'badges.id': { $ne: badgeId } },
-    { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy } } },
+    { $push: { badges: { id: badgeId, grantedAt: new Date(), grantedBy, expiresAt } } },
     { returnDocument: 'after' }
   );
   if (!result) return false; // already had it or user not found
@@ -229,18 +243,58 @@ export async function grantBadge(
   return true;
 }
 
-export async function revokeBadge(userId: string, badgeId: string): Promise<boolean> {
-  const result = await User.updateOne(
-    { _id: userId },
-    { $pull: { badges: { id: badgeId } } }
-  );
+/** Equips a held badge as the user's name tag; null clears it. Only badges the user holds qualify. */
+export async function setNameTag(
+  userId: string,
+  badgeId: string | null
+): Promise<{ ok: true } | { ok: false; code: 'not_owned' | 'not_found' }> {
+  if (badgeId === null) {
+    const res = await User.updateOne({ _id: userId }, { nameTagBadgeId: null });
+    return res.matchedCount > 0 ? { ok: true } : { ok: false, code: 'not_found' };
+  }
+  const updated = await User.findOneAndUpdate({ _id: userId, 'badges.id': badgeId }, { nameTagBadgeId: badgeId });
+  return updated ? { ok: true } : { ok: false, code: 'not_owned' };
+}
+
+export async function revokeBadge(
+  userId: string,
+  badgeId: string,
+  { expiredBy }: { expiredBy?: Date } = {}
+): Promise<boolean> {
+  // expiredBy limits the pull to a grant that has expired, so a sweep racing an admin
+  // re-grant (revoke, then grant without expiry) cannot remove the new grant.
+  // The guard lives in the filter: one update on one document is atomic, and grantBadge keeps
+  // at most one grant per id, so pulling by id then removes exactly the expired grant.
+  const filter = expiredBy
+    ? { _id: userId, badges: { $elemMatch: { id: badgeId, expiresAt: { $lte: expiredBy } } } }
+    : { _id: userId };
+  const result = await User.updateOne(filter, { $pull: { badges: { id: badgeId } } });
   if ((result.modifiedCount ?? 0) > 0) {
     // Also remove from showcase if present
     await User.updateOne({ _id: userId }, { $pull: { showcasedBadges: badgeId } });
+    await User.updateOne({ _id: userId, nameTagBadgeId: badgeId }, { nameTagBadgeId: null });
     recomputeXP(userId).catch(() => {});
     return true;
   }
   return false;
+}
+
+/**
+ * Revokes every grant whose expiresAt has passed, through revokeBadge so showcase, name tag and XP
+ * are cleaned by the same path as a manual revoke. Returns the number of grants revoked.
+ */
+export async function sweepExpiredBadges(now: Date = new Date()): Promise<number> {
+  const holders = await User.find({ badges: { $elemMatch: { expiresAt: { $lte: now } } } })
+    .select('badges')
+    .lean<IUser[]>();
+  let revoked = 0;
+  for (const user of holders) {
+    for (const b of user.badges ?? []) {
+      if (!b.expiresAt || b.expiresAt.getTime() > now.getTime()) continue;
+      if (await revokeBadge(user._id.toString(), b.id, { expiredBy: now })) revoked++;
+    }
+  }
+  return revoked;
 }
 
 // ─── Badge definition CRUD (shared by GraphQL resolvers + request executor) ──
@@ -347,6 +401,7 @@ export async function deleteBadgeDef(id: string): Promise<boolean> {
   if (!def) throw new Error('Badge not found');
   if (def.isBuiltin) throw new Error('Cannot delete built-in badges');
   await BadgeDefinition.deleteOne({ id });
+  await User.updateMany({ nameTagBadgeId: id }, { nameTagBadgeId: null });
   invalidatePublicBadgeDefsCache();
   return true;
 }

@@ -9,7 +9,7 @@ import { sweepJobs } from '../modules/asr/job.store.js';
 import { endIdleSessions } from '../modules/collab/collab.service.js';
 import { sendStreakWarnings } from '../jobs/streak-warning.job.js';
 import { resetLapsedStreaks } from '../jobs/streak-lapse.job.js';
-import { seedBuiltinBadges, retireBuiltinBadges, runSyncStatsRefresh, SYNC_STATS_REFRESH_JOB } from '../modules/badges/badge.service.js';
+import { sweepExpiredBadges, seedBuiltinBadges, retireBuiltinBadges, runSyncStatsRefresh, SYNC_STATS_REFRESH_JOB } from '../modules/badges/badge.service.js';
 import { seedAddictionLevels } from '../modules/stats/addiction-level.service.js';
 import { syncSuperadminEmailGrant } from '../modules/auth/superadmin-env.service.js';
 import { dropSupersededIndexes } from '../db/superseded-indexes.js';
@@ -91,6 +91,12 @@ async function cronPlugin(fastify: FastifyInstance): Promise<void> {
       await defineRecurring('collab-idle-sweep', '15 minutes', async () => {
         const ended = await endIdleSessions();
         if (ended > 0) fastify.log.info(`[jobs] idle collab sessions ended: ${ended}`);
+      });
+
+      // Time-limited badge grants. DB-backed, so it belongs on the shared queue.
+      await defineRecurring('badge-expiry-sweep', '1 hour', async () => {
+        const revoked = await sweepExpiredBadges();
+        if (revoked > 0) fastify.log.info(`[jobs] expired badge grants revoked: ${revoked}`);
       });
 
       defineOnce(SYNC_STATS_REFRESH_JOB, runSyncStatsRefresh);

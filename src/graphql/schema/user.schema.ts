@@ -36,6 +36,7 @@ export const userSchema = `
     # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
     # Unlike User.role it never says "user" and is safe on public surfaces.
     staffRole: String
+    nameTag: NameTag
     permissions: [String!]!
     createdAt: String
     passwordChangedAt: String
@@ -57,6 +58,7 @@ export const userSchema = `
     miniProfileBadgeIds: [String!]!
     badges: [UserBadge!]!
     showcasedBadges: [String!]!
+    nameTagBadgeId: String
     showcasePublic: Boolean!
     stats: UserStats
     streak: UserStreak
@@ -113,6 +115,7 @@ export const userSchema = `
     # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
     # Unlike User.role it never says "user" and is safe on public surfaces.
     staffRole: String
+    nameTag: NameTag
     createdAt: String
     projects: [Project!]!
     projectCount: Int!
@@ -150,6 +153,7 @@ export const userSchema = `
     # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
     # Unlike User.role it never says "user" and is safe on public surfaces.
     staffRole: String
+    nameTag: NameTag
     isFollowedByMe: Boolean!
     # False when this user switched tagging off (preferences.allowTags).
     allowsTags: Boolean!
