@@ -503,7 +503,7 @@ This module carries most of the server's untrusted-input surface, so its guards 
 
 **Nothing here needs configuring.** With no keys at all, search falls back to LRCLIB and lookup runs LRCLIB → lyrics.ovh. LRCLIB is primary because it is the only source returning already-timestamped LRC — a hit lets the user skip both manual syncing and transcription entirely. It identifies itself via `APP_URL`.
 
-`GET /lyrics/search` prefers Genius when `GENIUS_CLIENT_ACCESS_TOKEN` is set (cover art, better fuzzy matching) and falls back to LRCLIB otherwise. Responses are `{ lyrics, synced, provider }`.
+`GET /lyrics/search` searches LRCLIB only, so every hit can be imported. Genius is no longer used for search: when `GENIUS_CLIENT_ACCESS_TOKEN` is set it powers song connections (samples, covers, remixes) at `GET /lyrics/connections`. Lyrics responses are `{ lyrics, synced, provider }`.
 
 LyricFind is gated on `LYRICFIND_API_KEY` and is a silent no-op without one, since it requires a commercial agreement and has no free tier. Its request/response shape follows LyricFind's documented `lyric.do` interface but **has not been verified against a live key** — confirm field names against your contract docs when credentials arrive.
 
@@ -692,7 +692,7 @@ docker-compose up -d --build
 | `SUPERADMIN_EMAIL` | No one can be granted superadmin. Comma-separated list, matched case-insensitively and exactly |
 | `GROQ_API_KEY` | Auto Stamp returns `asr_invalid_key`; nothing else is affected |
 | `YTDLP_PATH` / `YTDLP_POT_PROVIDER_URL` | Auto Stamp can't use YouTube sources. The PO-token provider is effectively required in production — datacenter IPs are bot-checked by YouTube without one |
-| `GENIUS_CLIENT_ACCESS_TOKEN` | Lyrics search falls back to LRCLIB (which still works, and reports which results are synced) |
+| `GENIUS_CLIENT_ACCESS_TOKEN` | Song connections are hidden (`GET /lyrics/connections` answers 503); lyrics search is unaffected |
 | `LYRICFIND_API_KEY` | LyricFind is skipped silently |
 | `CLOUDINARY_*` | No audio, avatar or cover uploads |
 | `EMAIL_SMTP_*` | Verification and password-reset emails don't send |

@@ -20,3 +20,15 @@ export const extractQuerySchema = {
     },
   },
 };
+
+export const connectionsQuerySchema = {
+  querystring: {
+    type: 'object',
+    properties: {
+      track: { type: 'string', minLength: 1, maxLength: 300 },
+      artist: { type: 'string', minLength: 1, maxLength: 300 },
+      geniusId: { type: 'integer', minimum: 1 },
+    },
+    anyOf: [{ required: ['geniusId'] }, { required: ['track', 'artist'] }],
+  },
+};

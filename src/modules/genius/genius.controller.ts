@@ -3,6 +3,7 @@ import { getLyricsFromLrclib, getLrclibById, searchLrclib, LRCLIB_ID_PREFIX } fr
 import { getLyricsFromLyricFind } from './lyricfind.service.js';
 import { getLyricsFromLyricsOvh } from './lyricsovh.service.js';
 import type { LyricsResult } from './lyrics-provider.types.js';
+import { getSongConnections, isGeniusConfigured } from './song-connections.service.js';
 import JobLog from '../../db/job-log.model.js';
 import { auditActorId } from '../../plugins/auth.js';
 
@@ -118,5 +119,28 @@ export async function extract(request: FastifyRequest, reply: FastifyReply): Pro
     request.log.error({ err }, 'Lyrics extract failed');
     await JobLog.create({ ...base(), status: 'failed', error: 'upstream_error' }).catch(() => {});
     return reply.code(502).send({ error: 'upstream_error' });
+  }
+}
+
+/**
+ * Song connections (samples, covers, remixes) from Genius. Failures are opaque to the client:
+ * the service's error message/cause can carry upstream details, so only a fixed body is sent and
+ * the error goes to the log. A rejected token is a deployment problem, not the caller's, so it is
+ * logged at error level but answered like any other upstream failure.
+ */
+export async function connections(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!isGeniusConfigured()) {
+    return reply.code(503).send({ error: 'Unavailable', code: 'genius_unavailable' });
+  }
+  const q = request.query as { track?: string; artist?: string; geniusId?: number };
+  try {
+    const result = await getSongConnections(
+      q.geniusId !== undefined ? { geniusId: q.geniusId } : { track: q.track as string, artist: q.artist as string },
+    );
+    if (!result) return reply.code(404).send({ error: 'No match', code: 'no_match' });
+    return reply.send(result);
+  } catch (err) {
+    request.log.error({ err }, 'Song connections lookup failed');
+    return reply.code(502).send({ error: 'Upstream error', code: 'genius_upstream' });
   }
 }

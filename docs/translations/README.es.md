@@ -503,7 +503,7 @@ Este módulo concentra la mayor parte de la superficie de entrada no confiable d
 
 **Nada de esto necesita configuración.** Sin ninguna clave, la búsqueda recurre a LRCLIB y la consulta ejecuta LRCLIB → lyrics.ovh. LRCLIB es el principal porque es la única fuente que devuelve LRC ya sincronizado — un acierto permite al usuario saltarse tanto la sincronización manual como la transcripción. Se identifica mediante `APP_URL`.
 
-`GET /lyrics/search` prefiere Genius cuando `GENIUS_CLIENT_ACCESS_TOKEN` está definido (portadas, mejor emparejamiento difuso) y recurre a LRCLIB en caso contrario. Las respuestas son `{ lyrics, synced, provider }`.
+`GET /lyrics/search` busca solo en LRCLIB, de modo que cada resultado se puede importar. Genius ya no se usa para la búsqueda: cuando `GENIUS_CLIENT_ACCESS_TOKEN` está definido, alimenta las conexiones de canciones (samples, covers, remixes) en `GET /lyrics/connections`. Las respuestas de letras son `{ lyrics, synced, provider }`.
 
 LyricFind está condicionado a `LYRICFIND_API_KEY` y es una operación nula silenciosa sin ella, ya que requiere un acuerdo comercial y no tiene nivel gratuito. Su estructura de petición/respuesta sigue la interfaz documentada `lyric.do` de LyricFind pero **no se ha verificado con una clave real** — confirma los nombres de los campos con la documentación de tu contrato cuando tengas credenciales.
 
@@ -692,7 +692,7 @@ docker-compose up -d --build
 | `SUPERADMIN_EMAIL` | Nadie puede recibir el rol de superadministrador. Lista separada por comas, comparada sin distinguir mayúsculas y de forma exacta |
 | `GROQ_API_KEY` | El Estampado Automático devuelve `asr_invalid_key`; nada más se ve afectado |
 | `YTDLP_PATH` / `YTDLP_POT_PROVIDER_URL` | El Estampado Automático no puede usar fuentes de YouTube. El proveedor de PO-token es prácticamente obligatorio en producción: YouTube aplica comprobación antibots a las IPs de centros de datos |
-| `GENIUS_CLIENT_ACCESS_TOKEN` | La búsqueda de letras recurre a LRCLIB (que sigue funcionando e indica qué resultados están sincronizados) |
+| `GENIUS_CLIENT_ACCESS_TOKEN` | Las conexiones de canciones se ocultan (`GET /lyrics/connections` responde 503); la búsqueda de letras no se ve afectada |
 | `LYRICFIND_API_KEY` | LyricFind se omite en silencio |
 | `CLOUDINARY_*` | Sin subidas de audio, avatar ni portada |
 | `EMAIL_SMTP_*` | No se envían correos de verificación ni de restablecimiento |
