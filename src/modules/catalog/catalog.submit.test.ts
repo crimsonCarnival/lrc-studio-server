@@ -4,6 +4,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import User from '../users/user.model.js';
 import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum from './catalog-album.model.js';
+import CatalogSubmissionLog from './catalog-submission-log.model.js';
 import {
   submitCatalogArtist,
   submitCatalogAlbum,
@@ -18,7 +19,7 @@ let repl: MongoMemoryReplSet;
 beforeAll(async () => {
   repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(repl.getUri());
-  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init()]);
+  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init(), CatalogSubmissionLog.init()]);
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
@@ -26,7 +27,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'democloud');
-  await Promise.all([User.deleteMany({}), CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({})]);
+  await Promise.all([User.deleteMany({}), CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({}), CatalogSubmissionLog.deleteMany({})]);
 });
 
 let seq = 0;
@@ -58,30 +59,65 @@ describe('catalog submissions', () => {
     expect(r.artist.nameKey).toBe('björk');
   });
 
-  it('rate limits the 11th submission within 24h (both collections)', async () => {
+  it('rate limits the 11th submission within 24h', async () => {
     const u = await seedUser();
-    const old = { status: 'rejected', source: 'community', submittedBy: new mongoose.Types.ObjectId(u) };
-    // Rejected entries do not hold a pending slot but do count toward the window.
-    await CatalogArtist.insertMany(
-      Array.from({ length: CATALOG_LIMITS.maxPerDay - 1 }, (_, i) => ({ ...old, name: `A${i}`, nameKey: `a${i}` })),
-    );
-    await CatalogAlbum.create({ ...old, artistId: new mongoose.Types.ObjectId(), title: 'T', titleKey: 't' });
+    await CatalogSubmissionLog.insertMany(Array.from({ length: CATALOG_LIMITS.maxPerDay }, () => ({ userId: u, at: new Date() })));
     const r = errOf(await submitCatalogArtist(u, { name: 'One too many' }));
     expect(r.code).toBe('CATALOG_RATE_LIMITED');
     expect(r.status).toBe(429);
   });
 
-  it('ignores submissions older than 24h in the window', async () => {
+  it('ignores log rows older than 24h', async () => {
     const u = await seedUser();
-    const since = new Date(Date.now() - 25 * 3600_000);
-    await CatalogArtist.collection.insertMany(
-      Array.from({ length: 12 }, (_, i) => ({
-        name: `O${i}`, nameKey: `o${i}`, slug: null, disambiguation: '', imageUrl: null, bio: '',
-        status: 'rejected', source: 'community', submittedBy: new mongoose.Types.ObjectId(u),
-        reviewedBy: null, reviewNote: '', reviewedAt: null, creditAwarded: false, createdAt: since, updatedAt: since,
-      })),
-    );
+    const old = new Date(Date.now() - 25 * 3600_000);
+    await CatalogSubmissionLog.insertMany(Array.from({ length: 12 }, () => ({ userId: u, at: old })));
     expect('artist' in (await submitCatalogArtist(u, { name: 'Fresh' }))).toBe(true);
+  });
+
+  it('submit/withdraw cycling cannot escape the daily cap', async () => {
+    const u = await seedUser();
+    for (let i = 0; i < CATALOG_LIMITS.maxPerDay; i++) {
+      const r = await submitCatalogArtist(u, { name: `Cycle ${i}` });
+      if (!('artist' in r)) throw new Error(`expected artist at ${i}`);
+      expect(await withdrawMyPendingEntry(u, 'artist', String(r.artist._id))).toEqual({ ok: true });
+    }
+    expect(errOf(await submitCatalogArtist(u, { name: 'Cycle 11' })).code).toBe('CATALOG_RATE_LIMITED');
+  });
+
+  it('concurrent submits at 4 pending: exactly one succeeds', async () => {
+    const u = await seedUser();
+    for (let i = 0; i < 4; i++) await submitCatalogArtist(u, { name: `Seed ${i}` });
+    const results = await Promise.all([submitCatalogArtist(u, { name: 'Race A' }), submitCatalogArtist(u, { name: 'Race B' })]);
+    expect(results.filter((r) => 'artist' in r)).toHaveLength(1);
+    expect(results.map((r) => ('code' in r ? r.code : null)).filter(Boolean)).toEqual(['CATALOG_PENDING_CAP']);
+    expect(await CatalogArtist.countDocuments({ submittedBy: u, status: 'pending' })).toBe(5);
+  });
+
+  it('strips markup from names; empty after strip or non-string is invalid', async () => {
+    const u = await seedUser();
+    const ok = await submitCatalogArtist(u, { name: '<b>Name</b>' });
+    if (!('artist' in ok)) throw new Error('expected artist');
+    expect(ok.artist.name).toBe('Name');
+    expect(errOf(await submitCatalogArtist(u, { name: '<img onerror=x>' })).code).toBe('CATALOG_INVALID_INPUT');
+    expect(errOf(await submitCatalogArtist(u, { name: { $ne: null } as unknown as string })).code).toBe('CATALOG_INVALID_INPUT');
+  });
+
+  it('year must be four digits', async () => {
+    const u = await seedUser();
+    const p = await CatalogArtist.create({ name: 'P', nameKey: 'p', status: 'approved', slug: 'p', source: 'admin', submittedBy: u });
+    expect(errOf(await submitCatalogAlbum(u, { artistId: String(p._id), title: 'T', year: 'abcd' })).code).toBe('CATALOG_INVALID_INPUT');
+    expect(errOf(await submitCatalogAlbum(u, { artistId: String(p._id), title: 'T', year: '99' })).code).toBe('CATALOG_INVALID_INPUT');
+  });
+
+  it("own pending duplicate is revealed even when another user's older pending shares the key", async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    await CatalogArtist.create({ name: 'Shared', nameKey: 'shared', status: 'pending', source: 'community', submittedBy: other });
+    // Seed my own pending directly: a normal submit would be refused as a duplicate of the other's.
+    const mine = await CatalogArtist.create({ name: 'Shared', nameKey: 'shared', status: 'pending', source: 'community', submittedBy: u });
+    const dup = errOf(await submitCatalogArtist(u, { name: 'SHARED' }));
+    expect(dup.code).toBe('CATALOG_DUPLICATE');
+    expect(String((dup.existing as { id: unknown }).id)).toBe(String(mine._id));
   });
 
   it('caps pending at 5 across artists and albums; withdrawing frees a slot', async () => {

@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import User from '../users/user.model.js';
 import CatalogArtist, { type ICatalogArtist } from './catalog-artist.model.js';
+import CatalogSubmissionLog from './catalog-submission-log.model.js';
 import CatalogAlbum, { type ICatalogAlbum } from './catalog-album.model.js';
 import { CATALOG_LIMITS } from './catalog.limits.js';
 import { artistKey } from '../artists/artist.service.js';
@@ -46,7 +47,7 @@ const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
 function cleanName(raw: unknown, max: number, label: string): string | CatalogError {
   if (typeof raw !== 'string') return invalid(`${label} is required`);
-  const v = squash(raw).normalize('NFC');
+  const v = squash(stripHtml(raw)).normalize('NFC');
   if (!v) return invalid(`${label} is required`);
   if (v.length > max) return invalid(`${label} must be at most ${max} characters`);
   return v;
@@ -65,8 +66,8 @@ function cleanYear(raw: unknown): string | null | CatalogError {
   if (raw === undefined || raw === null || raw === '') return null;
   if (typeof raw !== 'string') return invalid('Year must be text');
   const v = raw.trim();
-  if (v.length > CATALOG_LIMITS.maxYear) return invalid(`Year must be at most ${CATALOG_LIMITS.maxYear} characters`);
-  return v || null;
+  if (!/^\d{4}$/.test(v)) return invalid('Year must be four digits');
+  return v;
 }
 
 /** Community users may only reference images they uploaded themselves. */
@@ -76,18 +77,38 @@ function cleanImage(raw: unknown, userId: string): string | null | CatalogError 
   return raw;
 }
 
+// Serializes check + insert per user so two simultaneous submissions cannot both pass the caps.
+// Valid only because production runs a single instance (same constraint as the other in-memory
+// stores in .claude/rules/technical-debt.md); move to an atomic counter before scaling horizontally.
+const userLocks = new Map<string, Promise<unknown>>();
+async function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = userLocks.get(userId) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  const tail = run.catch(() => undefined);
+  userLocks.set(userId, tail);
+  try {
+    return await run;
+  } finally {
+    if (userLocks.get(userId) === tail) userLocks.delete(userId);
+  }
+}
+
+async function logSubmission(userId: string): Promise<void> {
+  await CatalogSubmissionLog.create({ userId: oid(userId), at: new Date() });
+}
+
 async function assertCanSubmit(userId: string): Promise<CatalogError | null> {
   const user = await User.findById(userId).select('isVerified').lean();
   if (!user?.isVerified) return fail(403, 'CATALOG_UNVERIFIED', 'Verify your email to submit to the catalog');
   const submittedBy = oid(userId);
   const since = new Date(Date.now() - CATALOG_LIMITS.windowMs);
-  const [dayA, dayB, pendA, pendB] = await Promise.all([
-    CatalogArtist.countDocuments({ submittedBy, createdAt: { $gte: since } }),
-    CatalogAlbum.countDocuments({ submittedBy, createdAt: { $gte: since } }),
+  // The day window counts the submission log, not live docs, so withdrawing cannot reset it.
+  const [day, pendA, pendB] = await Promise.all([
+    CatalogSubmissionLog.countDocuments({ userId: submittedBy, at: { $gte: since } }),
     CatalogArtist.countDocuments({ submittedBy, status: 'pending' }),
     CatalogAlbum.countDocuments({ submittedBy, status: 'pending' }),
   ]);
-  if (dayA + dayB >= CATALOG_LIMITS.maxPerDay) return fail(429, 'CATALOG_RATE_LIMITED', 'Too many submissions in the last 24 hours');
+  if (day >= CATALOG_LIMITS.maxPerDay) return fail(429, 'CATALOG_RATE_LIMITED', 'Too many submissions in the last 24 hours');
   if (pendA + pendB >= CATALOG_LIMITS.maxPending) return fail(429, 'CATALOG_PENDING_CAP', 'Too many pending submissions');
   return null;
 }
@@ -104,6 +125,7 @@ async function findArtistDuplicate(userId: string, nameKey: string, excludeId?: 
   // Approved first so a visible entry is preferred over someone else's pending one.
   const hit =
     (await CatalogArtist.findOne({ ...base, status: 'approved' }).lean()) ??
+    (await CatalogArtist.findOne({ ...base, status: 'pending', submittedBy: oid(userId) }).lean()) ??
     (await CatalogArtist.findOne({ ...base, status: 'pending' }).sort({ createdAt: 1 }).lean());
   return duplicateOf(userId, hit, hit?.name ?? '');
 }
@@ -112,6 +134,7 @@ async function findAlbumDuplicate(userId: string, artistId: mongoose.Types.Objec
   const base = { artistId, titleKey, ...(excludeId ? { _id: { $ne: oid(excludeId) } } : {}) };
   const hit =
     (await CatalogAlbum.findOne({ ...base, status: 'approved' }).lean()) ??
+    (await CatalogAlbum.findOne({ ...base, status: 'pending', submittedBy: oid(userId) }).lean()) ??
     (await CatalogAlbum.findOne({ ...base, status: 'pending' }).sort({ createdAt: 1 }).lean());
   return duplicateOf(userId, hit, hit?.title ?? '');
 }
@@ -126,16 +149,19 @@ export async function submitCatalogArtist(userId: string, input: ArtistInput): P
   const imageUrl = cleanImage(input.imageUrl, userId);
   if (isError(imageUrl)) return imageUrl;
 
-  const blocked = await assertCanSubmit(userId);
-  if (blocked) return blocked;
-  const nameKey = artistKey(name);
-  const dup = await findArtistDuplicate(userId, nameKey);
-  if (dup) return dup;
+  return withUserLock(userId, async () => {
+    const blocked = await assertCanSubmit(userId);
+    if (blocked) return blocked;
+    const nameKey = artistKey(name);
+    const dup = await findArtistDuplicate(userId, nameKey);
+    if (dup) return dup;
 
-  const artist = await CatalogArtist.create({
-    name, nameKey, bio, imageUrl, slug: null, status: 'pending', source: 'community', submittedBy: oid(userId),
+    const artist = await CatalogArtist.create({
+      name, nameKey, bio, imageUrl, slug: null, status: 'pending', source: 'community', submittedBy: oid(userId),
+    });
+    await logSubmission(userId);
+    return { artist };
   });
-  return { artist };
 }
 
 export async function submitCatalogAlbum(userId: string, input: AlbumInput): Promise<{ album: ICatalogAlbum } | CatalogError> {
@@ -146,6 +172,16 @@ export async function submitCatalogAlbum(userId: string, input: AlbumInput): Pro
   const coverUrl = cleanImage(input.coverUrl, userId);
   if (isError(coverUrl)) return coverUrl;
 
+  return withUserLock(userId, () => createAlbum(userId, input, title, year, coverUrl));
+}
+
+async function createAlbum(
+  userId: string,
+  input: AlbumInput,
+  title: string,
+  year: string | null,
+  coverUrl: string | null,
+): Promise<{ album: ICatalogAlbum } | CatalogError> {
   const blocked = await assertCanSubmit(userId);
   if (blocked) return blocked;
   const parentError = fail(422, 'CATALOG_PARENT_NOT_APPROVED', 'The artist must be approved first');
@@ -160,6 +196,7 @@ export async function submitCatalogAlbum(userId: string, input: AlbumInput): Pro
   const album = await CatalogAlbum.create({
     artistId: parent._id, title, titleKey, year, coverUrl, slug: null, status: 'pending', source: 'community', submittedBy: oid(userId),
   });
+  await logSubmission(userId);
   return { album };
 }
 
