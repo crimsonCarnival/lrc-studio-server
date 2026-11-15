@@ -70,6 +70,17 @@ export async function reviewCatalogEntry(
     if (!parent) return fail(422, 'CATALOG_PARENT_NOT_APPROVED', 'The artist must be approved first');
   }
 
+  // Same rule: an approved twin refuses the approval (rejecting stays possible), the entry stays pending.
+  if (decision === 'approve') {
+    const twin = kind === 'artist'
+      ? await CatalogArtist.findOne({ nameKey: (current as unknown as ICatalogArtist).nameKey, status: 'approved' }).select('name slug').lean()
+      : await CatalogAlbum.findOne({ artistId: current.artistId, titleKey: (current as unknown as ICatalogAlbum).titleKey, status: 'approved' }).select('title slug').lean();
+    if (twin) {
+      const name = 'name' in twin ? twin.name : (twin as { title: string }).title;
+      return fail(409, 'CATALOG_DUPLICATE', 'This entry already exists', { id: String(twin._id), name, slug: twin.slug });
+    }
+  }
+
   const status = decision === 'approve' ? 'approved' : 'rejected';
   const claimed = await Model.findOneAndUpdate(
     { _id: current._id, status: 'pending', ...(expected ? { updatedAt: expected } : {}) },

@@ -59,6 +59,32 @@ const reviews = async (id: string) =>
   (await User.findById(id).lean<{ stats?: { catalogReviews?: number } }>())?.stats?.catalogReviews ?? 0;
 
 describe('reviewCatalogEntry', () => {
+  it('refuses approving an artist that duplicates an approved one, leaving it pending', async () => {
+    const rev = await reviewerOf();
+    const submitter = await seedUser();
+    const approved = await seedArtist(submitter, { name: 'X', nameKey: 'x', status: 'approved', source: 'admin', slug: 'x' });
+    const pending = await seedArtist(submitter, { name: 'X', nameKey: 'x' });
+    const r = (await reviewCatalogEntry(rev, 'artist', String(pending._id), 'approve')) as { code: string; status: number; existing?: unknown };
+    expect(r).toMatchObject({ code: 'CATALOG_DUPLICATE', status: 409, existing: { id: String(approved._id), name: 'X', slug: 'x' } });
+    expect((await CatalogArtist.findById(pending._id))!.status).toBe('pending');
+    expect(awardCatalogCredit).not.toHaveBeenCalled();
+    // Rejecting the duplicate is still allowed.
+    expect('entry' in (await reviewCatalogEntry(rev, 'artist', String(pending._id), 'reject'))).toBe(true);
+  });
+
+  it('refuses approving an album that duplicates an approved one of the same artist', async () => {
+    const rev = await reviewerOf();
+    const submitter = await seedUser();
+    const artist = await seedArtist(submitter, { status: 'approved', slug: 'bjork' });
+    const other = await seedArtist(submitter, { name: 'Other', nameKey: 'other', status: 'approved', slug: 'other' });
+    const approved = await seedAlbum(submitter, artist._id, { status: 'approved', slug: 'homogenic' });
+    await seedAlbum(submitter, other._id, { status: 'approved', slug: 'homogenic' });
+    const pending = await seedAlbum(submitter, artist._id);
+    const r = (await reviewCatalogEntry(rev, 'album', String(pending._id), 'approve')) as { code: string; existing?: unknown };
+    expect(r).toMatchObject({ code: 'CATALOG_DUPLICATE', existing: { id: String(approved._id), name: 'Homogenic' } });
+    expect((await CatalogAlbum.findById(pending._id))!.status).toBe('pending');
+  });
+
   it('refuses a reviewer without catalog.review', async () => {
     const submitter = await seedUser();
     const nobody = await seedUser();
