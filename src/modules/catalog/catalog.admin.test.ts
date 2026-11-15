@@ -236,6 +236,22 @@ describe('admin catalog delete', () => {
     expect(revokeCatalogCredit.mock.calls).toEqual([[u, 'artist'], [u, 'album']]);
   });
 
+  it('sweeps an album that slips in after the first cascade read', async () => {
+    const { admin, u, artist } = await setup();
+    let calls = 0;
+    revokeCatalogCredit.mockImplementation(async () => {
+      // The 2nd revoke happens mid-cascade, after the first sweep already listed the albums.
+      if (++calls === 2) await seedCommunity(CatalogAlbum, u, { artistId: artist._id, title: 'Late', titleKey: 'late', slug: 'late' });
+    });
+    try {
+      expect(await adminDeleteCatalogEntry(admin, 'artist', String(artist._id), { revokeCredit: true })).toEqual({ ok: true });
+    } finally {
+      revokeCatalogCredit.mockImplementation(async () => undefined);
+    }
+    expect(await CatalogAlbum.countDocuments({ artistId: artist._id })).toBe(0);
+    expect(revokeCatalogCredit).toHaveBeenCalledTimes(3);
+  });
+
   it('does not revoke without the flag or without awarded credit', async () => {
     const { admin, artist, approved } = await setup();
     await adminDeleteCatalogEntry(admin, 'album', String(approved._id), { revokeCredit: false });

@@ -274,32 +274,41 @@ export async function adminDeleteCatalogEntry(
     const r = await revokeOnce('artist', artist);
     if (r.failure) failedRevokes.push(r.failure);
   }
-  // The artist goes first so a concurrent album approval fails its parent check;
-  // the cascade below then sweeps any album that slipped through the window.
+  // The artist goes first so an album approval starting after this point fails its parent
+  // check. That narrows the race but does not close it: on a single instance, an approval that
+  // already passed its parent check can still claim in the few milliseconds before the sweeps
+  // below read the albums. The second sweep catches those; an approval landing after it is
+  // not covered (it would leave an orphan approved album), which we accept at this scale.
   const res = await CatalogArtist.deleteOne({ _id: artist._id });
   if (res.deletedCount !== 1) return notFound();
   if (artist.status === 'approved') await onCatalogDeleted('artist', id).catch((err) => logFailure('onCatalogDeleted', err));
 
   // One failing album must not strand the rest: errors are collected and audited.
-  const albums = await CatalogAlbum.find({ artistId: artist._id }).lean();
   let deleted = 0;
   const failedIds: string[] = [];
-  for (const album of albums) {
-    try {
-      if (revoke) {
-        const r = await revokeOnce('album', album);
-        if (r.failure) failedRevokes.push(r.failure);
+  const attempted = new Set<string>();
+  const sweep = async (): Promise<void> => {
+    const albums = (await CatalogAlbum.find({ artistId: artist._id }).lean()).filter((a) => !attempted.has(String(a._id)));
+    for (const album of albums) {
+      attempted.add(String(album._id));
+      try {
+        if (revoke) {
+          const r = await revokeOnce('album', album);
+          if (r.failure) failedRevokes.push(r.failure);
+        }
+        const del = await CatalogAlbum.deleteOne({ _id: album._id });
+        if (del.deletedCount === 1) {
+          deleted++;
+          if (album.status === 'approved') await onCatalogDeleted('album', String(album._id));
+        }
+      } catch (err) {
+        failedIds.push(String(album._id));
+        logFailure(`album cascade (${String(album._id)})`, err);
       }
-      const del = await CatalogAlbum.deleteOne({ _id: album._id });
-      if (del.deletedCount === 1) {
-        deleted++;
-        if (album.status === 'approved') await onCatalogDeleted('album', String(album._id));
-      }
-    } catch (err) {
-      failedIds.push(String(album._id));
-      logFailure(`album cascade (${String(album._id)})`, err);
     }
-  }
+  };
+  await sweep();
+  await sweep();
   await audit(adminId, 'catalog.delete', id, artist.name, {
     kind, name: artist.name, revokeCredit: revoke, albumsDeleted: deleted, albumsFailed: failedIds.length, failedAlbumIds: failedIds,
     ...(failedRevokes.length ? { revokeFailed: true, failedRevokes } : {}),
