@@ -1,0 +1,208 @@
+{
+  "search": {
+    "response": {
+      "hits": [
+        {
+          "result": {
+            "id": 900,
+            "title": "Stronger",
+            "url": "https://genius.com/song-900",
+            "full_title": "Stronger by Britney Spears",
+            "primary_artist": {
+              "name": "Britney Spears"
+            }
+          }
+        },
+        {
+          "result": {
+            "id": 525,
+            "title": "Stronger",
+            "url": "https://genius.com/Kanye-west-stronger-lyrics",
+            "full_title": "Stronger by Kanye West",
+            "primary_artist": {
+              "name": "Kanye West"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "song": {
+    "response": {
+      "song": {
+        "id": 525,
+        "title": "Stronger",
+        "url": "https://genius.com/Kanye-west-stronger-lyrics",
+        "primary_artist": {
+          "name": "Kanye West"
+        },
+        "album": {
+          "name": "Graduation"
+        },
+        "release_date": "2007-07-31",
+        "song_relationships": [
+          {
+            "relationship_type": "samples",
+            "songs": [
+              {
+                "id": 1,
+                "title": "Harder, Better, Faster, Stronger",
+                "url": "https://genius.com/song-1",
+                "primary_artist": {
+                  "name": "Daft Punk"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1.jpg"
+              },
+              {
+                "id": 2,
+                "title": "Cola Bottle Baby",
+                "url": "https://genius.com/song-2",
+                "primary_artist": {
+                  "name": "Edwin Birdsong"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/2.jpg"
+              }
+            ]
+          },
+          {
+            "relationship_type": "sampled_in",
+            "songs": [
+              {
+                "id": 1000,
+                "title": "Flip 0",
+                "url": "https://genius.com/song-1000",
+                "primary_artist": {
+                  "name": "Uploader 0"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1000.jpg"
+              },
+              {
+                "id": 1001,
+                "title": "Flip 1",
+                "url": "https://genius.com/song-1001",
+                "primary_artist": {
+                  "name": "Uploader 1"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1001.jpg"
+              },
+              {
+                "id": 1002,
+                "title": "Flip 2",
+                "url": "https://genius.com/song-1002",
+                "primary_artist": {
+                  "name": "Uploader 2"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1002.jpg"
+              },
+              {
+                "id": 1003,
+                "title": "Flip 3",
+                "url": "https://genius.com/song-1003",
+                "primary_artist": {
+                  "name": "Uploader 3"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1003.jpg"
+              },
+              {
+                "id": 1004,
+                "title": "Flip 4",
+                "url": "https://genius.com/song-1004",
+                "primary_artist": {
+                  "name": "Uploader 4"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1004.jpg"
+              },
+              {
+                "id": 1005,
+                "title": "Flip 5",
+                "url": "https://genius.com/song-1005",
+                "primary_artist": {
+                  "name": "Uploader 5"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1005.jpg"
+              },
+              {
+                "id": 1006,
+                "title": "Flip 6",
+                "url": "https://genius.com/song-1006",
+                "primary_artist": {
+                  "name": "Uploader 6"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1006.jpg"
+              },
+              {
+                "id": 1007,
+                "title": "Flip 7",
+                "url": "https://genius.com/song-1007",
+                "primary_artist": {
+                  "name": "Uploader 7"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1007.jpg"
+              },
+              {
+                "id": 1008,
+                "title": "Flip 8",
+                "url": "https://genius.com/song-1008",
+                "primary_artist": {
+                  "name": "Uploader 8"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1008.jpg"
+              },
+              {
+                "id": 1009,
+                "title": "Flip 9",
+                "url": "https://genius.com/song-1009",
+                "primary_artist": {
+                  "name": "Uploader 9"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/1009.jpg"
+              }
+            ]
+          },
+          {
+            "relationship_type": "covered_by",
+            "songs": [
+              {
+                "id": 3,
+                "title": "Stronger (Cover)",
+                "url": "https://genius.com/song-3",
+                "primary_artist": {
+                  "name": "Some Band"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/3.jpg"
+              }
+            ]
+          },
+          {
+            "relationship_type": "performed_live_as",
+            "songs": [
+              {
+                "id": 4,
+                "title": "Stronger (Live)",
+                "url": "https://genius.com/song-4",
+                "primary_artist": {
+                  "name": "Kanye West"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/4.jpg"
+              }
+            ]
+          },
+          {
+            "relationship_type": "translations",
+            "songs": [
+              {
+                "id": 5,
+                "title": "Stronger (Traduccion)",
+                "url": "https://genius.com/song-5",
+                "primary_artist": {
+                  "name": "Genius Traducciones"
+                },
+                "song_art_image_thumbnail_url": "https://images.genius.com/5.jpg"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
