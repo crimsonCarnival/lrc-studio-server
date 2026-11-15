@@ -14,9 +14,10 @@ import { shelfSchema } from './shelf.schema.js';
 import { wallSchema } from './wall.schema.js';
 import { reportSchema } from './report.schema.js';
 import { collabSchema } from './collab.schema.js';
+import { catalogSchema } from './catalog.schema.js';
 
 export const schemaString = [
   userSchema, projectSchema, lyricsSchema, uploadSchema,
   settingsSchema, playlistSchema, activitySchema, exploreSchema, reactionSchema, rootSchema,
-  requestSchema, artistSchema, shelfSchema, wallSchema, reportSchema, collabSchema,
+  requestSchema, artistSchema, shelfSchema, wallSchema, reportSchema, collabSchema, catalogSchema,
 ].join('\n');

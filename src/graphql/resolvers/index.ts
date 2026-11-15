@@ -16,6 +16,7 @@ import { badgeResolvers }    from './badge.resolvers.js';
 import { wallResolvers }     from './wall.resolvers.js';
 import { reportResolvers }   from './report.resolvers.js';
 import { collabResolvers }   from './collab.resolvers.js';
+import { catalogResolvers }  from './catalog.resolvers.js';
 
 export const resolvers = {
   Query: {
@@ -36,6 +37,7 @@ export const resolvers = {
     ...wallResolvers.Query,
     ...reportResolvers.Query,
     ...collabResolvers.Query,
+    ...catalogResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
@@ -53,6 +55,7 @@ export const resolvers = {
     ...wallResolvers.Mutation,
     ...reportResolvers.Mutation,
     ...collabResolvers.Mutation,
+    ...catalogResolvers.Mutation,
   },
   User:     userResolvers.User,
   UserBan: userResolvers.UserBan,
@@ -65,4 +68,6 @@ export const resolvers = {
   Lyrics:   lyricsResolvers.Lyrics,
   Upload:   uploadResolvers.Upload,
   Activity: activityResolvers.Activity,
+  CatalogArtist: catalogResolvers.CatalogArtist,
+  CatalogAlbum:  catalogResolvers.CatalogAlbum,
 };
