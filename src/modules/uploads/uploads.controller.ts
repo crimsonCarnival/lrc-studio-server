@@ -25,6 +25,14 @@ export async function coverSignature(req: FastifyRequest, reply: FastifyReply): 
   return reply.send(result);
 }
 
+export async function catalogImageSignature(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await uploadService.generateCatalogImageSignature(req.body as Record<string, unknown> || {}, req.userId!, req.ip);
+  if ((result as Record<string, unknown>).error) {
+    return reply.code((result as Record<string, number>).status).send({ error: (result as Record<string, unknown>).error });
+  }
+  return reply.send(result);
+}
+
 export async function profileCoverSignature(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await uploadService.generateProfileCoverSignature(req.body as Record<string, unknown> || {}, req.userId!, req.ip);
   if ((result as Record<string, unknown>).error) {
