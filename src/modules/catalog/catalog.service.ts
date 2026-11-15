@@ -20,7 +20,8 @@ export type CatalogErrorCode =
   | 'CATALOG_FORBIDDEN'
   | 'CATALOG_SELF_REVIEW'
   | 'CATALOG_ALREADY_REVIEWED'
-  | 'CATALOG_CHANGED';
+  | 'CATALOG_CHANGED'
+  | 'CATALOG_DISAMBIGUATION_REQUIRED';
 
 /** `existing` is set only for approved entries or the caller's own pending one. */
 export type CatalogError = {
@@ -44,12 +45,12 @@ export const fail = (status: number, code: CatalogErrorCode, error: string, exis
 export const invalid = (error: string): CatalogError => fail(400, 'CATALOG_INVALID_INPUT', error);
 export const notFound = (): CatalogError => fail(404, 'CATALOG_NOT_FOUND', 'Entry not found');
 
-const isError = (v: unknown): v is CatalogError => typeof v === 'object' && v !== null && 'code' in v && 'error' in v;
+export const isError = (v: unknown): v is CatalogError => typeof v === 'object' && v !== null && 'code' in v && 'error' in v;
 export const validId = (id: unknown): id is string => typeof id === 'string' && mongoose.isValidObjectId(id);
 export const oid = (id: string) => new mongoose.Types.ObjectId(id);
 export const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
-function cleanName(raw: unknown, max: number, label: string): string | CatalogError {
+export function cleanName(raw: unknown, max: number, label: string): string | CatalogError {
   if (typeof raw !== 'string') return invalid(`${label} is required`);
   const v = squash(stripHtml(raw)).normalize('NFC');
   if (!v) return invalid(`${label} is required`);
@@ -57,7 +58,7 @@ function cleanName(raw: unknown, max: number, label: string): string | CatalogEr
   return v;
 }
 
-function cleanBio(raw: unknown): string | CatalogError {
+export function cleanBio(raw: unknown): string | CatalogError {
   if (raw === undefined || raw === null) return '';
   if (typeof raw !== 'string') return invalid('Bio must be text');
   // Sanitize first, then measure: markup must not count against the cap.
@@ -66,7 +67,7 @@ function cleanBio(raw: unknown): string | CatalogError {
   return v;
 }
 
-function cleanYear(raw: unknown): string | null | CatalogError {
+export function cleanYear(raw: unknown): string | null | CatalogError {
   if (raw === undefined || raw === null || raw === '') return null;
   if (typeof raw !== 'string') return invalid('Year must be text');
   const v = raw.trim();
@@ -143,7 +144,7 @@ async function findAlbumDuplicate(userId: string, artistId: mongoose.Types.Objec
   return duplicateOf(userId, hit, hit?.title ?? '');
 }
 
-const albumKey = (title: string): string => artistKey(title.trim());
+export const albumKey = (title: string): string => artistKey(title.trim());
 
 export async function submitCatalogArtist(userId: string, input: ArtistInput): Promise<{ artist: ICatalogArtist } | CatalogError> {
   const name = cleanName(input?.name, CATALOG_LIMITS.maxArtistName, 'Name');
