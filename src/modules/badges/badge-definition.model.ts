@@ -15,6 +15,8 @@ export type ConditionType =
   | 'streak_days'
   | 'is_verified'
   | 'role_admin'
+  | 'catalog_approved'
+  | 'catalog_reviews'
   | 'manual';
 
 export type BadgeColor = 'amber' | 'teal' | 'green' | 'primary' | 'rose' | 'shimmer' | 'blue' | 'orange';
@@ -74,7 +76,7 @@ const badgeDefSchema = new mongoose.Schema<IBadgeDefinition>(
     },
     conditionType: {
       type: String,
-      enum: ['registration_rank', 'minutes_synced', 'words_synced', 'karaoke_lines', 'project_count', 'public_project_count', 'stars_received', 'forks_received', 'follower_count', 'upload_count', 'account_age_days', 'streak_days', 'is_verified', 'role_admin', 'manual'],
+      enum: ['registration_rank', 'minutes_synced', 'words_synced', 'karaoke_lines', 'project_count', 'public_project_count', 'stars_received', 'forks_received', 'follower_count', 'upload_count', 'account_age_days', 'streak_days', 'is_verified', 'role_admin', 'catalog_approved', 'catalog_reviews', 'manual'],
       default: 'manual',
     },
     conditionValue: { type: Number, default: null },

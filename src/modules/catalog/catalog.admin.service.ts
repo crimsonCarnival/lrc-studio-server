@@ -220,14 +220,19 @@ type Deletable = { _id: mongoose.Types.ObjectId; submittedBy: mongoose.Types.Obj
  * revoked. A failing revoke is logged for manual repair and neither restores the flag nor
  * aborts the delete: revokeCatalogCredit is idempotent and re-runnable by contract.
  */
-async function revokeOnce(kind: 'artist' | 'album', entry: Deletable): Promise<void> {
+type RevokeFailure = { kind: 'artist' | 'album'; entryId: string; userId: string };
+
+async function revokeOnce(kind: 'artist' | 'album', entry: Deletable): Promise<{ revokeFailed: boolean; failure?: RevokeFailure }> {
   const Model = (kind === 'artist' ? CatalogArtist : CatalogAlbum) as mongoose.Model<ICatalogArtist | ICatalogAlbum>;
   const flipped = await Model.updateOne({ _id: entry._id, creditAwarded: true }, { $set: { creditAwarded: false } });
-  if (flipped.modifiedCount !== 1) return;
+  if (flipped.modifiedCount !== 1) return { revokeFailed: false };
   try {
     await revokeCatalogCredit(String(entry.submittedBy), kind);
+    return { revokeFailed: false };
   } catch (err) {
     logFailure(`credit revoke (${kind} ${String(entry._id)}, user ${String(entry.submittedBy)})`, err);
+    // Surfaced in the audit details so the failed revoke is actionable, not only a log line.
+    return { revokeFailed: true, failure: { kind, entryId: String(entry._id), userId: String(entry.submittedBy) } };
   }
 }
 
@@ -245,17 +250,27 @@ export async function adminDeleteCatalogEntry(
   if (kind === 'album') {
     const album = await CatalogAlbum.findById(oid(id)).lean();
     if (!album) return notFound();
-    if (revoke) await revokeOnce('album', album);
+    const failedRevokes: RevokeFailure[] = [];
+    if (revoke) {
+      const r = await revokeOnce('album', album);
+      if (r.failure) failedRevokes.push(r.failure);
+    }
     const res = await CatalogAlbum.deleteOne({ _id: album._id });
     if (res.deletedCount !== 1) return notFound();
     if (album.status === 'approved') await onCatalogDeleted('album', id).catch((err) => logFailure('onCatalogDeleted', err));
-    await audit(adminId, 'catalog.delete', id, album.title, { kind, title: album.title, revokeCredit: revoke });
+    await audit(adminId, 'catalog.delete', id, album.title, {
+      kind, title: album.title, revokeCredit: revoke, ...(failedRevokes.length ? { revokeFailed: true, failedRevokes } : {}),
+    });
     return { ok: true };
   }
 
   const artist = await CatalogArtist.findById(oid(id)).lean();
   if (!artist) return notFound();
-  if (revoke) await revokeOnce('artist', artist);
+  const failedRevokes: RevokeFailure[] = [];
+  if (revoke) {
+    const r = await revokeOnce('artist', artist);
+    if (r.failure) failedRevokes.push(r.failure);
+  }
   // The artist goes first so a concurrent album approval fails its parent check;
   // the cascade below then sweeps any album that slipped through the window.
   const res = await CatalogArtist.deleteOne({ _id: artist._id });
@@ -268,7 +283,10 @@ export async function adminDeleteCatalogEntry(
   const failedIds: string[] = [];
   for (const album of albums) {
     try {
-      if (revoke) await revokeOnce('album', album);
+      if (revoke) {
+        const r = await revokeOnce('album', album);
+        if (r.failure) failedRevokes.push(r.failure);
+      }
       const del = await CatalogAlbum.deleteOne({ _id: album._id });
       if (del.deletedCount === 1) {
         deleted++;
@@ -281,6 +299,7 @@ export async function adminDeleteCatalogEntry(
   }
   await audit(adminId, 'catalog.delete', id, artist.name, {
     kind, name: artist.name, revokeCredit: revoke, albumsDeleted: deleted, albumsFailed: failedIds.length, failedAlbumIds: failedIds,
+    ...(failedRevokes.length ? { revokeFailed: true, failedRevokes } : {}),
   });
   return { ok: true };
 }

@@ -107,7 +107,8 @@ describe('reviewCatalogEntry', () => {
     expect(notes).toHaveLength(1);
     expect(notes[0]).toMatchObject({ type: 'catalog_approved', body: 'Björk' });
     expect(await reviews(rev.userId)).toBe(1);
-    expect(triggerBadgeCheck).toHaveBeenCalledTimes(2);
+    expect(triggerBadgeCheck).toHaveBeenCalledTimes(1);
+    expect(triggerBadgeCheck).toHaveBeenCalledWith(rev.userId, 'catalog_review');
   });
 
   it('rejects: stores the note, notifies with it, counts the review, assigns no slug', async () => {
@@ -220,7 +221,7 @@ describe('reviewCatalogEntry', () => {
     awardCatalogCredit.mockRejectedValueOnce(new Error('boom'));
     const r = await reviewCatalogEntry(rev, 'artist', String(a._id), 'approve');
     expect('entry' in r).toBe(true);
-    expect(await CatalogArtist.findById(a._id)).toMatchObject({ status: 'approved', creditAwarded: false });
+    expect(await CatalogArtist.findById(a._id)).toMatchObject({ status: 'approved', creditAwarded: true });
   });
 
   it('bait-and-switch: an edit after the reviewer loaded the entry yields CATALOG_CHANGED', async () => {
@@ -254,7 +255,26 @@ describe('reviewCatalogEntry', () => {
     expect(r.code).toBe('CATALOG_ALREADY_REVIEWED');
   });
 
-  // Enabled in Task 7 once awardCatalogCredit increments counters and XP.
-  it.todo('community approval increments the submitter counter and XP exactly once');
-  it.todo('revoking credit decrements the counter and recomputes XP');
+  it('awards at most once even when the flag is already set (retry or backfill)', async () => {
+    const submitter = await seedUser();
+    const rev = await reviewerOf();
+    const a = await seedArtist(submitter, { creditAwarded: true });
+    await reviewCatalogEntry(rev, 'artist', String(a._id), 'approve');
+    expect(awardCatalogCredit).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reviewer who is deleted or banned in the DB', async () => {
+    const submitter = await seedUser();
+    const a = await seedArtist(submitter);
+    for (const extra of [{ isDeleted: true }, { ban: { active: true } }]) {
+      const { insertedId } = await User.collection.insertOne({
+        accountName: `x${++seq}`, email: `x${seq}@x.test`, passwordHash: 'x', isVerified: true, permissions: REVIEW, ...extra,
+      });
+      const r = errOf(await reviewCatalogEntry({ userId: insertedId.toString(), permissions: REVIEW }, 'artist', String(a._id), 'approve'));
+      expect(r.code).toBe('CATALOG_FORBIDDEN');
+    }
+    expect((await CatalogArtist.findById(a._id))!.status).toBe('pending');
+  });
+
+  // Counter/XP effects of approve and revoke are covered end to end in catalog.rewards.test.ts.
 });

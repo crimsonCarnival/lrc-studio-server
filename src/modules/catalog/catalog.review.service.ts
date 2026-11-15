@@ -36,8 +36,11 @@ export async function reviewCatalogEntry(
   // so a permission revoked after the session loaded it is refused here.
   if (!hasPermission(reviewer.permissions, 'catalog.review')) return forbidden();
   if (!validId(reviewer.userId)) return forbidden();
-  const dbUser = await User.findById(reviewer.userId).select('permissions').lean<{ permissions?: string[] }>();
-  if (!hasPermission(dbUser?.permissions, 'catalog.review')) return forbidden();
+  const dbUser = await User.findById(reviewer.userId)
+    .select('permissions isDeleted ban.active')
+    .lean<{ permissions?: string[]; isDeleted?: boolean; ban?: { active?: boolean } }>();
+  if (!dbUser || dbUser.isDeleted || dbUser.ban?.active) return forbidden();
+  if (!hasPermission(dbUser.permissions, 'catalog.review')) return forbidden();
 
   if (decision !== 'approve' && decision !== 'reject') return invalid('Unknown decision');
   if (!validId(id)) return notFound();
@@ -93,8 +96,10 @@ export async function reviewCatalogEntry(
     }
     if (claimed.source === 'community') {
       try {
-        await awardCatalogCredit(submitterId, kind);
-        await Model.updateOne({ _id: claimed._id }, { $set: { creditAwarded: true } });
+        // Flip first, conditionally: only the call that wins the flip awards, so a retry or
+        // backfill can never award twice. A failed award is logged for manual repair.
+        const flipped = await Model.updateOne({ _id: claimed._id, creditAwarded: false }, { $set: { creditAwarded: true } });
+        if (flipped.modifiedCount === 1) await awardCatalogCredit(submitterId, kind);
       } catch (err) {
         logFailure('credit award', err);
       }
@@ -109,9 +114,7 @@ export async function reviewCatalogEntry(
   const entry = (await Model.findById(claimed._id)) ?? claimed;
   if (decision === 'approve') await onCatalogApproved(kind, entry).catch((err) => logFailure('onCatalogApproved', err));
 
-  if (decision === 'approve' && claimed.source === 'community') {
-    triggerBadgeCheck(submitterId, 'catalog_approved').catch((err) => logFailure('submitter badge check', err));
-  }
+  // The submitter's badge check runs inside awardCatalogCredit, once per awarded credit.
   triggerBadgeCheck(reviewer.userId, 'catalog_review').catch((err) => logFailure('reviewer badge check', err));
   return { entry };
 }

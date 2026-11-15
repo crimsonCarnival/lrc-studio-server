@@ -290,7 +290,24 @@ describe('admin catalog delete', () => {
     expect(await CatalogArtist.countDocuments()).toBe(1);
   });
 
-  it.todo('decrements the submitter counters and XP once (needs Task 7 revoke)');
+  it('flags a failed revoke in the audit details (album and artist cascade) without aborting', async () => {
+    const { admin, artist, approved, u } = await setup();
+    revokeCatalogCredit.mockRejectedValue(new Error('revoke down'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await adminDeleteCatalogEntry(admin, 'album', String(approved._id), { revokeCredit: true })).toEqual({ ok: true });
+    expect(await adminDeleteCatalogEntry(admin, 'artist', String(artist._id), { revokeCredit: true })).toEqual({ ok: true });
+    log.mockRestore();
+    revokeCatalogCredit.mockReset();
+    revokeCatalogCredit.mockResolvedValue(undefined);
+    const entries = await AdminLog.find({ action: 'catalog.delete' }).sort({ createdAt: 1 }).lean();
+    const albumLog = JSON.parse(entries[0].details as string);
+    expect(albumLog).toMatchObject({ revokeFailed: true, failedRevokes: [{ kind: 'album', entryId: String(approved._id), userId: u }] });
+    const artistLog = JSON.parse(entries[1].details as string);
+    expect(artistLog.revokeFailed).toBe(true);
+    expect(artistLog.failedRevokes).toEqual([{ kind: 'artist', entryId: String(artist._id), userId: u }]);
+  });
+
+  // Counter/XP effects of revoke are covered end to end in catalog.rewards.test.ts.
 });
 
 describe('admin audit log', () => {

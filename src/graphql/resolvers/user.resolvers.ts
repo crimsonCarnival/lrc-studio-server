@@ -98,7 +98,8 @@ export interface LeaderboardUserView {
   displayName: string | null;
   avatarUrl: string | null;
   badges: IUserBadge[];
-  stats: Required<IUserStats>;
+  // Catalog counters stay out of public shapes by construction.
+  stats: Required<Omit<IUserStats, 'catalogReviews' | 'catalogArtistsApproved' | 'catalogAlbumsApproved'>>;
   streak: ReturnType<typeof getStreakView>;
   progression: { xp: number; level: number };
   projectCount: number;
@@ -223,7 +224,6 @@ function toLeaderboardUser(u: IUser, periodXp: number | null): LeaderboardUserVi
       syncedLines: u.stats?.syncedLines ?? 0,
       aiSyncedLines: u.stats?.aiSyncedLines ?? 0,
       aiWordsSynced: u.stats?.aiWordsSynced ?? 0,
-      catalogReviews: u.stats?.catalogReviews ?? 0,
     },
     streak: getStreakView(u.streak),
     progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },
