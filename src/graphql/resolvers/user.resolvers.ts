@@ -223,6 +223,7 @@ function toLeaderboardUser(u: IUser, periodXp: number | null): LeaderboardUserVi
       syncedLines: u.stats?.syncedLines ?? 0,
       aiSyncedLines: u.stats?.aiSyncedLines ?? 0,
       aiWordsSynced: u.stats?.aiWordsSynced ?? 0,
+      catalogReviews: u.stats?.catalogReviews ?? 0,
     },
     streak: getStreakView(u.streak),
     progression: { xp: u.progression?.xp ?? 0, level: u.progression?.level ?? 0 },

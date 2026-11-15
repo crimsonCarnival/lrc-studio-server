@@ -16,7 +16,11 @@ export type CatalogErrorCode =
   | 'CATALOG_PARENT_NOT_APPROVED'
   | 'CATALOG_INVALID_IMAGE'
   | 'CATALOG_INVALID_INPUT'
-  | 'CATALOG_NOT_FOUND';
+  | 'CATALOG_NOT_FOUND'
+  | 'CATALOG_FORBIDDEN'
+  | 'CATALOG_SELF_REVIEW'
+  | 'CATALOG_ALREADY_REVIEWED'
+  | 'CATALOG_CHANGED';
 
 /** `existing` is set only for approved entries or the caller's own pending one. */
 export type CatalogError = {
@@ -31,19 +35,19 @@ export type AlbumInput = { artistId: string; title: string; year?: string | null
 export type ArtistPatch = Partial<ArtistInput>;
 export type AlbumPatch = Partial<Omit<AlbumInput, 'artistId'>>;
 
-const fail = (status: number, code: CatalogErrorCode, error: string, existing?: CatalogError['existing']): CatalogError => ({
+export const fail = (status: number, code: CatalogErrorCode, error: string, existing?: CatalogError['existing']): CatalogError => ({
   error,
   status,
   code,
   ...(existing ? { existing } : {}),
 });
-const invalid = (error: string): CatalogError => fail(400, 'CATALOG_INVALID_INPUT', error);
-const notFound = (): CatalogError => fail(404, 'CATALOG_NOT_FOUND', 'Entry not found');
+export const invalid = (error: string): CatalogError => fail(400, 'CATALOG_INVALID_INPUT', error);
+export const notFound = (): CatalogError => fail(404, 'CATALOG_NOT_FOUND', 'Entry not found');
 
 const isError = (v: unknown): v is CatalogError => typeof v === 'object' && v !== null && 'code' in v && 'error' in v;
-const validId = (id: unknown): id is string => typeof id === 'string' && mongoose.isValidObjectId(id);
-const oid = (id: string) => new mongoose.Types.ObjectId(id);
-const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
+export const validId = (id: unknown): id is string => typeof id === 'string' && mongoose.isValidObjectId(id);
+export const oid = (id: string) => new mongoose.Types.ObjectId(id);
+export const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
 function cleanName(raw: unknown, max: number, label: string): string | CatalogError {
   if (typeof raw !== 'string') return invalid(`${label} is required`);
@@ -279,3 +283,9 @@ export async function listMySubmissions(userId: string): Promise<{ artists: ICat
   ]);
   return { artists, albums };
 }
+
+/**
+ * Called after a catalog entry is approved. Step 2 of the catalog fills this
+ * with auto-linking of matching user artists; until then it is a no-op.
+ */
+export async function onCatalogApproved(_kind: 'artist' | 'album', _entry: ICatalogArtist | ICatalogAlbum): Promise<void> {}

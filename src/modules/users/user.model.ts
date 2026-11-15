@@ -65,6 +65,8 @@ export interface IUserStats {
   // Lines whose timestamp was set by ASR auto-stamp (not manually synced)
   aiSyncedLines: number;
   aiWordsSynced: number;
+  // Catalog submissions this user has approved or rejected as a reviewer
+  catalogReviews?: number;
 }
 
 export interface IUserStreak {
@@ -238,6 +240,7 @@ const statsSchema = new mongoose.Schema<IUserStats>(
     syncedLines: { type: Number, default: 0, min: 0 },
     aiSyncedLines: { type: Number, default: 0, min: 0 },
     aiWordsSynced: { type: Number, default: 0, min: 0 },
+    catalogReviews: { type: Number, default: 0, min: 0 },
   },
   { _id: false },
 );

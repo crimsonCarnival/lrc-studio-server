@@ -6,7 +6,7 @@ import type { INotification } from '../modules/notifications/notification.model.
 const PRIORITY: Record<string, number> = {
   system: 0, ban: 0, unban: 0, role_changed: 0, admin_granted: 0,
   request_reviewed: 1, request_submitted: 1, report: 1,
-  badge_awarded: 2, xp_changed: 2, streak_warning: 2,
+  badge_awarded: 2, catalog_approved: 2, catalog_rejected: 2, xp_changed: 2, streak_warning: 2,
   follow: 3, reaction: 3,
   star: 4, fork: 4,
   new_device: 0, appeal_result: 0,

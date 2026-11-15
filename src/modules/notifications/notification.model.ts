@@ -9,6 +9,7 @@ const NOTIFICATION_TYPES = [
   'verify_email', 'set_password',
   'ban', 'unban', 'password_changed',
   'badge_awarded',
+  'catalog_approved', 'catalog_rejected',
   'request_submitted', 'request_reviewed',
   'xp_changed', 'role_changed',
   'streak_warning',

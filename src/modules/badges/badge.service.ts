@@ -144,6 +144,8 @@ export type BadgeEvent =
   | 'upload_create'
   | 'email_verified'
   | 'role_change'
+  | 'catalog_approved'
+  | 'catalog_review'
   | 'daily_cron';
 
 const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
@@ -157,6 +159,8 @@ const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
   upload_create:   ['upload_count'],
   email_verified:  ['is_verified'],
   role_change:     ['role_admin'],
+  catalog_approved: ['catalog_approved'],
+  catalog_review:  ['catalog_reviews'],
   daily_cron:      ['account_age_days', 'streak_days'],
 };
 
