@@ -55,7 +55,8 @@ export function groupShelf<R extends ShelfRow>(
 
   const artistPublic = new Set(visibility.filter(v => v.albumKey === null && v.isPublic).map(v => v.artistId))
   const albumPrivate = new Set(
-    visibility.filter(v => v.albumKey !== null && !v.isPublic).map(v => `${v.artistId}\u0000${v.albumKey}`)
+    // Re-normalise stored keys: a row saved under an older key form must still hide its album (fail closed).
+    visibility.filter(v => v.albumKey !== null && !v.isPublic).map(v => `${v.artistId}\u0000${albumKey(v.albumKey ?? '')}`)
   )
 
   const out: GroupedArtist<R>[] = []

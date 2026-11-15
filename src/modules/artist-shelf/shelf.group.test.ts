@@ -155,6 +155,12 @@ describe('groupShelf', () => {
     ])
   })
 
+  it('an album row stored under an older key form still hides the album', () => {
+    const rows = [row('s', [A()], { album: 'Small  Hours' }), row('t', [A()], { album: 'Y' })]
+    const vis = [pub('a1', null), pub('a1', 'small  hours', false)]
+    expect(groupShelf(rows, names, vis, visitor)[0].albums.map(a => a.key)).toEqual(['y'])
+  })
+
   it('private artist hides its albums even with album rows public', () => {
     const rows = [row('s', [A()], { album: 'X' })]
     const vis = [pub('a1', 'x', true)]
