@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import Project, { type IProject } from '../projects/project.model.js';
 import Artist from '../artists/artist.model.js';
 import ShelfVisibility from './shelf-visibility.model.js';
+import { artistKey } from '../artists/artist.service.js';
 import { resolveProfileAccess } from '../users/profile-access.js';
 import { groupShelf } from './shelf.group.js';
 import type { ShelfRow, VisibilityRow } from './shelf.types.js';
@@ -47,7 +48,7 @@ export async function getShelf(
   const access = await resolveProfileAccess(accountName, asVisitor, viewerId);
   if (access.kind === 'missing' || access.kind === 'hidden') return null;
   if (access.kind === 'stub') return [];
-  if (opts.artistId !== undefined && !mongoose.isValidObjectId(opts.artistId)) return [];
+  if (opts.artistId !== undefined && !mongoose.isObjectIdOrHexString(opts.artistId)) return [];
 
   const ownerId = access.user._id;
   const rows = await Project.find({
@@ -70,8 +71,9 @@ export async function getShelf(
 
   const grouped = groupShelf(shelfRows, names, vis, { visitor: !access.isOwner });
 
+  const wantedId = opts.artistId?.toLowerCase();
   return grouped
-    .filter((g) => opts.artistId === undefined || g.id === opts.artistId)
+    .filter((g) => wantedId === undefined || g.id === wantedId)
     .map((g) => ({
       id: g.id,
       name: g.name,
@@ -101,15 +103,17 @@ export async function setShelfVisibility(
   albumKey: string | null,
   isPublic: boolean
 ): Promise<void> {
-  if (albumKey !== null && albumKey.length > MAX_ALBUM_KEY) {
+  // Grouping keys albums by artistKey(trim); store the same form or the row never matches.
+  const key = albumKey === null ? null : artistKey(albumKey.trim());
+  if (key !== null && key.length > MAX_ALBUM_KEY) {
     throw Object.assign(new Error('bad_album_key'), { status: 400, extensions: { code: 'bad_album_key' } });
   }
   // Same 404 for a malformed id and a foreign one, so ids cannot be probed.
-  const owned = mongoose.isValidObjectId(artistId) && (await Artist.exists({ _id: artistId, userId }));
+  const owned = mongoose.isObjectIdOrHexString(artistId) && (await Artist.exists({ _id: artistId, userId }));
   if (!owned) throw Object.assign(new Error('not_found'), { status: 404 });
 
   await ShelfVisibility.updateOne(
-    { userId, artistId, albumKey },
+    { userId, artistId, albumKey: key },
     { $set: { isPublic } },
     { upsert: true }
   );

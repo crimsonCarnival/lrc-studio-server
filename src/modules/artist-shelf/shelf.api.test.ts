@@ -136,6 +136,17 @@ describe('artist shelf', () => {
     expect(owner![0].albums.map((a) => `${a.title}:${a.isPublic}`).sort()).toEqual(['Alpha:true', 'Beta:false']);
   });
 
+  it('album override sent with different case/whitespace still hides the album for visitors', async () => {
+    const o = await mkUser();
+    await song(o.id, 'Drake', 'One', { album: 'Alpha' });
+    await song(o.id, 'Drake', 'Two', { album: 'Beta' });
+    const id = await artistId(o.id, 'Drake');
+    await setShelfVisibility(o.id, id, null, true);
+    await setShelfVisibility(o.id, id, '  BETA ', false);
+    const visitor = await getShelf(o.name, false, null, { withTracks: true });
+    expect(visitor![0].albums.map((a) => a.title)).toEqual(['Alpha']);
+  });
+
   it('viewer blocked by the owner gets an empty shelf', async () => {
     const o = await mkUser();
     const v = await mkUser();
