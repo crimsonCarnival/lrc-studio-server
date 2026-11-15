@@ -39,8 +39,9 @@ const seedUser = async (extra: Record<string, unknown> = {}): Promise<string> =>
 type Snap = { stats?: Record<string, number>; progression?: { xp?: number }; badges?: { id: string }[] };
 const snap = async (id: string) => (await User.findById(id).lean<Snap>())!;
 const badgeIds = async (id: string) => ((await snap(id)).badges ?? []).map((b) => b.id);
-// triggerBadgeCheck inside award is fire-and-forget; wait for it to settle.
-const settle = () => new Promise((r) => setTimeout(r, 150));
+// The badge check inside award is fire-and-forget, so poll for its effect instead of sleeping.
+const untilBadge = (id: string, badge: string) => vi.waitFor(async () => expect(await badgeIds(id)).toContain(badge));
+const untilXp = (id: string, xp: number) => vi.waitFor(async () => expect((await snap(id)).progression?.xp).toBe(xp));
 
 describe('computeXPFromStats', () => {
   it('adds 125 per artist and 250 per album', () => {
@@ -69,17 +70,13 @@ describe('awardCatalogCredit / revokeCatalogCredit', () => {
   it('increments, recomputes XP and grants scout at 1', async () => {
     const u = await seedUser();
     await awardCatalogCredit(u, 'artist');
-    await settle();
-    let s = await snap(u);
-    expect(s.stats?.catalogArtistsApproved).toBe(1);
-    expect(await badgeIds(u)).toContain('scout');
-    // 125 artist XP + 50 scout + 50 verified is not auto-granted here (no registration check)
-    expect(s.progression?.xp).toBe(125 + 50);
+    await untilBadge(u, 'scout');
+    // 125 for the artist plus 50 from the scout badge; no other badge applies to this user.
+    await untilXp(u, 125 + 50);
+    expect((await snap(u)).stats?.catalogArtistsApproved).toBe(1);
     await awardCatalogCredit(u, 'album');
-    await settle();
-    s = await snap(u);
-    expect(s.stats?.catalogAlbumsApproved).toBe(1);
-    expect(s.progression?.xp).toBe(125 + 250 + 50);
+    await untilXp(u, 125 + 250 + 50);
+    expect((await snap(u)).stats?.catalogAlbumsApproved).toBe(1);
   });
 
   it('grants archivist at 10 combined approvals and gatekeeper at 100 reviews', async () => {
@@ -98,7 +95,8 @@ describe('awardCatalogCredit / revokeCatalogCredit', () => {
   it('revoke lowers the counter and XP, never goes below 0, and keeps badges', async () => {
     const u = await seedUser();
     await awardCatalogCredit(u, 'album');
-    await settle();
+    await untilBadge(u, 'scout');
+    await untilXp(u, 250 + 50);
     const before = (await snap(u)).progression!.xp!;
     await revokeCatalogCredit(u, 'album');
     const s = await snap(u);
@@ -130,7 +128,7 @@ describe('integration with review', () => {
     const rev = { userId: reviewer, permissions: ['catalog.review'] };
     await reviewCatalogEntry(rev, 'artist', String(a._id), 'approve');
     await reviewCatalogEntry(rev, 'artist', String(a._id), 'approve');
-    await settle();
+    await untilBadge(submitter, 'scout');
     expect((await snap(submitter)).stats?.catalogArtistsApproved).toBe(1);
     expect((await snap(reviewer)).stats?.catalogReviews).toBe(1);
     expect((await CatalogArtist.findById(a._id))!.creditAwarded).toBe(true);
