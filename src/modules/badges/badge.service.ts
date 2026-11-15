@@ -83,6 +83,7 @@ export async function retireBuiltinBadges(): Promise<number> {
     await BadgeDefinition.deleteOne({ id, isBuiltin: true });
     if (holders.length === 0) continue;
     await User.updateMany({ 'badges.id': id }, { $pull: { badges: { id }, showcasedBadges: id } });
+    await User.updateMany({ nameTagBadgeId: id }, { nameTagBadgeId: null });
     await UserPreferences.updateMany({ miniProfileBadgeIds: id }, { $pull: { miniProfileBadgeIds: id } });
     for (const h of holders) await recomputeXP(h._id.toString(), 'backfill').catch(() => 0);
     holdersChanged += holders.length;
@@ -229,6 +230,19 @@ export async function grantBadge(
   return true;
 }
 
+/** Equips a held badge as the user's name tag; null clears it. Only badges the user holds qualify. */
+export async function setNameTag(
+  userId: string,
+  badgeId: string | null
+): Promise<{ ok: true } | { ok: false; code: 'not_owned' | 'not_found' }> {
+  if (badgeId === null) {
+    const res = await User.updateOne({ _id: userId }, { nameTagBadgeId: null });
+    return res.matchedCount > 0 ? { ok: true } : { ok: false, code: 'not_found' };
+  }
+  const updated = await User.findOneAndUpdate({ _id: userId, 'badges.id': badgeId }, { nameTagBadgeId: badgeId });
+  return updated ? { ok: true } : { ok: false, code: 'not_owned' };
+}
+
 export async function revokeBadge(userId: string, badgeId: string): Promise<boolean> {
   const result = await User.updateOne(
     { _id: userId },
@@ -237,6 +251,7 @@ export async function revokeBadge(userId: string, badgeId: string): Promise<bool
   if ((result.modifiedCount ?? 0) > 0) {
     // Also remove from showcase if present
     await User.updateOne({ _id: userId }, { $pull: { showcasedBadges: badgeId } });
+    await User.updateOne({ _id: userId, nameTagBadgeId: badgeId }, { nameTagBadgeId: null });
     recomputeXP(userId).catch(() => {});
     return true;
   }
@@ -347,6 +362,7 @@ export async function deleteBadgeDef(id: string): Promise<boolean> {
   if (!def) throw new Error('Badge not found');
   if (def.isBuiltin) throw new Error('Cannot delete built-in badges');
   await BadgeDefinition.deleteOne({ id });
+  await User.updateMany({ nameTagBadgeId: id }, { nameTagBadgeId: null });
   invalidatePublicBadgeDefsCache();
   return true;
 }

@@ -1,3 +1,4 @@
+import mercurius from 'mercurius';
 import User from '../../modules/users/user.model.js';
 import type { IUser, IUserBadge } from '../../modules/users/user.model.js';
 import { Context } from './context.js';
@@ -7,6 +8,7 @@ import { findUserByAccountName } from '../../modules/users/account-name.service.
 import { isHiddenByBlock } from '../../modules/blocks/block.service.js';
 import {
   updateShowcase as updateShowcaseService,
+  setNameTag as setNameTagService,
   getBadgeRarity,
   getShowcaseSlots,
   listBadgeDefsWithHolders,
@@ -85,6 +87,13 @@ export const badgeResolvers = {
   },
 
   Mutation: {
+    setNameTag: async (_root: unknown, { badgeId }: { badgeId?: string | null }, context: Context) => {
+      if (!context.userId) throw new mercurius.ErrorWithProps('unauthorized', { code: 'UNAUTHORIZED' });
+      const result = await setNameTagService(context.userId, badgeId ?? null);
+      if (!result.ok) throw new mercurius.ErrorWithProps(result.code, { code: result.code === 'not_owned' ? 'NOT_OWNED' : 'NOT_FOUND' });
+      return true;
+    },
+
     updateShowcase: async (_root: unknown, { badgeIds, showcasePublic }: { badgeIds: string[]; showcasePublic?: boolean }, context: Context) => {
       if (!context.userId) throw new Error('Unauthorized');
       const result = await updateShowcaseService(context.userId, badgeIds, showcasePublic);

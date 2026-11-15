@@ -149,6 +149,7 @@ export const rootSchema = `
     incrementPlaylistView(id: ID!): Boolean!
     incrementPlaylistShare(id: ID!): Boolean!
     reactToProject(publicId: String!, emoji: String!): ProjectReactions!
+    setNameTag(badgeId: String): Boolean!
     updateShowcase(badgeIds: [String!]!, showcasePublic: Boolean): UpdateShowcaseResult!
     adminGrantBadge(userIdentifier: String!, badgeId: String!): Boolean!
     adminRevokeBadge(userId: ID!, badgeId: String!): Boolean!
@@ -334,6 +335,14 @@ export const rootSchema = `
   input LocalizedStringInput {
     en: String!
     es: String
+  }
+
+  type NameTag {
+    id: String!
+    label: LocalizedString!
+    description: LocalizedString!
+    icon: String!
+    color: String!
   }
 
   type ShowcasedBadge {
