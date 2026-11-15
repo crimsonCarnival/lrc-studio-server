@@ -303,6 +303,7 @@ export const rootSchema = `
     # Public staff marker: "mod", "admin" or "superadmin"; null for everyone else.
     # Unlike User.role it never says "user" and is safe on public surfaces.
     staffRole: String
+    nameTag: NameTag
     badges: [UserBadge!]!
     stats: UserStats
     progression: UserProgression

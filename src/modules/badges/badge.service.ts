@@ -65,6 +65,19 @@ const BUILTIN_RARITY: Record<string, BadgeRarity> = {
 };
 
 /**
+ * Name tag shown for staff (any user with permissions) who have not equipped one. It is not a
+ * BadgeDefinition, so it can never be held, equipped or revoked; the id is namespaced to keep it
+ * clear of real badge ids.
+ */
+export const STAFF_NAME_TAG = {
+  id: 'builtin:staff',
+  label: { en: 'Staff', es: 'Staff' },
+  description: { en: 'Part of the LRC Studio team', es: 'Parte del equipo de LRC Studio' },
+  icon: '',
+  color: 'primary',
+} as const;
+
+/**
  * Built-in badges that were removed from BUILTIN_BADGES. Seeding only inserts, so a retired badge
  * would otherwise live on in the database and on every holder's profile.
  * 'admin': staff are marked by the role ring instead, which is subtler than a badge.

@@ -8,6 +8,8 @@ import ProjectStar from '../modules/projects/project-star.model.js';
 import ProfileShare from '../modules/projects/profile-share.model.js';
 import { messageCounts } from '../modules/reports/report-thread.service.js';
 import Follow from '../modules/users/follow.model.js';
+import BadgeDefinition from '../modules/badges/badge-definition.model.js';
+import { STAFF_NAME_TAG } from '../modules/badges/badge.service.js';
 import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
 import { loadProjectCredits } from '../modules/collab/collab-credits.service.js';
@@ -78,6 +80,52 @@ const staffRoleLoader = {
       const role = typeof obj.role === 'string' ? obj.role : roles.get(idOf(obj));
       return role && STAFF_ROLES.has(role) ? role : null;
     });
+  },
+};
+
+type NameTagResult = { id: string; label: { en: string; es: string }; description: { en: string; es: string }; icon: string; color: string };
+
+/**
+ * nameTag for any user-shaped parent: the equipped badge's display fields, else the built-in
+ * staff tag for staff, else null. Parents already carrying both `nameTagBadgeId` and
+ * `permissions` skip the user lookup; the rest are fetched in one query, and every equipped
+ * definition in one more. A tag whose definition is gone counts as not equipped.
+ */
+const nameTagLoader = {
+  loader: async (queries: Array<{ obj: LoaderObj }>) => {
+    const idOf = (obj: LoaderObj) => String(obj.id ?? obj._id ?? '');
+    const carries = (obj: LoaderObj) => obj.nameTagBadgeId !== undefined && Array.isArray(obj.permissions);
+
+    const missing = [...new Set(
+      queries.filter(({ obj }) => !carries(obj)).map(({ obj }) => idOf(obj)).filter((id) => mongoose.isValidObjectId(id)),
+    )];
+    const fetched = new Map<string, { nameTagBadgeId?: string | null; permissions?: string[] }>();
+    if (missing.length > 0) {
+      const users = await User.find({ _id: { $in: missing } })
+        .select('nameTagBadgeId permissions')
+        .lean<Array<{ _id: { toString(): string }; nameTagBadgeId?: string | null; permissions?: string[] }>>();
+      for (const u of users) fetched.set(u._id.toString(), u);
+    }
+
+    const resolved = queries.map(({ obj }) => {
+      const src = carries(obj) ? obj : fetched.get(idOf(obj));
+      const tagId = typeof src?.nameTagBadgeId === 'string' && src.nameTagBadgeId ? src.nameTagBadgeId : null;
+      const staff = Array.isArray(src?.permissions) && src.permissions.length > 0;
+      return { tagId, staff };
+    });
+
+    const tagIds = [...new Set(resolved.map((r) => r.tagId).filter((id): id is string => !!id))];
+    const defs = new Map<string, NameTagResult>();
+    if (tagIds.length > 0) {
+      const found = await BadgeDefinition.find({ id: { $in: tagIds } })
+        .select('id label description icon color')
+        .lean<NameTagResult[]>();
+      for (const d of found) defs.set(d.id, { id: d.id, label: d.label, description: d.description, icon: d.icon, color: d.color });
+    }
+
+    return resolved.map(({ tagId, staff }): NameTagResult | null =>
+      (tagId && defs.get(tagId)) || (staff ? { ...STAFF_NAME_TAG } : null),
+    );
   },
 };
 
@@ -157,9 +205,10 @@ export const loaders: MercuriusLoaders = {
   Activity: { target: { loader: activityTargetLoader } },
   ReportEntry: { messageCount: { loader: reportMessageCountLoader } },
   MyReport: { messageCount: { loader: reportMessageCountLoader } },
-  User: { staffRole: staffRoleLoader },
-  PublicUser: { staffRole: staffRoleLoader },
-  LeaderboardUser: { staffRole: staffRoleLoader },
+  User: { staffRole: staffRoleLoader, nameTag: nameTagLoader },
+  PublicUser: { staffRole: staffRoleLoader, nameTag: nameTagLoader },
+  LeaderboardUser: { staffRole: staffRoleLoader, nameTag: nameTagLoader },
+  WallAuthor: { nameTag: nameTagLoader },
   Project: {
     user: {
       loader: async (queries: Array<{ obj: LoaderObj }>, _context) => {
@@ -388,6 +437,7 @@ export const loaders: MercuriusLoaders = {
       },
     },
     staffRole: staffRoleLoader,
+    nameTag: nameTagLoader,
   },
   Upload: {
     user: {
