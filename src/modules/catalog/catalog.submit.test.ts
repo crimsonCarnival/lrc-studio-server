@@ -1,0 +1,288 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import mongoose from 'mongoose';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import User from '../users/user.model.js';
+import CatalogArtist from './catalog-artist.model.js';
+import CatalogAlbum from './catalog-album.model.js';
+import {
+  submitCatalogArtist,
+  submitCatalogAlbum,
+  updateMyPendingEntry,
+  withdrawMyPendingEntry,
+  listMySubmissions,
+} from './catalog.service.js';
+import { CATALOG_LIMITS } from './catalog.limits.js';
+
+let repl: MongoMemoryReplSet;
+
+beforeAll(async () => {
+  repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+  await mongoose.connect(repl.getUri());
+  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init()]);
+}, 60000);
+afterAll(async () => {
+  await mongoose.disconnect();
+  await repl.stop();
+});
+beforeEach(async () => {
+  vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'democloud');
+  await Promise.all([User.deleteMany({}), CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({})]);
+});
+
+let seq = 0;
+const seedUser = async (isVerified = true): Promise<string> => {
+  const n = ++seq;
+  const { insertedId } = await User.collection.insertOne({
+    accountName: `u${n}`, email: `u${n}@x.test`, passwordHash: 'x', isVerified,
+  });
+  return insertedId.toString();
+};
+const errOf = (r: object) => r as { error: string; status: number; code: string; existing?: unknown };
+
+describe('catalog submissions', () => {
+  it('refuses unverified users', async () => {
+    const u = await seedUser(false);
+    const r = errOf(await submitCatalogArtist(u, { name: 'Björk' }));
+    expect(r.code).toBe('CATALOG_UNVERIFIED');
+    expect(r.status).toBe(403);
+  });
+
+  it('creates a pending, slugless community artist', async () => {
+    const u = await seedUser();
+    const r = await submitCatalogArtist(u, { name: '  Björk  ', bio: 'hi' });
+    if (!('artist' in r)) throw new Error('expected artist');
+    expect(r.artist.status).toBe('pending');
+    expect(r.artist.source).toBe('community');
+    expect(r.artist.slug).toBeNull();
+    expect(r.artist.name).toBe('Björk');
+    expect(r.artist.nameKey).toBe('björk');
+  });
+
+  it('rate limits the 11th submission within 24h (both collections)', async () => {
+    const u = await seedUser();
+    const old = { status: 'rejected', source: 'community', submittedBy: new mongoose.Types.ObjectId(u) };
+    // Rejected entries do not hold a pending slot but do count toward the window.
+    await CatalogArtist.insertMany(
+      Array.from({ length: CATALOG_LIMITS.maxPerDay - 1 }, (_, i) => ({ ...old, name: `A${i}`, nameKey: `a${i}` })),
+    );
+    await CatalogAlbum.create({ ...old, artistId: new mongoose.Types.ObjectId(), title: 'T', titleKey: 't' });
+    const r = errOf(await submitCatalogArtist(u, { name: 'One too many' }));
+    expect(r.code).toBe('CATALOG_RATE_LIMITED');
+    expect(r.status).toBe(429);
+  });
+
+  it('ignores submissions older than 24h in the window', async () => {
+    const u = await seedUser();
+    const since = new Date(Date.now() - 25 * 3600_000);
+    await CatalogArtist.collection.insertMany(
+      Array.from({ length: 12 }, (_, i) => ({
+        name: `O${i}`, nameKey: `o${i}`, slug: null, disambiguation: '', imageUrl: null, bio: '',
+        status: 'rejected', source: 'community', submittedBy: new mongoose.Types.ObjectId(u),
+        reviewedBy: null, reviewNote: '', reviewedAt: null, creditAwarded: false, createdAt: since, updatedAt: since,
+      })),
+    );
+    expect('artist' in (await submitCatalogArtist(u, { name: 'Fresh' }))).toBe(true);
+  });
+
+  it('caps pending at 5 across artists and albums; withdrawing frees a slot', async () => {
+    const u = await seedUser();
+    const owner = await seedUser();
+    const parent = await CatalogArtist.create({
+      name: 'P', nameKey: 'p', status: 'approved', slug: 'p', source: 'admin', submittedBy: owner,
+    });
+    const made: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await submitCatalogArtist(u, { name: `Artist ${i}` });
+      if (!('artist' in r)) throw new Error('expected artist');
+      made.push(String(r.artist._id));
+    }
+    for (let i = 0; i < 2; i++) {
+      const r = await submitCatalogAlbum(u, { artistId: String(parent._id), title: `Album ${i}` });
+      expect('album' in r).toBe(true);
+    }
+    const blocked = errOf(await submitCatalogArtist(u, { name: 'Sixth' }));
+    expect(blocked.code).toBe('CATALOG_PENDING_CAP');
+    expect(blocked.status).toBe(429);
+    expect(await withdrawMyPendingEntry(u, 'artist', made[0])).toEqual({ ok: true });
+    expect('artist' in (await submitCatalogArtist(u, { name: 'Sixth' }))).toBe(true);
+  });
+
+  it('rejects a duplicate nameKey against approved and pending', async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    const a = await CatalogArtist.create({
+      name: 'Björk', nameKey: 'björk', status: 'approved', slug: 'bjork', source: 'admin', submittedBy: other,
+    });
+    const dupApproved = errOf(await submitCatalogArtist(u, { name: 'BJÖRK' }));
+    expect(dupApproved.code).toBe('CATALOG_DUPLICATE');
+    expect(dupApproved.status).toBe(409);
+    expect(dupApproved.existing).toMatchObject({ slug: 'bjork', name: 'Björk' });
+    expect(String((dupApproved.existing as { id: unknown }).id)).toBe(String(a._id));
+
+    // NFC vs NFD input normalises to the same key.
+    const nfd = errOf(await submitCatalogArtist(u, { name: 'Bjo\u0308rk' }));
+    expect(nfd.code).toBe('CATALOG_DUPLICATE');
+
+    await CatalogArtist.create({
+      name: 'Sigur Rós', nameKey: 'sigur rós', status: 'pending', source: 'community', submittedBy: other,
+    });
+    const dupOther = errOf(await submitCatalogArtist(u, { name: 'sigur rós' }));
+    expect(dupOther.code).toBe('CATALOG_DUPLICATE');
+    expect(dupOther.existing).toBeUndefined();
+
+    const mine = await submitCatalogArtist(u, { name: 'Mine' });
+    if (!('artist' in mine)) throw new Error('expected artist');
+    const dupMine = errOf(await submitCatalogArtist(u, { name: 'MINE' }));
+    expect(dupMine.code).toBe('CATALOG_DUPLICATE');
+    expect(String((dupMine.existing as { id: unknown }).id)).toBe(String(mine.artist._id));
+  });
+
+  it('bio is stripped of tags and capped at 1000', async () => {
+    const u = await seedUser();
+    const r = await submitCatalogArtist(u, { name: 'Tagged', bio: '<b>Hello</b><script>alert(1)</script> world' });
+    if (!('artist' in r)) throw new Error('expected artist');
+    expect(r.artist.bio).toBe('Hello world');
+    const long = errOf(await submitCatalogArtist(u, { name: 'Long', bio: 'x'.repeat(1001) }));
+    expect(long.code).toBe('CATALOG_INVALID_INPUT');
+    expect(long.status).toBe(400);
+    // Length is checked after sanitizing: markup does not count against the cap.
+    const ok = await submitCatalogArtist(u, { name: 'Padded', bio: `<b>${'x'.repeat(1000)}</b>` });
+    expect('artist' in ok).toBe(true);
+  });
+
+  it('name over 300 chars is refused; empty is refused', async () => {
+    const u = await seedUser();
+    expect(errOf(await submitCatalogArtist(u, { name: 'x'.repeat(301) })).code).toBe('CATALOG_INVALID_INPUT');
+    expect(errOf(await submitCatalogArtist(u, { name: '   ' })).code).toBe('CATALOG_INVALID_INPUT');
+  });
+
+  it('imageUrl from another host or another user is refused; own catalog image is accepted', async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    const bad = errOf(await submitCatalogArtist(u, { name: 'A', imageUrl: 'https://evil.example/x.png' }));
+    expect(bad.code).toBe('CATALOG_INVALID_IMAGE');
+    expect(bad.status).toBe(422);
+    const theirs = `https://res.cloudinary.com/democloud/image/upload/catalog/${other}/a.png`;
+    expect(errOf(await submitCatalogArtist(u, { name: 'B', imageUrl: theirs })).code).toBe('CATALOG_INVALID_IMAGE');
+    const mine = `https://res.cloudinary.com/democloud/image/upload/catalog/${u}/a.png`;
+    const r = await submitCatalogArtist(u, { name: 'C', imageUrl: mine });
+    if (!('artist' in r)) throw new Error('expected artist');
+    expect(r.artist.imageUrl).toBe(mine);
+  });
+
+  it('album needs an approved parent', async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    const mk = (status: string) =>
+      CatalogArtist.create({ name: status, nameKey: status, status, source: 'community', submittedBy: other });
+    for (const status of ['pending', 'rejected']) {
+      const p = await mk(status);
+      const r = errOf(await submitCatalogAlbum(u, { artistId: String(p._id), title: 'X' }));
+      expect(r.code).toBe('CATALOG_PARENT_NOT_APPROVED');
+      expect(r.status).toBe(422);
+    }
+    const missing = errOf(await submitCatalogAlbum(u, { artistId: String(new mongoose.Types.ObjectId()), title: 'X' }));
+    expect(missing.code).toBe('CATALOG_PARENT_NOT_APPROVED');
+    const garbage = errOf(await submitCatalogAlbum(u, { artistId: 'nope', title: 'X' }));
+    expect(garbage.code).toBe('CATALOG_PARENT_NOT_APPROVED');
+  });
+
+  it('album validates title, year and cover', async () => {
+    const u = await seedUser();
+    const p = await CatalogArtist.create({ name: 'P', nameKey: 'p', status: 'approved', slug: 'p', source: 'admin', submittedBy: u });
+    const id = String(p._id);
+    expect(errOf(await submitCatalogAlbum(u, { artistId: id, title: 'x'.repeat(501) })).code).toBe('CATALOG_INVALID_INPUT');
+    expect(errOf(await submitCatalogAlbum(u, { artistId: id, title: 'T', year: '19999' })).code).toBe('CATALOG_INVALID_INPUT');
+    expect(errOf(await submitCatalogAlbum(u, { artistId: id, title: 'T', coverUrl: 'https://evil.example/c.png' })).code).toBe('CATALOG_INVALID_IMAGE');
+    const ok = await submitCatalogAlbum(u, { artistId: id, title: 'T', year: '1997' });
+    if (!('album' in ok)) throw new Error('expected album');
+    expect(ok.album.year).toBe('1997');
+    expect(ok.album.slug).toBeNull();
+  });
+
+  it('album duplicate is per artist and titleKey', async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    const a1 = await CatalogArtist.create({ name: 'A1', nameKey: 'a1', status: 'approved', slug: 'a1', source: 'admin', submittedBy: other });
+    const a2 = await CatalogArtist.create({ name: 'A2', nameKey: 'a2', status: 'approved', slug: 'a2', source: 'admin', submittedBy: other });
+    const alb = await CatalogAlbum.create({
+      artistId: a1._id, title: 'Homogenic', titleKey: 'homogenic', status: 'approved', slug: 'homogenic', source: 'admin', submittedBy: other,
+    });
+    const dup = errOf(await submitCatalogAlbum(u, { artistId: String(a1._id), title: 'HOMOGENIC' }));
+    expect(dup.code).toBe('CATALOG_DUPLICATE');
+    expect(dup.existing).toMatchObject({ slug: 'homogenic' });
+    expect(String((dup.existing as { id: unknown }).id)).toBe(String(alb._id));
+    expect('album' in (await submitCatalogAlbum(u, { artistId: String(a2._id), title: 'Homogenic' }))).toBe(true);
+  });
+
+  it("a user cannot read, edit or withdraw another user's entry", async () => {
+    const owner = await seedUser();
+    const intruder = await seedUser();
+    const r = await submitCatalogArtist(owner, { name: 'Private' });
+    if (!('artist' in r)) throw new Error('expected artist');
+    const id = String(r.artist._id);
+    expect(errOf(await updateMyPendingEntry(intruder, 'artist', id, { name: 'Hax' })).code).toBe('CATALOG_NOT_FOUND');
+    expect(errOf(await withdrawMyPendingEntry(intruder, 'artist', id)).status).toBe(404);
+    expect(errOf(await withdrawMyPendingEntry(intruder, 'artist', 'not-an-id')).status).toBe(404);
+    const listed = await listMySubmissions(intruder);
+    expect(listed.artists).toHaveLength(0);
+    expect(await CatalogArtist.countDocuments({ _id: id })).toBe(1);
+  });
+
+  it('edit and withdraw work only while pending', async () => {
+    const u = await seedUser();
+    const r = await submitCatalogArtist(u, { name: 'Edit Me' });
+    if (!('artist' in r)) throw new Error('expected artist');
+    const id = String(r.artist._id);
+    const upd = await updateMyPendingEntry(u, 'artist', id, { name: 'Edited', bio: '<i>new</i>' });
+    if (!('artist' in upd)) throw new Error('expected artist');
+    expect(upd.artist.name).toBe('Edited');
+    expect(upd.artist.nameKey).toBe('edited');
+    expect(upd.artist.bio).toBe('new');
+
+    await CatalogArtist.updateOne({ _id: id }, { status: 'rejected', reviewNote: 'nope' });
+    const e1 = errOf(await updateMyPendingEntry(u, 'artist', id, { name: 'Again' }));
+    expect(e1.code).toBe('CATALOG_NOT_FOUND');
+    const e2 = errOf(await withdrawMyPendingEntry(u, 'artist', id));
+    expect(e2.code).toBe('CATALOG_NOT_FOUND');
+    expect(await CatalogArtist.countDocuments({ _id: id })).toBe(1);
+  });
+
+  it('editing into a duplicate name is refused (own entry excluded from the check)', async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    await CatalogArtist.create({ name: 'Taken', nameKey: 'taken', status: 'approved', slug: 'taken', source: 'admin', submittedBy: other });
+    const r = await submitCatalogArtist(u, { name: 'Mine' });
+    if (!('artist' in r)) throw new Error('expected artist');
+    const id = String(r.artist._id);
+    expect(errOf(await updateMyPendingEntry(u, 'artist', id, { name: 'TAKEN' })).code).toBe('CATALOG_DUPLICATE');
+    const same = await updateMyPendingEntry(u, 'artist', id, { name: 'MINE' });
+    expect('artist' in same).toBe(true);
+  });
+
+  it('album edit and withdraw', async () => {
+    const u = await seedUser();
+    const p = await CatalogArtist.create({ name: 'P', nameKey: 'p', status: 'approved', slug: 'p', source: 'admin', submittedBy: u });
+    const r = await submitCatalogAlbum(u, { artistId: String(p._id), title: 'Old' });
+    if (!('album' in r)) throw new Error('expected album');
+    const id = String(r.album._id);
+    const upd = await updateMyPendingEntry(u, 'album', id, { title: 'New', year: '2001' });
+    if (!('album' in upd)) throw new Error('expected album');
+    expect(upd.album.titleKey).toBe('new');
+    expect(upd.album.year).toBe('2001');
+    expect(await withdrawMyPendingEntry(u, 'album', id)).toEqual({ ok: true });
+    expect(await CatalogAlbum.countDocuments({})).toBe(0);
+  });
+
+  it('lists my submissions newest first with reviewNote, all statuses', async () => {
+    const u = await seedUser();
+    const first = await submitCatalogArtist(u, { name: 'First' });
+    const second = await submitCatalogArtist(u, { name: 'Second' });
+    if (!('artist' in first) || !('artist' in second)) throw new Error('expected artists');
+    await CatalogArtist.updateOne({ _id: first.artist._id }, { status: 'rejected', reviewNote: 'too vague' });
+    const { artists, albums } = await listMySubmissions(u);
+    expect(artists.map((a) => a.name)).toEqual(['Second', 'First']);
+    expect(artists[1].reviewNote).toBe('too vague');
+    expect(albums).toEqual([]);
+  });
+});
