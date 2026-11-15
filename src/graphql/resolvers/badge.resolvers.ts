@@ -88,9 +88,9 @@ export const badgeResolvers = {
 
   Mutation: {
     setNameTag: async (_root: unknown, { badgeId }: { badgeId?: string | null }, context: Context) => {
-      if (!context.userId) throw new mercurius.ErrorWithProps('unauthorized', { code: 'UNAUTHORIZED' });
+      if (!context.userId) throw new mercurius.ErrorWithProps('unauthorized', { code: 'unauthorized' });
       const result = await setNameTagService(context.userId, badgeId ?? null);
-      if (!result.ok) throw new mercurius.ErrorWithProps(result.code, { code: result.code === 'not_owned' ? 'NOT_OWNED' : 'NOT_FOUND' });
+      if (!result.ok) throw new mercurius.ErrorWithProps(result.code, { code: result.code === 'not_owned' ? 'NOT_OWNED' : 'not_found' });
       return true;
     },
 

@@ -4,6 +4,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import User from '../users/user.model.js';
 import BadgeDefinition from './badge-definition.model.js';
+import { badgeResolvers } from '../../graphql/resolvers/badge.resolvers.js';
+import type { Context } from '../../graphql/resolvers/context.js';
 import { setNameTag, revokeBadge, deleteBadgeDef } from './badge.service.js';
 
 let mongo: MongoMemoryServer;
@@ -76,5 +78,12 @@ describe('setNameTag', () => {
     expect((await User.findById(a))?.nameTagBadgeId).toBeNull();
     expect((await User.findById(b))?.nameTagBadgeId).toBeNull();
     expect((await User.findById(c))?.nameTagBadgeId).toBe('b2');
+  });
+});
+
+describe('setNameTag resolver', () => {
+  it('throws extensions.code "unauthorized" when unauthenticated', async () => {
+    const call = badgeResolvers.Mutation.setNameTag({}, { badgeId: 'b1' }, {} as Context);
+    await expect(call).rejects.toMatchObject({ extensions: { code: 'unauthorized' } });
   });
 });
