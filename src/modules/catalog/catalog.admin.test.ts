@@ -129,6 +129,17 @@ describe('admin catalog update', () => {
     expect('artist' in ok).toBe(true);
   });
 
+  it('does not re-run the homonym rule when an edit leaves name and disambiguation unchanged', async () => {
+    const admin = await seedUser();
+    const original = await CatalogArtist.create({ name: 'Nirvana', nameKey: 'nirvana', status: 'approved', source: 'admin', slug: 'nirvana', disambiguation: '', submittedBy: new mongoose.Types.ObjectId(admin) });
+    await adminCreateCatalogArtist(admin, { name: 'Nirvana', disambiguation: 'UK band' });
+    const r = await adminUpdateCatalogEntry(admin, 'artist', String(original._id), { name: 'Nirvana', disambiguation: '', bio: 'Grunge' });
+    expect('artist' in r && r.artist.bio).toBe('Grunge');
+    // Clearing a disambiguation that existed still recreates the clash and is refused.
+    const uk = (await CatalogArtist.findOne({ disambiguation: 'UK band' }))!;
+    expect(errOf(await adminUpdateCatalogEntry(admin, 'artist', String(uk._id), { disambiguation: '' })).code).toBe('CATALOG_DISAMBIGUATION_REQUIRED');
+  });
+
   it('edits fields of a pending community entry without changing status or slug', async () => {
     const admin = await seedUser();
     const u = await seedUser({}, []);

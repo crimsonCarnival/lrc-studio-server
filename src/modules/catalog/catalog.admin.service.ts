@@ -154,18 +154,20 @@ export async function adminUpdateCatalogEntry(
       disambiguation = d;
       set.disambiguation = d;
     }
+    let nameKey = current.nameKey;
     if (p.name !== undefined) {
       const name = cleanName(p.name, CATALOG_LIMITS.maxArtistName, 'Name');
       if (isError(name)) return name;
-      const nameKey = artistKey(name);
+      nameKey = artistKey(name);
       Object.assign(set, { name, nameKey });
-      if (nameKey !== current.nameKey || p.disambiguation !== undefined) {
-        const clash = await CatalogArtist.exists({ nameKey, status: 'approved', _id: { $ne: current._id } });
-        if (clash && !disambiguation) return needsDisambiguation();
-      }
-    } else if (p.disambiguation !== undefined && !disambiguation) {
-      // Clearing disambiguation must not recreate an undisambiguated homonym.
-      if (await CatalogArtist.exists({ nameKey: current.nameKey, status: 'approved', _id: { $ne: current._id } })) return needsDisambiguation();
+    }
+    // The homonym rule only matters when the entry becomes undisambiguated next to an approved
+    // namesake: its key changed, or a disambiguation it had is being cleared. Re-sending
+    // unchanged values must not trip it (a legacy entry may already sit beside a namesake).
+    const keyChanged = nameKey !== current.nameKey;
+    const clearing = !!current.disambiguation && !disambiguation;
+    if ((keyChanged || clearing) && !disambiguation) {
+      if (await CatalogArtist.exists({ nameKey, status: 'approved', _id: { $ne: current._id } })) return needsDisambiguation();
     }
     if (p.bio !== undefined) {
       const bio = cleanBio(p.bio);
