@@ -58,12 +58,16 @@ function cacheSet(key: string, value: SongConnections | null): void {
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
 }
 
+const IMAGE_HOST = /^https:\/\/([a-z0-9-]+\.)*genius\.com\//i;
+const safeThumb = (u: unknown): string | null =>
+  typeof u === 'string' && IMAGE_HOST.test(u) ? u : null;
+
 const toSong = (s: GeniusRelatedSong): SongConnections['groups'][number]['songs'][number] => ({
   geniusId: s.id,
   title: s.title,
   artist: s.primary_artist.name,
   url: s.url,
-  thumbnail: s.song_art_image_thumbnail_url ?? null,
+  thumbnail: safeThumb(s.song_art_image_thumbnail_url),
 });
 
 async function findGeniusId(track: string, artist: string): Promise<number | null> {
@@ -73,6 +77,7 @@ async function findGeniusId(track: string, artist: string): Promise<number | nul
   const hits = await searchSong(`${track} ${artist}`);
   if (!hits) return null;
   const hit = hits.find((h) => {
+    if (typeof h?.primary_artist?.name !== 'string' || typeof h.title !== 'string') return false;
     if (matchKey(h.primary_artist.name) !== wantArtist) return false;
     const title = matchKey(h.title);
     return title === trackKey
@@ -84,14 +89,26 @@ async function findGeniusId(track: string, artist: string): Promise<number | nul
 }
 
 async function load(geniusId: number): Promise<SongConnections | null> {
+  try {
+    return await loadUnsafe(geniusId);
+  } catch (e) {
+    // Opaque genius_* codes pass through; any unexpected shape becomes genius_upstream.
+    if (e instanceof Error && e.message.startsWith('genius_')) throw e;
+    throw new Error('genius_upstream', { cause: e });
+  }
+}
+
+async function loadUnsafe(geniusId: number): Promise<SongConnections | null> {
   const song = await getSong(geniusId);
   if (!song) return null;
+  if (typeof song.url !== 'string' || !song.url.startsWith(GENIUS_URL_PREFIX)) return null;
   const groups: SongConnections['groups'] = [];
   for (const type of TYPES) {
-    const songs = song.song_relationships
+    const songs = (song.song_relationships ?? [])
       .filter((r) => r.relationship_type === type)
-      .flatMap((r) => r.songs)
-      .filter((s) => typeof s.url === 'string' && s.url.startsWith(GENIUS_URL_PREFIX));
+      .flatMap((r) => r.songs ?? [])
+      .filter((s) => typeof s?.primary_artist?.name === 'string'
+        && typeof s.url === 'string' && s.url.startsWith(GENIUS_URL_PREFIX));
     if (songs.length === 0) continue;
     groups.push({ type, total: songs.length, songs: songs.slice(0, MAX_SONGS).map(toSong) });
   }
@@ -111,6 +128,7 @@ export async function getSongConnections(
   q: { track: string; artist: string } | { geniusId: number },
 ): Promise<SongConnections | null> {
   if (!isGeniusConfigured()) return null;
+  if ('geniusId' in q && (!Number.isInteger(q.geniusId) || q.geniusId <= 0)) return null;
   const key = 'geniusId' in q
     ? `g:${q.geniusId}`
     : `t:${matchKey(q.track)}|${matchKey(q.artist)}`;

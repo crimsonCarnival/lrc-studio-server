@@ -112,4 +112,38 @@ describe('getSongConnections', () => {
     const err = await getSongConnections(stronger).catch((e: Error) => e);
     expect((err as Error).message).toBe('genius_upstream');
   });
+
+  it('tolerates a relationship without songs and a hit without primary_artist', async () => {
+    const fx = load();
+    (fx.search.response.hits as unknown[]).unshift({ result: { id: 1, title: 'Stronger', url: 'https://genius.com/x' } });
+    fx.song.response.song.song_relationships.unshift({ relationship_type: 'samples' } as never);
+    stubFetch(fx);
+    const r = await getSongConnections(stronger);
+    expect(r!.geniusId).toBe(525);
+    expect(r!.groups[0].total).toBe(2);
+  });
+
+  it('returns null when the song url is not genius.com', async () => {
+    const fx = load();
+    (fx.song.response.song as { url?: string }).url = 'https://evil.example/x';
+    stubFetch(fx);
+    expect(await getSongConnections({ geniusId: 525 })).toBeNull();
+  });
+
+  it('drops a non-genius thumbnail to null', async () => {
+    const fx = load();
+    (fx.song.response.song.song_relationships[0].songs[0] as { song_art_image_thumbnail_url?: string })
+      .song_art_image_thumbnail_url = 'https://evil.example/t.jpg';
+    stubFetch(fx);
+    const r = await getSongConnections({ geniusId: 525 });
+    expect(r!.groups[0].songs[0].thumbnail).toBeNull();
+    expect(r!.groups[0].songs[1].thumbnail).toMatch(/^https:\/\/images\.genius\.com\//);
+  });
+
+  it('returns null for geniusId 0 or 1.5 without fetching', async () => {
+    const fn = stubFetch(load());
+    expect(await getSongConnections({ geniusId: 0 })).toBeNull();
+    expect(await getSongConnections({ geniusId: 1.5 })).toBeNull();
+    expect(fn).not.toHaveBeenCalled();
+  });
 });
