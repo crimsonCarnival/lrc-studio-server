@@ -10,6 +10,7 @@ import { exploreSchema } from './explore.schema.js';
 import { reactionSchema } from './reaction.schema.js';
 import { requestSchema } from './request.schema.js';
 import { artistSchema } from './artist.schema.js';
+import { shelfSchema } from './shelf.schema.js';
 import { wallSchema } from './wall.schema.js';
 import { reportSchema } from './report.schema.js';
 import { collabSchema } from './collab.schema.js';
@@ -17,5 +18,5 @@ import { collabSchema } from './collab.schema.js';
 export const schemaString = [
   userSchema, projectSchema, lyricsSchema, uploadSchema,
   settingsSchema, playlistSchema, activitySchema, exploreSchema, reactionSchema, rootSchema,
-  requestSchema, artistSchema, wallSchema, reportSchema, collabSchema,
+  requestSchema, artistSchema, shelfSchema, wallSchema, reportSchema, collabSchema,
 ].join('\n');
