@@ -57,6 +57,7 @@ export const userSchema = `
     miniProfileBadgeIds: [String!]!
     badges: [UserBadge!]!
     showcasedBadges: [String!]!
+    nameTagBadgeId: String
     showcasePublic: Boolean!
     stats: UserStats
     streak: UserStreak
