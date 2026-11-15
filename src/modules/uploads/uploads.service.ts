@@ -169,7 +169,7 @@ export async function generateCoverSignature(data: Record<string, unknown>, user
 const CATALOG_FOLDER = 'catalog';
 const CATALOG_TRANSFORMATION = 'c_fill,w_600,h_600,f_webp,q_auto';
 const CATALOG_URL_MAX_LENGTH = 512;
-const CATALOG_PATH_PATTERN = /^\/image\/upload\/(?:([a-z0-9_,:.-]+)\/)?(?:v\d+\/)?catalog\/([A-Za-z0-9_-]+)\/[A-Za-z0-9_.-]+$/;
+const CATALOG_PATH_PATTERN = /^\/image\/upload\/(?:(?!v\d+\/)([^/]+)\/)?(?:v\d+\/)?catalog\/([A-Za-z0-9_-]+)\/[A-Za-z0-9_.-]+$/;
 
 export async function generateCatalogImageSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
   if (!isStorageConfigured()) {
@@ -232,8 +232,8 @@ export function isCatalogImageUrl(url: unknown, uploaderId?: string): url is str
   const match = CATALOG_PATH_PATTERN.exec(parsed.pathname.slice(prefix.length));
   if (!match) return false;
   const [, transformation, folderUser] = match;
-  // Reject fetch/overlay transformations that could pull in remote or foreign content.
-  if (transformation && transformation.split(',').some((part) => part.startsWith('l_') || part.includes('fetch'))) return false;
+  // Only the exact transformation we sign is allowed; anything else (overlays, underlays, fetch) is rejected.
+  if (transformation !== undefined && transformation !== CATALOG_TRANSFORMATION) return false;
   if (uploaderId !== undefined && folderUser !== uploaderId) return false;
   return true;
 }

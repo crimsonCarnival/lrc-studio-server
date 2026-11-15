@@ -16,7 +16,7 @@ const good = 'https://res.cloudinary.com/demo/image/upload/v123/catalog/user1/ab
 describe('isCatalogImageUrl', () => {
   it('accepts a well-formed catalog URL', () => {
     expect(isCatalogImageUrl(good)).toBe(true);
-    expect(isCatalogImageUrl('https://res.cloudinary.com/demo/image/upload/c_fill,w_600/v1/catalog/u/a.webp')).toBe(true);
+    expect(isCatalogImageUrl('https://res.cloudinary.com/demo/image/upload/c_fill,w_600,h_600,f_webp,q_auto/v1/catalog/u/a.webp')).toBe(true);
   });
 
   it.each([
@@ -42,6 +42,8 @@ describe('isCatalogImageUrl', () => {
     ['deeper folder', 'https://res.cloudinary.com/demo/image/upload/v1/catalog/u/sub/a.webp'],
     ['l_fetch overlay', 'https://res.cloudinary.com/demo/image/upload/l_fetch:aHR0cHM6Ly9ldmls/v1/catalog/u/a.webp'],
     ['l_ overlay', 'https://res.cloudinary.com/demo/image/upload/c_fill,l_logo/v1/catalog/u/a.webp'],
+    ['u_ underlay', 'https://res.cloudinary.com/demo/image/upload/u_evil/v1/catalog/u/a.webp'],
+    ['other transformation', 'https://res.cloudinary.com/demo/image/upload/w_100/v1/catalog/u/a.webp'],
     ['two transformation segments', 'https://res.cloudinary.com/demo/image/upload/c_fill/w_5/v1/catalog/u/a.webp'],
     ['unparsable', 'not a url'],
     ['empty', ''],
@@ -62,8 +64,13 @@ describe('isCatalogImageUrl', () => {
     expect(isCatalogImageUrl(good, 'user2')).toBe(false);
   });
 
+  it('accepts no transformation or exactly the signed one', () => {
+    expect(isCatalogImageUrl('https://res.cloudinary.com/demo/image/upload/catalog/u/a.webp')).toBe(true);
+    expect(isCatalogImageUrl('https://res.cloudinary.com/demo/image/upload/c_fill,w_600,h_600,f_webp,q_auto/catalog/u/a.webp')).toBe(true);
+  });
+
   it('accepts a transformation plus version', () => {
-    expect(isCatalogImageUrl('https://res.cloudinary.com/demo/image/upload/c_fill,w_600,f_webp/v1700000000/catalog/user1/a_b-1.webp', 'user1')).toBe(true);
+    expect(isCatalogImageUrl('https://res.cloudinary.com/demo/image/upload/c_fill,w_600,h_600,f_webp,q_auto/v1700000000/catalog/user1/a_b-1.webp', 'user1')).toBe(true);
   });
 
   it('reads the cloud name at call time', () => {
