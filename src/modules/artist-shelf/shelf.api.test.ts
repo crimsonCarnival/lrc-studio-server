@@ -83,7 +83,7 @@ describe('artist shelf', () => {
     await song(o.id, 'Drake', 'Open', { flags: { public: false } });
     const shelf = await getShelf(o.name, false, o.id, { withTracks: true });
     expect(shelf).toHaveLength(1);
-    expect(shelf![0]).toMatchObject({ name: 'Drake', isPublic: false, songCount: 1, albumCount: 1 });
+    expect(shelf![0]).toMatchObject({ name: 'Drake', isPublic: false, songCount: 1, albumCount: 0 });
     expect(titles(shelf)).toEqual(['Open']);
   });
 
@@ -198,5 +198,41 @@ describe('artist shelf', () => {
     expect(await shelfResolvers.Query.artistShelfArtist(
       {}, { accountName: o.name, artistId: 'bogus' }, { userId: o.id } as never,
     )).toBeNull();
+  });
+
+  it('albumCount excludes the singles bucket', async () => {
+    const o = await mkUser();
+    await song(o.id, 'Drake', 'Single');
+    await song(o.id, 'Drake', 'A', { album: 'Alpha' });
+    await song(o.id, 'Drake', 'B', { album: 'Beta' });
+    const withTracks = await getShelf(o.name, false, o.id, { withTracks: true });
+    const without = await getShelf(o.name, false, o.id, { withTracks: false });
+    expect(withTracks![0].albumCount).toBe(2);
+    expect(without![0]).toMatchObject({ albumCount: 2, songCount: 3 });
+    expect(without![0].albums).toHaveLength(3);
+  });
+
+  it('the projected withTracks:false read keeps album year, cover and counts', async () => {
+    const o = await mkUser();
+    await song(o.id, 'Drake', 'A', { album: 'Alpha', flags: { coverImage: 'https://x.test/c.png', 'metadata.songYear': '2016' } });
+    const full = await getShelf(o.name, false, o.id, { withTracks: true });
+    const slim = await getShelf(o.name, false, o.id, { withTracks: false });
+    expect(slim![0].albums[0]).toMatchObject({ year: '2016', coverImage: 'https://x.test/c.png', trackCount: 1, tracks: [] });
+    expect({ ...slim![0], albums: slim![0].albums.map((a) => ({ ...a, tracks: [] })) })
+      .toEqual({ ...full![0], albums: full![0].albums.map((a) => ({ ...a, tracks: [] })) });
+  });
+
+  it('setShelfVisibility retries once after a duplicate-key race', async () => {
+    const o = await mkUser();
+    const id = await (async () => { await song(o.id, 'Drake', 'A'); return artistId(o.id, 'Drake'); })();
+    const spy = vi.spyOn(ShelfVisibility, 'updateOne')
+      .mockRejectedValueOnce(Object.assign(new Error('E11000 dup'), { code: 11000 }));
+    try {
+      await setShelfVisibility(o.id, id, null, true);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await ShelfVisibility.findOne({ userId: o.id }).lean())!.isPublic).toBe(true);
   });
 });

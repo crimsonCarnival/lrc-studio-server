@@ -51,11 +51,18 @@ export async function getShelf(
   if (opts.artistId !== undefined && !mongoose.isObjectIdOrHexString(opts.artistId)) return [];
 
   const ownerId = access.user._id;
-  const rows = await Project.find({
+  const query = Project.find({
     ...access.projectFilter,
     kind: { $ne: 'subtitles' },
     'metadata.artists.0': { $exists: true },
-  }).lean<IProject[]>();
+  });
+  // Grouping reads only ShelfRow fields; the Project GraphQL type needs whole docs when tracks are returned.
+  if (!opts.withTracks) {
+    query.select(
+      '_id publicId kind title coverImage contentUpdatedAt updatedAt metadata.artists metadata.songAlbum metadata.songYear metadata.trackNumber metadata.albumArt',
+    );
+  }
+  const rows = await query.lean<IProject[]>();
 
   const shelfRows = rows as unknown as (IProject & ShelfRow)[];
   const wanted = new Set<string>();
@@ -79,7 +86,8 @@ export async function getShelf(
       name: g.name,
       isPublic: g.isPublic,
       songCount: g.songCount,
-      albumCount: g.albums.length,
+      // The '' bucket is singles, not an album.
+      albumCount: g.albums.filter((a) => a.key !== '').length,
       coverImage: g.coverImage,
       latestEditAt: new Date(g.latestEditAt).toISOString(),
       albums: g.albums.map((a) => {
@@ -112,9 +120,16 @@ export async function setShelfVisibility(
   const owned = mongoose.isObjectIdOrHexString(artistId) && (await Artist.exists({ _id: artistId, userId }));
   if (!owned) throw Object.assign(new Error('not_found'), { status: 404 });
 
-  await ShelfVisibility.updateOne(
+  const upsert = () => ShelfVisibility.updateOne(
     { userId, artistId, albumKey: key },
     { $set: { isPublic } },
     { upsert: true }
   );
+  try {
+    await upsert();
+  } catch (e) {
+    // Two concurrent first upserts race on the unique index; the retry then updates the winner's row.
+    if ((e as { code?: number }).code !== 11000) throw e;
+    await upsert();
+  }
 }
