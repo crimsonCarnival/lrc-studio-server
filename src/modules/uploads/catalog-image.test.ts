@@ -30,8 +30,19 @@ describe('isCatalogImageUrl', () => {
     ['video resource type', 'https://res.cloudinary.com/demo/video/upload/v1/catalog/u/a.mp4'],
     ['query string', good + '?x=1'],
     ['fragment', good + '#x'],
-    ['traversal', 'https://res.cloudinary.com/demo/image/upload/v1/catalog/../../evil/a.webp'],
-    ['encoded traversal', 'https://res.cloudinary.com/demo/image/upload/v1/catalog/%2e%2e/a.webp'],
+    ['dot-dot segment', 'https://res.cloudinary.com/demo/image/upload/v1/foo/../catalog/u/a.webp'],
+    ['encoded dot-dot', 'https://res.cloudinary.com/demo/image/upload/v1/x/%2e%2e/catalog/u/a.webp'],
+    ['leading space', ' ' + good],
+    ['trailing newline', good + '\n'],
+    ['embedded tab', good.replace('catalog', 'cata\tlog')],
+    [':443 port', good.replace('.com/', '.com:443/')],
+    ['fullwidth-dot host', 'https://res．cloudinary.com/demo/image/upload/v1/catalog/u/a.webp'],
+    ['trailing-dot host', 'https://res.cloudinary.com./demo/image/upload/v1/catalog/u/a.webp'],
+    ['encoded slash', 'https://res.cloudinary.com/demo/image/upload/v1/catalog%2Fu/a.webp'],
+    ['deeper folder', 'https://res.cloudinary.com/demo/image/upload/v1/catalog/u/sub/a.webp'],
+    ['l_fetch overlay', 'https://res.cloudinary.com/demo/image/upload/l_fetch:aHR0cHM6Ly9ldmls/v1/catalog/u/a.webp'],
+    ['l_ overlay', 'https://res.cloudinary.com/demo/image/upload/c_fill,l_logo/v1/catalog/u/a.webp'],
+    ['two transformation segments', 'https://res.cloudinary.com/demo/image/upload/c_fill/w_5/v1/catalog/u/a.webp'],
     ['unparsable', 'not a url'],
     ['empty', ''],
   ])('rejects %s', (_label, url) => {
@@ -44,6 +55,15 @@ describe('isCatalogImageUrl', () => {
 
   it('rejects a very long string', () => {
     expect(isCatalogImageUrl(good + 'a'.repeat(3000))).toBe(false);
+  });
+
+  it('binds the folder to uploaderId when given', () => {
+    expect(isCatalogImageUrl(good, 'user1')).toBe(true);
+    expect(isCatalogImageUrl(good, 'user2')).toBe(false);
+  });
+
+  it('accepts a transformation plus version', () => {
+    expect(isCatalogImageUrl('https://res.cloudinary.com/demo/image/upload/c_fill,w_600,f_webp/v1700000000/catalog/user1/a_b-1.webp', 'user1')).toBe(true);
   });
 
   it('reads the cloud name at call time', () => {

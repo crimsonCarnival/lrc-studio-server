@@ -169,6 +169,7 @@ export async function generateCoverSignature(data: Record<string, unknown>, user
 const CATALOG_FOLDER = 'catalog';
 const CATALOG_TRANSFORMATION = 'c_fill,w_600,h_600,f_webp,q_auto';
 const CATALOG_URL_MAX_LENGTH = 512;
+const CATALOG_PATH_PATTERN = /^\/image\/upload\/(?:([a-z0-9_,:.-]+)\/)?(?:v\d+\/)?catalog\/([A-Za-z0-9_-]+)\/[A-Za-z0-9_.-]+$/;
 
 export async function generateCatalogImageSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
   if (!isStorageConfigured()) {
@@ -211,7 +212,7 @@ export async function generateCatalogImageSignature(data: Record<string, unknown
 // Catalog images are rendered for every visitor, so only assets uploaded through our own signed
 // catalog folder may be referenced. Anything else (another host, another cloud, a query string
 // that could change the transformation, credentials, traversal) is rejected.
-export function isCatalogImageUrl(url: unknown): url is string {
+export function isCatalogImageUrl(url: unknown, uploaderId?: string): url is string {
   if (typeof url !== 'string' || url.length === 0 || url.length > CATALOG_URL_MAX_LENGTH) return false;
   const cloud = process.env.CLOUDINARY_CLOUD_NAME;
   if (!cloud) return false;
@@ -221,11 +222,20 @@ export function isCatalogImageUrl(url: unknown): url is string {
   } catch {
     return false;
   }
+  // Callers store the raw string, so it must already be in canonical form: this rejects
+  // whitespace/control chars, dot segments, encoded traversal, :443, IDN/trailing-dot hosts.
+  if (parsed.href !== url) return false;
   if (parsed.protocol !== 'https:' || parsed.host !== 'res.cloudinary.com') return false;
   if (parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash) return false;
-  if (url.includes('?') || url.includes('#') || url.includes('\\')) return false;
-  if (!parsed.pathname.startsWith(`/${cloud}/image/upload/`) || !parsed.pathname.includes('/catalog/')) return false;
-  return !parsed.pathname.split('/').some((seg) => seg === '..' || seg === '.');
+  const prefix = `/${cloud}`;
+  if (!parsed.pathname.startsWith(`${prefix}/`)) return false;
+  const match = CATALOG_PATH_PATTERN.exec(parsed.pathname.slice(prefix.length));
+  if (!match) return false;
+  const [, transformation, folderUser] = match;
+  // Reject fetch/overlay transformations that could pull in remote or foreign content.
+  if (transformation && transformation.split(',').some((part) => part.startsWith('l_') || part.includes('fetch'))) return false;
+  if (uploaderId !== undefined && folderUser !== uploaderId) return false;
+  return true;
 }
 
 const PROFILE_COVER_FOLDER = 'lyrics-syncer/profile-covers';
