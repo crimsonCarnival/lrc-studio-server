@@ -42,7 +42,8 @@ export async function searchSong(q: string): Promise<GeniusHit[] | null> {
   const body = await geniusGet(`/search?q=${encodeURIComponent(q)}`) as
     { response?: { hits?: { result?: GeniusHit }[] } } | null;
   if (!body) return null;
-  return (body.response?.hits ?? []).flatMap((h) => (h.result ? [h.result] : []));
+  const hits = body.response?.hits;
+  return (Array.isArray(hits) ? hits : []).flatMap((h) => (h?.result ? [h.result] : []));
 }
 
 export async function getSong(id: number): Promise<GeniusSong | null> {

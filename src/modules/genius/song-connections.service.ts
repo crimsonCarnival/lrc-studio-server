@@ -89,8 +89,12 @@ async function findGeniusId(track: string, artist: string): Promise<number | nul
 }
 
 async function load(geniusId: number): Promise<SongConnections | null> {
+  return guarded(() => loadUnsafe(geniusId));
+}
+
+async function guarded<T>(fn: () => Promise<T>): Promise<T> {
   try {
-    return await loadUnsafe(geniusId);
+    return await fn();
   } catch (e) {
     // Opaque genius_* codes pass through; any unexpected shape becomes genius_upstream.
     if (e instanceof Error && e.message.startsWith('genius_')) throw e;
@@ -135,7 +139,7 @@ export async function getSongConnections(
   const cached = cacheGet(key);
   if (cached) return cached.value;
 
-  const id = 'geniusId' in q ? q.geniusId : await findGeniusId(q.track, q.artist);
+  const id = 'geniusId' in q ? q.geniusId : await guarded(() => findGeniusId(q.track, q.artist));
   const value = id === null ? null : await load(id);
   cacheSet(key, value);
   return value;

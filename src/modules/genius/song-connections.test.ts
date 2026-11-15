@@ -146,4 +146,16 @@ describe('getSongConnections', () => {
     expect(await getSongConnections({ geniusId: 1.5 })).toBeNull();
     expect(fn).not.toHaveBeenCalled();
   });
+
+  it('a malformed search body (hits not an array / null element) yields null or genius_upstream, never a TypeError', async () => {
+    for (const hits of ['nope', { a: 1 }, [null, 5]]) {
+      clearConnectionsCache();
+      const fx = load();
+      (fx.search.response as { hits: unknown }).hits = hits;
+      stubFetch(fx);
+      const r = await getSongConnections(stronger).catch((e: Error) => e);
+      if (r instanceof Error) expect(r.message).toBe('genius_upstream');
+      else expect(r).toBeNull();
+    }
+  });
 });
