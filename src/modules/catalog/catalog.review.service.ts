@@ -120,7 +120,7 @@ export async function reviewCatalogEntry(
   await User.updateOne({ _id: oid(reviewer.userId) }, { $inc: { 'stats.catalogReviews': 1 } }).catch((err) =>
     logFailure('reviewer counter', err),
   );
-  await notifyCatalogReviewed(submitterId, decision, entryName, reviewNote).catch((err) => logFailure('notification', err));
+  await notifyCatalogReviewed(submitterId, kind, decision, entryName, reviewNote).catch((err) => logFailure('notification', err));
 
   const entry = (await Model.findById(claimed._id)) ?? claimed;
   if (decision === 'approve') await onCatalogApproved(kind, entry).catch((err) => logFailure('onCatalogApproved', err));

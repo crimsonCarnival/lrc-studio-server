@@ -131,7 +131,7 @@ describe('reviewCatalogEntry', () => {
     expect(r.entry.slug).toBe('bjork');
     const notes = await Notification.find({ userId: submitter }).lean();
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ type: 'catalog_approved', body: 'Björk' });
+    expect(notes[0]).toMatchObject({ type: 'catalog_approved', body: 'Björk', meta: { kind: 'artist' } });
     expect(await reviews(rev.userId)).toBe(1);
     expect(triggerBadgeCheck).toHaveBeenCalledTimes(1);
     expect(triggerBadgeCheck).toHaveBeenCalledWith(rev.userId, 'catalog_review');
@@ -147,7 +147,7 @@ describe('reviewCatalogEntry', () => {
     expect(stored).toMatchObject({ status: 'rejected', reviewNote: 'Duplicate of another act', slug: null });
     const notes = await Notification.find({ userId: submitter }).lean();
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ type: 'catalog_rejected', body: 'Björk', meta: { note: 'Duplicate of another act' } });
+    expect(notes[0]).toMatchObject({ type: 'catalog_rejected', body: 'Björk', meta: { kind: 'artist', note: 'Duplicate of another act' } });
     expect(await reviews(rev.userId)).toBe(1);
     expect(awardCatalogCredit).not.toHaveBeenCalled();
   });

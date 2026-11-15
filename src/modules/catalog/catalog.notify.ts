@@ -6,10 +6,12 @@ import { getIO } from '../../socket/socket.manager.js';
 /**
  * Tells a submitter their catalog entry was approved or rejected. Unlike badge
  * notifications there is no preference gate: it answers the user's own submission.
- * The rejection note travels in `meta` so the body stays the entry name.
+ * `meta` carries the entry kind (so the client can say artist or album) and, on a
+ * rejection, the note; the body stays the entry name.
  */
 export async function notifyCatalogReviewed(
   userId: string,
+  kind: 'artist' | 'album',
   decision: 'approve' | 'reject',
   entryName: string,
   note: string,
@@ -20,7 +22,7 @@ export async function notifyCatalogReviewed(
     read: false,
     sticky: false,
     body: entryName,
-    meta: decision === 'reject' && note ? { note } : null,
+    meta: { kind, ...(decision === 'reject' && note ? { note } : {}) },
   });
   enqueueNotif(userId, notification.toObject() as unknown as INotification);
   try {
