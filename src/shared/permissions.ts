@@ -18,6 +18,8 @@ export const PERMISSIONS = [
   'xp.adjust',      // manually adjust user XP
   'users.shadowban',  // apply / remove shadow bans
   'wall.restrict',  // stop someone from commenting on profile walls, for a while or until lifted
+  'catalog.review', // approve / reject community artist and album submissions
+  'catalog.manage', // directly create / edit / delete catalog artists and albums
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -40,8 +42,10 @@ export const ROLE_RANK: Record<Role, number> = {
 const MOD_PERMS: Permission[] = ['users.view', 'users.ban', 'users.shadowban', 'wall.restrict', 'audit.view', 'stats.view'];
 // Admins: mod powers + IP/device blocking + assigning roles below their own
 // (i.e. setting up mods). NOT XP/badges/levels — those are superadmin-only;
-// admins raise proposals to superadmins for them.
-const ADMIN_PERMS: Permission[] = [...MOD_PERMS, 'network.block', 'users.role'];
+// admins raise proposals to superadmins for them. Catalog review/manage is the
+// exception: admin-level by owner decision (the artist/album catalog is curated
+// by admins, not only superadmins).
+const ADMIN_PERMS: Permission[] = [...MOD_PERMS, 'network.block', 'users.role', 'catalog.review', 'catalog.manage'];
 
 // Default permission set granted when a role is assigned.
 // Adding a new permission to PERMISSIONS requires explicitly listing it here.

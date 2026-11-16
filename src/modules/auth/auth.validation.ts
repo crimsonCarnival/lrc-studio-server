@@ -4,7 +4,7 @@
 // `/:accountName/lists/...` sit beside the app's own routes, so an account name
 // must never equal a first path segment the client or API serves.
 export const RESERVED_USERNAMES = new Set([
-  'admin', 'api', 'assets', 'auth', 'change-password', 'explore', 'feed', 'guide',
+  'admin', 'api', 'artists', 'assets', 'auth', 'change-password', 'explore', 'feed', 'guide',
   'home', 'join', 'leaderboard', 'library', 'lists', 'login', 'notifications', 'og',
   'profile', 'project', 'projects', 'register', 'reports', 'reset-password', 'search',
   'session', 'sessions', 'settings', 'share', 'static', 'u', 'uploads', 'verify-email',

@@ -39,6 +39,13 @@ export const BUILTIN_BADGES: Array<Omit<IBadgeDefinition, 'rarity' | 'createdBy'
   { id: 'streak7',     label: { en: 'Daily Mix', es: 'En racha' },      description: { en: '7-day activity streak', es: 'Racha de actividad de 7 días' },                    icon: '🔥', color: 'orange',  conditionType: 'streak_days',          conditionValue: 7,     autoGrant: true, isBuiltin: true, xpReward: 100 },
   { id: 'streak30',    label: { en: 'Extended Play', es: 'Imparable' },  description: { en: '30-day activity streak', es: 'Racha de actividad de 30 días' },                   icon: '⚡', color: 'amber',   conditionType: 'streak_days',          conditionValue: 30,    autoGrant: true, isBuiltin: true, xpReward: 300 },
   { id: 'verified',    label: { en: 'In Key', es: 'Verificado' },         description: { en: 'Verified email address', es: 'Correo electrónico verificado' },                   icon: '✓',  color: 'primary', conditionType: 'is_verified',          conditionValue: null,  autoGrant: true, isBuiltin: true, xpReward: 50  },
+  { id: 'scout', label: { en: 'Scout', es: 'Explorador' }, description: { en: 'Had 1 catalog contribution approved', es: '1 aportación al catálogo aprobada' }, icon: '🔎', color: 'green', conditionType: 'catalog_approved', conditionValue: 1, autoGrant: true, isBuiltin: true, xpReward: 50 },
+  { id: 'archivist', label: { en: 'Archivist', es: 'Archivista' }, description: { en: 'Had 10 catalog contributions approved', es: '10 aportaciones al catálogo aprobadas' }, icon: '🗂️', color: 'teal', conditionType: 'catalog_approved', conditionValue: 10, autoGrant: true, isBuiltin: true, xpReward: 100 },
+  { id: 'curator', label: { en: 'Curator', es: 'Curador' }, description: { en: 'Had 50 catalog contributions approved', es: '50 aportaciones al catálogo aprobadas' }, icon: '🖼️', color: 'blue', conditionType: 'catalog_approved', conditionValue: 50, autoGrant: true, isBuiltin: true, xpReward: 250 },
+  { id: 'chronicler', label: { en: 'Chronicler', es: 'Cronista' }, description: { en: 'Had 100 catalog contributions approved', es: '100 aportaciones al catálogo aprobadas' }, icon: '📜', color: 'orange', conditionType: 'catalog_approved', conditionValue: 100, autoGrant: true, isBuiltin: true, xpReward: 400 },
+  { id: 'historian', label: { en: 'Historian', es: 'Historiador' }, description: { en: 'Had 175 catalog contributions approved', es: '175 aportaciones al catálogo aprobadas' }, icon: '🏛️', color: 'amber', conditionType: 'catalog_approved', conditionValue: 175, autoGrant: true, isBuiltin: true, xpReward: 600 },
+  { id: 'librarian', label: { en: 'Librarian', es: 'Bibliotecario' }, description: { en: 'Had 250 catalog contributions approved', es: '250 aportaciones al catálogo aprobadas' }, icon: '📚', color: 'shimmer', conditionType: 'catalog_approved', conditionValue: 250, autoGrant: true, isBuiltin: true, xpReward: 1000 },
+  { id: 'gatekeeper', label: { en: 'Gatekeeper', es: 'Guardián' }, description: { en: 'Completed 100 catalog reviews', es: '100 revisiones de catálogo completadas' }, icon: '🛡️', color: 'rose', conditionType: 'catalog_reviews', conditionValue: 100, autoGrant: true, isBuiltin: true, xpReward: 150 },
 ];
 
 // How rare each built-in badge is, set by hand from how hard it is to earn. It is a property of
@@ -62,6 +69,13 @@ const BUILTIN_RARITY: Record<string, BadgeRarity> = {
   uploader: 'uncommon',
   streak7: 'common',
   verified: 'common',
+  scout: 'common',
+  archivist: 'uncommon',
+  curator: 'rare',
+  chronicler: 'rare',
+  historian: 'epic',
+  librarian: 'legendary',
+  gatekeeper: 'uncommon',
 };
 
 /**
@@ -144,6 +158,8 @@ export type BadgeEvent =
   | 'upload_create'
   | 'email_verified'
   | 'role_change'
+  | 'catalog_approved'
+  | 'catalog_review'
   | 'daily_cron';
 
 const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
@@ -157,6 +173,8 @@ const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
   upload_create:   ['upload_count'],
   email_verified:  ['is_verified'],
   role_change:     ['role_admin'],
+  catalog_approved: ['catalog_approved'],
+  catalog_review:  ['catalog_reviews'],
   daily_cron:      ['account_age_days', 'streak_days'],
 };
 
@@ -165,7 +183,7 @@ const EVENT_CONDITIONS: Record<BadgeEvent, string[]> = {
 type UserForCondition = {
   _id: mongoose.Types.ObjectId;
   createdAt?: Date;
-  stats?: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number };
+  stats?: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number; catalogArtistsApproved?: number; catalogAlbumsApproved?: number; catalogReviews?: number };
   streak?: { current?: number; longest?: number; lastActiveDate?: Date | null };
   isVerified: boolean;
   role: 'user' | 'admin';
@@ -212,6 +230,10 @@ export async function checkCondition(user: UserForCondition, def: IBadgeDefiniti
       return user.isVerified === true;
     case 'role_admin':
       return user.role === 'admin';
+    case 'catalog_approved':
+      return (user.stats?.catalogArtistsApproved ?? 0) + (user.stats?.catalogAlbumsApproved ?? 0) >= (def.conditionValue ?? 0);
+    case 'catalog_reviews':
+      return (user.stats?.catalogReviews ?? 0) >= (def.conditionValue ?? 0);
     case 'manual':
       return false;
     default:
@@ -694,6 +716,8 @@ const XP_COEFFICIENTS = {
   starsReceived: 3,        // 10 stars = 30 XP
   forksReceived: 5,        // 10 forks = 50 XP
   followerCount: 1.5,      // 100 followers = 150 XP (reduced from 3)
+  catalogArtist: 125,      // per approved community artist
+  catalogAlbum: 250,       // per approved community album
 };
 
 export function computeLevel(xp: number): number {
@@ -714,7 +738,7 @@ export function xpRequiredForLevel(level: number): number {
 
 export function computeXPFromStats(
   badgeXp: number,
-  stats: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number },
+  stats: { minutesSynced?: number; secondsSynced?: number; wordsSynced?: number; karaokeLines?: number; catalogArtistsApproved?: number; catalogAlbumsApproved?: number },
   social?: { totalStarsReceived?: number; totalForksReceived?: number; followerCount?: number },
   // Manual admin adjustments. Folded into the derived total so that
   // recomputeXP, which overwrites progression.xp, does not erase them.
@@ -726,6 +750,8 @@ export function computeXPFromStats(
   const stars = social?.totalStarsReceived ?? 0;
   const forks = social?.totalForksReceived ?? 0;
   const followers = social?.followerCount ?? 0;
+  const catalogXp = (stats?.catalogArtistsApproved ?? 0) * XP_COEFFICIENTS.catalogArtist +
+                    (stats?.catalogAlbumsApproved ?? 0) * XP_COEFFICIENTS.catalogAlbum;
 
   const craftXp = mins * XP_COEFFICIENTS.minutesSynced +
                   words * XP_COEFFICIENTS.wordsSynced +
@@ -735,7 +761,7 @@ export function computeXPFromStats(
                       forks * XP_COEFFICIENTS.forksReceived +
                       followers * XP_COEFFICIENTS.followerCount;
 
-  return Math.max(0, Math.floor(badgeXp + craftXp + communityXp + bonusXp));
+  return Math.max(0, Math.floor(badgeXp + craftXp + communityXp + catalogXp + bonusXp));
 }
 
 export function getShowcaseSlots(level: number): number {

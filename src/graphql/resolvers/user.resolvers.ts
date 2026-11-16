@@ -98,7 +98,8 @@ export interface LeaderboardUserView {
   displayName: string | null;
   avatarUrl: string | null;
   badges: IUserBadge[];
-  stats: Required<IUserStats>;
+  // Catalog counters stay out of public shapes by construction.
+  stats: Required<Omit<IUserStats, 'catalogReviews' | 'catalogArtistsApproved' | 'catalogAlbumsApproved'>>;
   streak: ReturnType<typeof getStreakView>;
   progression: { xp: number; level: number };
   projectCount: number;

@@ -166,6 +166,78 @@ export async function generateCoverSignature(data: Record<string, unknown>, user
   };
 }
 
+const CATALOG_FOLDER = 'catalog';
+const CATALOG_TRANSFORMATION = 'c_fill,w_600,h_600,f_webp,q_auto';
+const CATALOG_URL_MAX_LENGTH = 512;
+const CATALOG_PATH_PATTERN = /^\/image\/upload\/(?:(?!v\d+\/)([^/]+)\/)?(?:v\d+\/)?catalog\/([A-Za-z0-9_-]+)\/[A-Za-z0-9_.-]+$/;
+
+export async function generateCatalogImageSignature(data: Record<string, unknown>, userId: string, ip: string): Promise<Record<string, unknown>> {
+  if (!isStorageConfigured()) {
+    return { error: 'Upload service not configured', status: 503 };
+  }
+
+  const { fileSize, fileName, recaptchaToken } = data as { fileSize?: number; fileName?: string; recaptchaToken?: string };
+  if (!(await verifyRecaptcha(recaptchaToken, ip, ['upload_catalog_image']))) {
+    return { error: 'recaptcha_failed', status: 403 };
+  }
+
+  if (fileName) {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    if (!ext || !ALLOWED_IMAGE_EXTENSIONS.includes(ext)) {
+      return { error: 'Invalid file type. Allowed: ' + ALLOWED_IMAGE_EXTENSIONS.join(', '), status: 400 };
+    }
+  }
+
+  if (fileSize && fileSize > MAX_COVER_SIZE) {
+    return { error: 'Image too large. Max: 5 MB', status: 400 };
+  }
+
+  const apiSecret = process.env.CLOUDINARY_API_SECRET as string;
+  const timestamp = Math.round(Date.now() / 1000);
+  const userFolder = `${CATALOG_FOLDER}/${userId}`;
+  const params = { timestamp, folder: userFolder, transformation: CATALOG_TRANSFORMATION };
+  const signature = cloudinary.utils.api_sign_request(params, apiSecret);
+
+  return {
+    signature,
+    timestamp,
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    folder: userFolder,
+    resourceType: 'image',
+    transformation: CATALOG_TRANSFORMATION,
+  };
+}
+
+// Catalog images are rendered for every visitor, so only assets uploaded through our own signed
+// catalog folder may be referenced. Anything else (another host, another cloud, a query string
+// that could change the transformation, credentials, traversal) is rejected.
+export function isCatalogImageUrl(url: unknown, uploaderId?: string): url is string {
+  if (typeof url !== 'string' || url.length === 0 || url.length > CATALOG_URL_MAX_LENGTH) return false;
+  const cloud = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloud) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  // Callers store the raw string, so it must already be in canonical form: this rejects
+  // whitespace/control chars, dot segments, encoded traversal, :443, IDN/trailing-dot hosts.
+  if (parsed.href !== url) return false;
+  if (parsed.protocol !== 'https:' || parsed.host !== 'res.cloudinary.com') return false;
+  if (parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash) return false;
+  const prefix = `/${cloud}`;
+  if (!parsed.pathname.startsWith(`${prefix}/`)) return false;
+  const match = CATALOG_PATH_PATTERN.exec(parsed.pathname.slice(prefix.length));
+  if (!match) return false;
+  const [, transformation, folderUser] = match;
+  // Only the exact transformation we sign is allowed; anything else (overlays, underlays, fetch) is rejected.
+  if (transformation !== undefined && transformation !== CATALOG_TRANSFORMATION) return false;
+  if (uploaderId !== undefined && folderUser !== uploaderId) return false;
+  return true;
+}
+
 const PROFILE_COVER_FOLDER = 'lyrics-syncer/profile-covers';
 const MAX_PROFILE_COVER_SIZE = 5 * 1024 * 1024;
 // 1200x400 = the 3:1 ratio the client's crop step outputs. c_fill (not c_limit, like the

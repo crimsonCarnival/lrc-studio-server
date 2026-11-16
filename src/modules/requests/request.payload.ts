@@ -20,7 +20,7 @@ const BADGE_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const CONDITION_TYPES = [
   'registration_rank', 'minutes_synced', 'words_synced', 'karaoke_lines', 'project_count',
   'public_project_count', 'stars_received', 'forks_received', 'follower_count', 'upload_count',
-  'account_age_days', 'streak_days', 'is_verified', 'role_admin', 'manual',
+  'account_age_days', 'streak_days', 'is_verified', 'role_admin', 'catalog_approved', 'catalog_reviews', 'manual',
 ];
 const REQUIREMENT_KEYS = [
   'syncedLines', 'karaokeLines', 'musicSyncedMinutes', 'publicProjects',
