@@ -20,7 +20,7 @@ import {
   adminUpdateCatalogEntry,
   adminDeleteCatalogEntry,
 } from '../../modules/catalog/catalog.admin.service.js';
-import { listReviewQueue, listApprovedArtists, listApprovedAlbums } from '../../modules/catalog/catalog.query.service.js';
+import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug } from '../../modules/catalog/catalog.query.service.js';
 
 type Kind = 'artist' | 'album';
 
@@ -86,6 +86,8 @@ const entryFields = {
 
 export const catalogResolvers = {
   Query: {
+    catalogArtist: async (_root: unknown, { slug }: { slug: string }) => getPublicArtistBySlug(slug),
+
     myCatalogSubmissions: async (_root: unknown, _args: unknown, context: Context) => listMySubmissions(requireUser(context)),
 
     catalogReviewQueue: async (_root: unknown, _args: unknown, context: Context) => {

@@ -52,7 +52,17 @@ export const catalogSchema = `
     albums: [CatalogAlbum!]!
   }
 
+  # Public: an approved artist with its approved albums. Reviewer-only fields are always null here.
+  type CatalogArtistPage {
+    artist: CatalogArtist!
+    albums: [CatalogAlbum!]!
+    # Every public song crediting this artist, from any user (capped at 500).
+    songs: [Project!]!
+  }
+
   extend type Query {
+    # Null when the slug is unknown or the entry is not approved.
+    catalogArtist(slug: String!): CatalogArtistPage
     myCatalogSubmissions: MyCatalogSubmissions!
     catalogReviewQueue: CatalogQueue!
     catalogAdminArtists(query: String, offset: Int, limit: Int): [CatalogArtist!]!
