@@ -152,4 +152,20 @@ describe('catalog resolvers', () => {
     expect(catalogResolvers.CatalogArtist.updatedAt({ updatedAt: d })).toBe(d.toISOString());
     expect(catalogResolvers.CatalogAlbum.createdAt({ createdAt: d })).toBe(d.toISOString());
   });
+
+  it('catalogArtist is public, approved-only, and hides reviewer fields', async () => {
+    const s = await seedUser();
+    const a = await CatalogArtist.create({ name: 'Pub', nameKey: 'pub', status: 'approved', slug: 'pub', source: 'community', submittedBy: s, reviewNote: 'internal' });
+    await CatalogArtist.create({ name: 'Pend', nameKey: 'pend', status: 'pending', source: 'community', submittedBy: s });
+    await CatalogAlbum.create({ artistId: a._id, title: 'Yes', titleKey: 'yes', status: 'approved', slug: 'yes', source: 'community', submittedBy: s });
+    await CatalogAlbum.create({ artistId: a._id, title: 'No', titleKey: 'no', status: 'pending', source: 'community', submittedBy: s });
+    const page = await Q.catalogArtist({}, { slug: 'PUB' }, ctx());
+    expect(page.artist.name).toBe('Pub');
+    expect(page.artist.reviewNote).toBeUndefined();
+    expect(page.artist.submittedBy).toBeUndefined();
+    expect(page.albums.map((x: { title: string }) => x.title)).toEqual(['Yes']);
+    expect(page.songs).toEqual([]);
+    expect(await Q.catalogArtist({}, { slug: 'pend' }, ctx())).toBeNull();
+    expect(await Q.catalogArtist({}, { slug: 'nope' }, ctx())).toBeNull();
+  });
 });
