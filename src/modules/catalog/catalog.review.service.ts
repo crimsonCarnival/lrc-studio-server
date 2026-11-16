@@ -61,7 +61,12 @@ export async function reviewCatalogEntry(
   const Model = (kind === 'artist' ? CatalogArtist : CatalogAlbum) as mongoose.Model<ICatalogArtist | ICatalogAlbum>;
   const current = await Model.findById(oid(id)).lean<Claimed & { artistId?: mongoose.Types.ObjectId }>();
   if (!current) return notFound();
-  if (String(current.submittedBy) === reviewer.userId) return fail(403, 'CATALOG_SELF_REVIEW', 'You cannot review your own submission');
+  // Self-review needs catalog.manage: those users can already create approved entries directly,
+  // so approving their own submission grants no new power. Plain reviewers stay blocked.
+  const isOwnSubmission = String(current.submittedBy) === reviewer.userId;
+  if (isOwnSubmission && !hasPermission(dbUser.permissions, 'catalog.manage')) {
+    return fail(403, 'CATALOG_SELF_REVIEW', 'You cannot review your own submission');
+  }
   if (current.status !== 'pending') return fail(409, 'CATALOG_ALREADY_REVIEWED', 'This entry was already reviewed');
 
   // Checked before the claim so a refusal leaves the album pending and nothing to roll back.
@@ -105,7 +110,8 @@ export async function reviewCatalogEntry(
       // Approval stands; a slugless approved entry can be retried without redoing the review.
       logFailure('slug assignment', err);
     }
-    if (claimed.source === 'community') {
+    // No credit for approving your own entry (same as admin-created ones), so it cannot farm XP or badges.
+    if (claimed.source === 'community' && !isOwnSubmission) {
       try {
         // Flip first, conditionally: only the call that wins the flip awards, so a retry or
         // backfill can never award twice. A failed award is logged for manual repair.

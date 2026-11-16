@@ -102,12 +102,32 @@ describe('reviewCatalogEntry', () => {
     expect((await CatalogArtist.findById(a._id))!.status).toBe('pending');
   });
 
-  it('refuses reviewing your own submission', async () => {
+  it('refuses reviewing your own submission without catalog.manage', async () => {
     const rev = await reviewerOf();
     const a = await seedArtist(rev.userId);
     const r = errOf(await reviewCatalogEntry(rev, 'artist', String(a._id), 'approve'));
     expect(r).toMatchObject({ code: 'CATALOG_SELF_REVIEW', status: 403 });
     expect((await CatalogArtist.findById(a._id))!.status).toBe('pending');
+  });
+
+  it('lets a catalog.manage reviewer approve their own submission, without credit', async () => {
+    const perms = ['catalog.review', 'catalog.manage'];
+    const userId = await seedUser(perms);
+    const a = await seedArtist(userId);
+    const r = await reviewCatalogEntry({ userId, permissions: perms }, 'artist', String(a._id), 'approve');
+    expect('entry' in r).toBe(true);
+    const stored = (await CatalogArtist.findById(a._id))!;
+    expect(stored.status).toBe('approved');
+    expect(stored.slug).toBeTruthy();
+    expect(awardCatalogCredit).not.toHaveBeenCalled();
+  });
+
+  it('re-checks catalog.manage in the DB for self-review', async () => {
+    const perms = ['catalog.review', 'catalog.manage'];
+    const userId = await seedUser(['catalog.review']); // catalog.manage revoked since the session loaded it
+    const a = await seedArtist(userId);
+    const r = errOf(await reviewCatalogEntry({ userId, permissions: perms }, 'artist', String(a._id), 'approve'));
+    expect(r.code).toBe('CATALOG_SELF_REVIEW');
   });
 
   it('404s on an unknown or malformed id', async () => {
