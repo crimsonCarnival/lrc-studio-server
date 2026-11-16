@@ -13,11 +13,13 @@ const limit = (max: number) => ({
 });
 
 export default async function assistRoutes(fastify: FastifyInstance): Promise<void> {
-  const preHandler = [fastify.requireAuth];
-  fastify.post('/name-check', { preHandler, schema: nameCheckSchema, config: limit(60) }, nameCheck);
-  fastify.post('/title-split', { preHandler, schema: titleSplitSchema, config: limit(60) }, titleSplit);
-  fastify.post('/describe', { preHandler, schema: describeSchema, config: limit(30) }, describe);
-  fastify.post('/romanize', { preHandler, schema: romanizeSchema, config: limit(30) }, romanize);
-  fastify.post('/singers', { preHandler, schema: singersSchema, config: limit(30) }, singers);
-  fastify.get('/usage', { preHandler }, usage);
+  // Fresh array per route: @fastify/rate-limit pushes its limiter onto the route's preHandler
+  // array, so a shared array would stack every route's limiter on all of them.
+  const preHandler = () => [fastify.requireAuth];
+  fastify.post('/name-check', { preHandler: preHandler(), schema: nameCheckSchema, config: limit(60) }, nameCheck);
+  fastify.post('/title-split', { preHandler: preHandler(), schema: titleSplitSchema, config: limit(60) }, titleSplit);
+  fastify.post('/describe', { preHandler: preHandler(), schema: describeSchema, config: limit(30) }, describe);
+  fastify.post('/romanize', { preHandler: preHandler(), schema: romanizeSchema, config: limit(30) }, romanize);
+  fastify.post('/singers', { preHandler: preHandler(), schema: singersSchema, config: limit(30) }, singers);
+  fastify.get('/usage', { preHandler: preHandler() }, usage);
 }

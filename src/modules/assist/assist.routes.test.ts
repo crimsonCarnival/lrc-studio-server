@@ -132,4 +132,26 @@ describe('assist routes', () => {
     res = await app.inject({ method: 'GET', url: '/assist/usage', headers: { 'x-test-user': userA } });
     expect(res.json()).toEqual({ ...usage, resetsAt: resetsAt.toISOString() });
   });
+
+  it('describe, romanize and singers each enforce their own 30/h limit', async () => {
+    for (const url of ['/describe', '/romanize', '/singers']) {
+      const user = `64b${String(++seq).padStart(21, '0')}`;
+      for (let i = 0; i < 30; i++) expect((await post(url, valid[url], user)).statusCode, `${url} #${i + 1}`).toBe(200);
+      expect((await post(url, valid[url], user)).statusCode, `${url} #31`).toBe(429);
+    }
+  });
+
+  it('route buckets are independent: title-split and name-check do not consume each other', async () => {
+    for (let i = 0; i < 60; i++) expect((await post('/title-split', valid['/title-split'])).statusCode).toBe(200);
+    expect((await post('/title-split', valid['/title-split'])).statusCode).toBe(429);
+    expect((await post('/name-check', valid['/name-check'])).statusCode).toBe(200);
+    const other = `64b${String(++seq).padStart(21, '0')}`;
+    for (let i = 0; i < 60; i++) expect((await post('/name-check', valid['/name-check'], other)).statusCode).toBe(200);
+    expect((await post('/title-split', valid['/title-split'], other)).statusCode).toBe(200);
+  });
+
+  it('400 on an empty artist or album', async () => {
+    expect((await post('/name-check', { title: 'T', artist: '' })).statusCode).toBe(400);
+    expect((await post('/name-check', { title: 'T', album: '' })).statusCode).toBe(400);
+  });
 });

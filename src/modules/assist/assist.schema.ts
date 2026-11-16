@@ -11,8 +11,8 @@ export const nameCheckSchema = {
     anyOf: [{ required: ['artist'] }, { required: ['album'] }],
     properties: {
       title: { type: 'string', minLength: 1, maxLength: 500 },
-      artist: { type: 'string', maxLength: 300 },
-      album: { type: 'string', maxLength: 500 },
+      artist: { type: 'string', minLength: 1, maxLength: 300 },
+      album: { type: 'string', minLength: 1, maxLength: 500 },
     },
   },
 } as const;
