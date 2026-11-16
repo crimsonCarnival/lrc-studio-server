@@ -6,6 +6,7 @@ import { assignArtistSlug, assignAlbumSlug } from './catalog.slug.js';
 import { awardCatalogCredit } from './catalog.rewards.js';
 import { notifyCatalogReviewed } from './catalog.notify.js';
 import { fail, invalid, notFound, validId, oid, squash, onCatalogApproved, type CatalogError } from './catalog.service.js';
+import { importAlbumsFromSongs } from './catalog.import.service.js';
 import { triggerBadgeCheck } from '../badges/badge.service.js';
 import { hasPermission } from '../../shared/permissions.js';
 import { stripHtml } from '../../utils/sanitize.js';
@@ -130,6 +131,8 @@ export async function reviewCatalogEntry(
 
   const entry = (await Model.findById(claimed._id)) ?? claimed;
   if (decision === 'approve') await onCatalogApproved(kind, entry).catch((err) => logFailure('onCatalogApproved', err));
+  // A newly approved artist gets its albums from its public songs; approval stands if this fails.
+  if (decision === 'approve' && kind === 'artist') await importAlbumsFromSongs(entry as ICatalogArtist, reviewer.userId).catch((err) => logFailure('album import', err));
 
   // The submitter's badge check runs inside awardCatalogCredit, once per awarded credit.
   triggerBadgeCheck(reviewer.userId, 'catalog_review').catch((err) => logFailure('reviewer badge check', err));

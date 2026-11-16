@@ -87,6 +87,8 @@ export const catalogSchema = `
     adminCreateCatalogArtist(name: String!, disambiguation: String, bio: String, imageUrl: String): CatalogArtist!
     adminCreateCatalogAlbum(artistId: ID!, title: String!, year: String, coverUrl: String): CatalogAlbum!
     adminUpdateCatalogEntry(kind: CatalogKind!, id: ID!, name: String, disambiguation: String, title: String, bio: String, imageUrl: String, year: String, coverUrl: String): Boolean!
+    # Creates approved albums from the album names on the artist's public songs; returns how many were new.
+    adminImportCatalogAlbums(artistId: ID!): Int!
     adminDeleteCatalogEntry(kind: CatalogKind!, id: ID!, revokeCredit: Boolean): Boolean!
   }
 `;

@@ -8,6 +8,7 @@ import {
   fail, invalid, notFound, validId, oid, squash, isError, cleanName, cleanBio, cleanYear, albumKey,
   type CatalogError, type ArtistInput, type AlbumInput,
 } from './catalog.service.js';
+import { importAlbumsFromSongs } from './catalog.import.service.js';
 import { CATALOG_LIMITS } from './catalog.limits.js';
 import { artistKey } from '../artists/artist.service.js';
 import { isCatalogImageUrl } from '../uploads/uploads.service.js';
@@ -58,7 +59,7 @@ function cleanDisambiguation(raw: unknown): string | CatalogError {
 const needsDisambiguation = (): CatalogError =>
   fail(422, 'CATALOG_DISAMBIGUATION_REQUIRED', 'An approved artist with this name exists; add a disambiguation');
 
-async function audit(adminId: string, action: 'catalog.create' | 'catalog.update' | 'catalog.delete', id: string, name: string, meta: Record<string, unknown>): Promise<void> {
+async function audit(adminId: string, action: 'catalog.create' | 'catalog.update' | 'catalog.delete' | 'catalog.import', id: string, name: string, meta: Record<string, unknown>): Promise<void> {
   try {
     await logAdminAction({ adminId, action, targetId: id, targetName: name, details: JSON.stringify(meta) });
   } catch (err) {
@@ -88,6 +89,7 @@ export async function adminCreateCatalogArtist(adminId: string, input: AdminArti
   });
   await assignArtistSlug(artist._id, name);
   await audit(adminId, 'catalog.create', String(artist._id), name, { kind: 'artist', name });
+  await importAlbumsFromSongs(artist, adminId).catch((err) => logFailure('album import', err));
   return { artist: (await CatalogArtist.findById(artist._id)) ?? artist };
 }
 
@@ -314,4 +316,16 @@ export async function adminDeleteCatalogEntry(
     ...(failedRevokes.length ? { revokeFailed: true, failedRevokes } : {}),
   });
   return { ok: true };
+}
+
+/** Creates approved albums for an approved artist from the album names on its public songs. */
+export async function adminImportCatalogAlbums(adminId: string, artistId: string): Promise<{ created: number } | CatalogError> {
+  const denied = await assertManager(adminId);
+  if (denied) return denied;
+  if (!validId(artistId)) return notFound();
+  const artist = await CatalogArtist.findOne({ _id: oid(artistId), status: 'approved' }).select('_id name').lean();
+  if (!artist) return notFound();
+  const created = await importAlbumsFromSongs(artist, adminId);
+  await audit(adminId, 'catalog.import', artistId, artist.name, { kind: 'album', created });
+  return { created };
 }

@@ -19,6 +19,7 @@ import {
   adminCreateCatalogAlbum,
   adminUpdateCatalogEntry,
   adminDeleteCatalogEntry,
+  adminImportCatalogAlbums,
 } from '../../modules/catalog/catalog.admin.service.js';
 import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, lookupCatalogSlugs } from '../../modules/catalog/catalog.query.service.js';
 
@@ -160,6 +161,11 @@ export const catalogResolvers = {
       if (args.kind === 'artist') unwrap(await adminUpdateCatalogEntry(userId, 'artist', args.id, artistPatch(args)));
       else unwrap(await adminUpdateCatalogEntry(userId, 'album', args.id, albumPatch(args)));
       return true;
+    },
+
+    adminImportCatalogAlbums: async (_root: unknown, { artistId }: { artistId: string }, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      return unwrap(await adminImportCatalogAlbums(userId, artistId)).created;
     },
 
     adminDeleteCatalogEntry: async (_root: unknown, args: { kind: Kind; id: string; revokeCredit?: boolean | null }, context: Context) => {
