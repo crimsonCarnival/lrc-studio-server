@@ -1,6 +1,7 @@
 import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum from './catalog-album.model.js';
 import Project from '../projects/project.model.js';
+import { artistKey } from '../artists/artist.service.js';
 import { validId, oid } from './catalog.service.js';
 
 const QUEUE_CAP = 100;
@@ -65,4 +66,14 @@ export async function listPublicSongsByArtist(name: string) {
   })
     .sort({ 'metadata.songAlbum': 1, 'metadata.trackNumber': 1, title: 1, _id: 1 })
     .limit(SONGS_CAP);
+}
+
+/** Slugs of approved catalog artists matching the given names (case-insensitive); unknown names are omitted. */
+export async function lookupCatalogSlugs(names: string[]) {
+  const keys = [...new Set(names.slice(0, 50).map((n) => artistKey(String(n).trim())).filter(Boolean))];
+  if (keys.length === 0) return [];
+  const rows = await CatalogArtist.find({ status: 'approved', slug: { $type: 'string' }, nameKey: { $in: keys } })
+    .select('name nameKey slug')
+    .lean<{ name: string; nameKey: string; slug: string }[]>();
+  return rows.map((r) => ({ name: r.name, key: r.nameKey, slug: r.slug }));
 }

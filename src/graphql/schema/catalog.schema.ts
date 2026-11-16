@@ -60,7 +60,16 @@ export const catalogSchema = `
     songs: [Project!]!
   }
 
+  type CatalogArtistRef {
+    name: String!
+    # artistKey(name): match it against the lower-cased, NFC-normalised name you asked for.
+    key: String!
+    slug: String!
+  }
+
   extend type Query {
+    # Public. Approved catalog artists matching these names; unknown names are left out (max 50 names).
+    catalogArtistSlugs(names: [String!]!): [CatalogArtistRef!]!
     # Null when the slug is unknown or the entry is not approved.
     catalogArtist(slug: String!): CatalogArtistPage
     myCatalogSubmissions: MyCatalogSubmissions!
