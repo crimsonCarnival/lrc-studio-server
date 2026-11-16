@@ -11,20 +11,29 @@
  *   pnpm tsx scripts/backfill-catalog.ts --phase albums --write # after staff approved the artists
  *
  * Flags (defaults in brackets):
- *   --phase artists|albums   which catalog entries to request [artists]. Albums need an
- *                            APPROVED catalog artist and use the project's primary artist.
+ *   --phase artists|albums   which catalog entries to request [artists]. Albums need exactly one
+ *                            APPROVED catalog artist of that name and use the project's primary artist.
  *   --min-songs N            candidate must appear on >= N projects [2]
  *   --limit N                max entries created per run, most projects first [25]
  *   --per-user N             max new entries per submitter per run [1]
  *   --write                  actually create entries (without it: dry run)
  *   --report <file>          save the full JSON report
+ * Values are separate arguments ("--phase albums"); "--phase=albums", unknown flags and missing
+ * values are rejected before any connection is made.
  *
  * The submitter is the user with the most projects for that candidate (verified, not deleted,
  * not banned, with room under their pending cap), so approval credits a real contributor.
  * Entries are inserted directly: no CatalogSubmissionLog rows, so nobody's daily allowance is used.
+ *
+ * Known side effects (owner decisions, not handled here):
+ *  - A rejected request still sends the submitter a review notification they never asked for.
+ *  - Created entries occupy slots of the submitter's own 5-pending cap until reviewed.
+ *  - If a user withdraws a backfilled request, a later run can propose it again.
+ *  - Candidates are taken from private projects too, and credited to their owner.
  */
 import 'dotenv/config';
 import fs from 'node:fs';
+import { parseArgs } from 'node:util';
 import mongoose from 'mongoose';
 import { runBackfill, BACKFILL_DEFAULTS, type BackfillPhase } from '../src/modules/catalog/catalog.backfill.js';
 
@@ -34,42 +43,66 @@ if (!MONGO_URI) {
   process.exit(1);
 }
 
-const args = process.argv.slice(2);
-const flag = (name: string): string | undefined => {
-  const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
-};
-const intFlag = (name: string, fallback: number): number => {
-  const raw = flag(name);
-  if (raw === undefined) return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) {
-    console.error(`❌  ${name} must be a positive integer (got "${raw}").`);
-    process.exit(1);
-  }
-  return n;
-};
-
-const WRITE = args.includes('--write');
-const phase = (flag('--phase') ?? BACKFILL_DEFAULTS.phase) as BackfillPhase;
-if (phase !== 'artists' && phase !== 'albums') {
-  console.error('❌  --phase must be "artists" or "albums".');
+function fail(msg: string): never {
+  console.error(`❌  ${msg}`);
   process.exit(1);
 }
-const REPORT_PATH = flag('--report');
+
+const argv = process.argv.slice(2);
+// parseArgs accepts `--flag=value`; the contract here is the space form only.
+for (const a of argv) if (a.startsWith('--') && a.includes('=')) fail(`"${a}": use "--flag value", not "--flag=value".`);
+
+let values: ReturnType<typeof parseArgs>['values'];
+try {
+  // strict: unknown flags and flags missing their value throw.
+  values = parseArgs({
+    args: argv,
+    strict: true,
+    allowPositionals: false,
+    options: {
+      write: { type: 'boolean' },
+      phase: { type: 'string' },
+      'min-songs': { type: 'string' },
+      limit: { type: 'string' },
+      'per-user': { type: 'string' },
+      report: { type: 'string' },
+    },
+  }).values;
+} catch (err) {
+  fail((err as Error).message);
+}
+// `--report --write` would otherwise swallow the next flag as the value.
+for (const [i, a] of argv.entries()) {
+  if (['--phase', '--min-songs', '--limit', '--per-user', '--report'].includes(a) && (argv[i + 1] ?? '--').startsWith('--')) {
+    fail(`${a} needs a value.`);
+  }
+}
+
+const intFlag = (name: 'min-songs' | 'limit' | 'per-user', fallback: number): number => {
+  const v = values[name];
+  if (v === undefined) return fallback;
+  if (typeof v !== 'string' || !/^\d+$/.test(v) || Number(v) < 1) fail(`--${name} must be a positive integer (got "${String(v)}").`);
+  return Number(v);
+};
+
+const WRITE = values.write === true;
+const phase = (values.phase ?? BACKFILL_DEFAULTS.phase) as BackfillPhase;
+if (phase !== 'artists' && phase !== 'albums') fail('--phase must be "artists" or "albums".');
+const OPTIONS = {
+  phase,
+  write: WRITE,
+  minSongs: intFlag('min-songs', BACKFILL_DEFAULTS.minSongs),
+  limit: intFlag('limit', BACKFILL_DEFAULTS.limit),
+  perUser: intFlag('per-user', BACKFILL_DEFAULTS.perUser),
+};
+const REPORT_PATH = typeof values.report === 'string' ? values.report : undefined;
 
 async function main(): Promise<void> {
-  await mongoose.connect(MONGO_URI);
-  const host = mongoose.connection.host;
-  console.log(`✅  Connected to MongoDB host ${host}${WRITE ? '  (WRITE MODE)' : '  (DRY RUN — no writes; pass --write to create)'}`);
-  const report = await runBackfill({
-    phase,
-    write: WRITE,
-    minSongs: intFlag('--min-songs', BACKFILL_DEFAULTS.minSongs),
-    limit: intFlag('--limit', BACKFILL_DEFAULTS.limit),
-    perUser: intFlag('--per-user', BACKFILL_DEFAULTS.perUser),
-    log: (m) => console.log(m),
-  });
+  // No autoIndex/autoCreate: even a dry run must not build indexes or collections on the target database.
+  await mongoose.connect(MONGO_URI, { autoIndex: false, autoCreate: false });
+  const { host, name } = mongoose.connection;
+  console.log(`✅  Connected to MongoDB host ${host}, database ${name}${WRITE ? '  (WRITE MODE)' : '  (DRY RUN — no writes; pass --write to create)'}`);
+  const report = await runBackfill({ ...OPTIONS, log: (m) => console.log(m) });
 
   console.log(`\nSummary (${WRITE ? 'written' : 'DRY RUN'}):`, report.summary);
   const planned = report.rows.filter((r) => r.status === 'create');
@@ -78,7 +111,7 @@ async function main(): Promise<void> {
     const parent = r.artistName ? ` by "${r.artistName}"` : '';
     console.log(`${r.kind} "${r.name}"${parent}  projects=${r.projectCount} users=${r.userCount} submitter=${r.chosenSubmitterId}`);
   }
-  for (const status of ['error', 'parent_not_approved', 'per_user_limit', 'over_limit', 'no_eligible_submitter'] as const) {
+  for (const status of ['error', 'parent_not_approved', 'ambiguous_parent', 'per_user_limit', 'over_limit', 'no_eligible_submitter'] as const) {
     const rows = report.rows.filter((r) => r.status === status);
     if (rows.length) console.log(`\n${status}: ${rows.length} (see --report for the rows)`);
   }

@@ -33,6 +33,7 @@ export type RowStatus =
   | 'per_user_limit'
   | 'no_primary_artist'
   | 'parent_not_approved'
+  | 'ambiguous_parent'
   | 'error';
 
 export type BackfillRow = {
@@ -58,7 +59,9 @@ export type BackfillReport = {
 
 type UserTally = { count: number; first: number };
 type Candidate = {
+  /** Most frequent spelling across projects (ties: earliest project). Set once collection ends. */
   name: string;
+  spellings: Map<string, { n: number; first: number }>;
   /** Albums only: the primary artist's display name and key. `null` = no clear primary. */
   artistName: string | null;
   artistKey: string | null;
@@ -108,18 +111,24 @@ async function collectCandidates(phase: BackfillPhase): Promise<Candidate[]> {
   const map = new Map<string, Candidate>();
   const cursor = Project.find({
     $or: [{ 'metadata.artists.0': { $exists: true } }, { 'metadata.songArtist': { $nin: ['', null] } }],
+    ...(phase === 'albums' ? { 'metadata.songAlbum': { $nin: ['', null] } } : {}),
   })
     .select('userId createdAt metadata.artists metadata.songArtist metadata.songAlbum')
     .lean<ProjectRow[]>()
     .cursor();
 
-  const touch = (key: string, init: () => Candidate, row: ProjectRow): void => {
+  const touch = (key: string, name: string, init: () => Candidate, row: ProjectRow): void => {
     const c = map.get(key) ?? init();
     map.set(key, c);
     c.projects += 1;
+    const at = (row.createdAt ?? row._id.getTimestamp()).getTime();
+    const sp = c.spellings.get(name);
+    if (sp) {
+      sp.n += 1;
+      sp.first = Math.min(sp.first, at);
+    } else c.spellings.set(name, { n: 1, first: at });
     if (!row.userId) return;
     const uid = String(row.userId);
-    const at = (row.createdAt ?? row._id.getTimestamp()).getTime();
     const t = c.users.get(uid);
     if (t) {
       t.count += 1;
@@ -136,7 +145,7 @@ async function collectCandidates(phase: BackfillPhase): Promise<Candidate[]> {
         const key = artistKey(name);
         if (seen.has(key)) continue;
         seen.add(key);
-        touch(key, () => ({ name, artistName: null, artistKey: null, key, projects: 0, users: new Map() }), row);
+        touch(key, name, () => ({ name, spellings: new Map(), artistName: null, artistKey: null, key, projects: 0, users: new Map() }), row);
       }
       continue;
     }
@@ -144,7 +153,11 @@ async function collectCandidates(phase: BackfillPhase): Promise<Candidate[]> {
     if (!title) continue;
     const aKey = primary ? artistKey(primary) : null;
     const key = `${aKey ?? ''}\u0000${albumKey(title)}`;
-    touch(key, () => ({ name: title, artistName: primary, artistKey: aKey, key, projects: 0, users: new Map() }), row);
+    touch(key, title, () => ({ name: title, spellings: new Map(), artistName: primary, artistKey: aKey, key, projects: 0, users: new Map() }), row);
+  }
+  for (const c of map.values()) {
+    const best = [...c.spellings].sort((a, b) => b[1].n - a[1].n || a[1].first - b[1].first)[0];
+    c.name = best[0];
   }
   return [...map.values()];
 }
@@ -154,9 +167,10 @@ const rank: Record<string, number> = { approved: 0, pending: 1, rejected: 2 };
 const bestStatus = (a: string | undefined, b: string): string => (a === undefined || rank[b] < rank[a] ? b : a);
 
 type Planned = { cand: Candidate; row: BackfillRow; parentId?: mongoose.Types.ObjectId };
+type ToCreate = Planned & { submitter: string };
 
 /** Reads the DB and decides, per candidate, what would happen. Writes nothing. */
-export async function planBackfill(opts: BackfillOptions): Promise<{ rows: BackfillRow[]; toCreate: Planned[] }> {
+export async function planBackfill(opts: BackfillOptions): Promise<{ rows: BackfillRow[]; toCreate: ToCreate[] }> {
   const candidates = await collectCandidates(opts.phase);
   const isAlbum = opts.phase === 'albums';
   const mkRow = (c: Candidate, status: RowStatus, reason = ''): BackfillRow => ({
@@ -166,56 +180,62 @@ export async function planBackfill(opts: BackfillOptions): Promise<{ rows: Backf
   const rows: BackfillRow[] = [];
   const live: Planned[] = [];
 
+  // Cheap filters first, so the catalog lookups below only cover candidates that could be created.
+  const passing: Candidate[] = [];
+  for (const c of candidates) {
+    if (isAlbum && !c.artistKey) rows.push(mkRow(c, 'no_primary_artist', 'project has no clear primary artist'));
+    else if (c.projects < opts.minSongs) rows.push(mkRow(c, 'below_threshold', `${c.projects} < ${opts.minSongs}`));
+    else passing.push(c);
+  }
+
   // Existing catalog entries in ANY status: a rejection is never resubmitted.
   const artistStatus = new Map<string, string>();
-  const approvedParent = new Map<string, mongoose.Types.ObjectId>();
+  const approvedParents = new Map<string, mongoose.Types.ObjectId[]>();
   const albumStatus = new Map<string, string>();
-  const artistKeys = [...new Set(candidates.flatMap((c) => (isAlbum ? (c.artistKey ? [c.artistKey] : []) : [c.key])))];
+  const artistKeys = [...new Set(passing.map((c) => (isAlbum ? c.artistKey! : c.key)))];
   for (const keys of chunk(artistKeys)) {
     const found = await CatalogArtist.find({ nameKey: { $in: keys } }).select('nameKey status').lean();
     for (const f of found) {
       artistStatus.set(f.nameKey, bestStatus(artistStatus.get(f.nameKey), f.status));
-      if (f.status === 'approved') approvedParent.set(f.nameKey, f._id);
+      if (f.status === 'approved') approvedParents.set(f.nameKey, [...(approvedParents.get(f.nameKey) ?? []), f._id]);
     }
   }
   if (isAlbum) {
-    for (const ids of chunk([...approvedParent.values()])) {
+    const unique = [...approvedParents.values()].filter((ids) => ids.length === 1).map((ids) => ids[0]);
+    for (const ids of chunk(unique)) {
       const found = await CatalogAlbum.find({ artistId: { $in: ids } }).select('artistId titleKey status').lean();
       for (const f of found) {
-        const k = `${String(f.artistId)}\u0000${f.titleKey}`;
+        const k = `${String(f.artistId)} ${f.titleKey}`;
         albumStatus.set(k, bestStatus(albumStatus.get(k), f.status));
       }
     }
   }
 
-  for (const c of candidates) {
-    if (isAlbum && !c.artistKey) {
-      rows.push(mkRow(c, 'no_primary_artist', 'project has no clear primary artist'));
-      continue;
-    }
+  for (const c of passing) {
     if (!isAlbum) {
       const s = artistStatus.get(c.key);
       if (s) {
         rows.push(mkRow(c, 'skipped_existing', s));
         continue;
       }
-    }
-    if (c.projects < opts.minSongs) {
-      rows.push(mkRow(c, 'below_threshold', `${c.projects} < ${opts.minSongs}`));
+      live.push({ cand: c, row: mkRow(c, 'create') });
       continue;
     }
-    let parentId: mongoose.Types.ObjectId | undefined;
-    if (isAlbum) {
-      parentId = approvedParent.get(c.artistKey!);
-      if (!parentId) {
-        rows.push(mkRow(c, 'parent_not_approved', artistStatus.get(c.artistKey!) ?? 'no catalog artist'));
-        continue;
-      }
-      const s = albumStatus.get(`${String(parentId)}\u0000${albumKey(c.name)}`);
-      if (s) {
-        rows.push(mkRow(c, 'skipped_existing', s));
-        continue;
-      }
+    const parents = approvedParents.get(c.artistKey!) ?? [];
+    if (parents.length === 0) {
+      rows.push(mkRow(c, 'parent_not_approved', artistStatus.get(c.artistKey!) ?? 'no catalog artist'));
+      continue;
+    }
+    // Homonyms (same nameKey, told apart only by disambiguation) cannot be resolved from a project's text.
+    if (parents.length > 1) {
+      rows.push(mkRow(c, 'ambiguous_parent', `approved artists: ${parents.map(String).join(', ')}`));
+      continue;
+    }
+    const parentId = parents[0];
+    const s = albumStatus.get(`${String(parentId)} ${albumKey(c.name)}`);
+    if (s) {
+      rows.push(mkRow(c, 'skipped_existing', s));
+      continue;
     }
     live.push({ cand: c, row: mkRow(c, 'create'), parentId });
   }
@@ -244,14 +264,19 @@ export async function planBackfill(opts: BackfillOptions): Promise<{ rows: Backf
 
   // Most projects first; ties by name so the output is stable.
   live.sort((a, b) => b.cand.projects - a.cand.projects || a.cand.name.localeCompare(b.cand.name));
-  const toCreate: Planned[] = [];
+  const toCreate: ToCreate[] = [];
   for (const p of live) {
     const ranked = [...p.cand.users]
       .sort((a, b) => b[1].count - a[1].count || a[1].first - b[1].first)
       .map(([id]) => id);
     const ok = ranked.filter((id) => eligible.has(id) && (pending.get(id) ?? 0) + (used.get(id) ?? 0) < room);
     if (ok.length === 0) {
-      rows.push({ ...p.row, status: 'no_eligible_submitter', reason: 'no verified, active user with pending room' });
+      // Distinguish "nobody qualifies" from "qualified before, but earlier picks in this run used up their room".
+      const exhausted = ranked.some((id) => eligible.has(id) && (pending.get(id) ?? 0) < room);
+      rows.push({
+        ...p.row, status: 'no_eligible_submitter',
+        reason: exhausted ? 'pending room used up by earlier picks in this run' : 'no verified, active user with pending room',
+      });
       continue;
     }
     if (toCreate.length >= opts.limit) {
@@ -265,7 +290,7 @@ export async function planBackfill(opts: BackfillOptions): Promise<{ rows: Backf
     }
     used.set(pick, (used.get(pick) ?? 0) + 1);
     p.row.chosenSubmitterId = pick;
-    toCreate.push(p);
+    toCreate.push({ ...p, submitter: pick });
     rows.push(p.row);
   }
   return { rows, toCreate };
@@ -282,7 +307,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillReport
 
   if (opts.write) {
     for (const p of toCreate) {
-      const submittedBy = new mongoose.Types.ObjectId(p.row.chosenSubmitterId!);
+      const submittedBy = new mongoose.Types.ObjectId(p.submitter);
       const lostRace = (status: string): void => {
         p.row.status = 'skipped_existing';
         p.row.reason = status;
@@ -300,6 +325,13 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillReport
           p.row.createdId = String(doc._id);
         } else {
           const titleKey = albumKey(p.cand.name);
+          // Staff may have rejected or removed the parent since planning.
+          if (!(await CatalogArtist.exists({ _id: p.parentId, status: 'approved' }))) {
+            p.row.status = 'parent_not_approved';
+            p.row.reason = 'parent no longer approved';
+            p.row.chosenSubmitterId = null;
+            continue;
+          }
           const twin = await CatalogAlbum.findOne({ artistId: p.parentId, titleKey }).select('status').lean();
           if (twin) { lostRace(twin.status); continue; }
           const doc = await CatalogAlbum.create({
@@ -317,6 +349,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillReport
   }
 
   const summary: BackfillReport['summary'] = {
+    ambiguous_parent: 0,
     candidates: rows.length, created: rows.filter((r) => r.createdId).length,
     create: 0, skipped_existing: 0, below_threshold: 0, no_eligible_submitter: 0, over_limit: 0,
     per_user_limit: 0, no_primary_artist: 0, parent_not_approved: 0, error: 0,

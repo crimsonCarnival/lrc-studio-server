@@ -281,4 +281,72 @@ describe('backfill: albums phase', () => {
     expect(rowOf(r, 'Burned')).toMatchObject({ status: 'skipped_existing', reason: 'rejected' });
     expect(await CatalogAlbum.countDocuments()).toBe(1);
   });
+
+  it('reports ambiguous_parent and creates nothing when two approved artists share a name', async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    const a = await seedCatalogArtist('Parent', 'approved', other);
+    const b = await CatalogArtist.create({
+      name: 'Parent', nameKey: 'parent', disambiguation: 'UK band', status: 'approved', source: 'admin', slug: 'parent-2',
+      submittedBy: new mongoose.Types.ObjectId(other),
+    });
+    await many(u, 2, album('Parent', 'Which One'));
+    const r = await run({ phase: 'albums', write: true });
+    const row = rowOf(r, 'Which One')!;
+    expect(row.status).toBe('ambiguous_parent');
+    expect(row.reason).toContain(String(a._id));
+    expect(row.reason).toContain(String(b._id));
+    expect(await CatalogAlbum.countDocuments()).toBe(0);
+  });
+
+  it('re-checks the parent is still approved right before inserting an album', async () => {
+    const u = await seedUser();
+    const other = await seedUser();
+    const parent = await seedCatalogArtist('Parent', 'approved', other);
+    await many(u, 2, album('Parent', 'Racy'));
+    // Staff reject the parent between planning and the insert (planning never calls exists).
+    const orig = CatalogArtist.exists.bind(CatalogArtist);
+    const spy = vi.spyOn(CatalogArtist, 'exists').mockImplementation(((...args: Parameters<typeof orig>) => {
+      spy.mockRestore();
+      return CatalogArtist.updateOne({ _id: parent._id }, { status: 'rejected' }).then(() => orig(...args));
+    }) as never);
+    const r = await run({ phase: 'albums', write: true });
+    expect(rowOf(r, 'Racy')!.status).toBe('parent_not_approved');
+    expect(await CatalogAlbum.countDocuments()).toBe(0);
+  });
+});
+
+describe('backfill: display name, reasons, lookups', () => {
+  it('uses the most frequent spelling, ties to the earliest project', async () => {
+    const u = await seedUser();
+    await seedProject(u, primary('bts'));
+    await many(u, 3, primary('BTS'));
+    await seedProject(u, primary('Zed'));
+    await seedProject(u, primary('zed'));
+    const r = await run({ limit: 10, perUser: 10 });
+    expect(r.rows.map((x) => x.name).sort()).toEqual(['BTS', 'Zed']);
+    expect(rowOf(r, 'BTS')!.projectCount).toBe(4);
+  });
+
+  it('gives a distinct reason when pending room was used up by earlier picks in the run', async () => {
+    const u = await seedUser();
+    for (let i = 0; i < 3; i++) await seedCatalogArtist(`Existing ${i}`, 'pending', u);
+    await many(u, 3, primary('First'));
+    await many(u, 2, primary('Second'));
+    const r = await run({ perUser: 5 });
+    expect(rowOf(r, 'First')!.status).toBe('create');
+    const second = rowOf(r, 'Second')!;
+    expect(second.status).toBe('no_eligible_submitter');
+    expect(second.reason).toMatch(/earlier picks/);
+    const nobody = await seedUser({ isVerified: false });
+    await many(nobody, 2, primary('Nobody'));
+    expect(rowOf(await run(), 'Nobody')!.reason).not.toMatch(/earlier picks/);
+  });
+
+  it('does not look up existing entries for candidates below the threshold', async () => {
+    const u = await seedUser();
+    await seedCatalogArtist('Rare', 'rejected', u);
+    await seedProject(u, primary('Rare'));
+    expect(rowOf(await run(), 'Rare')!.status).toBe('below_threshold');
+  });
 });
