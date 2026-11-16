@@ -205,7 +205,7 @@ export async function planBackfill(opts: BackfillOptions): Promise<{ rows: Backf
     for (const ids of chunk(unique)) {
       const found = await CatalogAlbum.find({ artistId: { $in: ids } }).select('artistId titleKey status').lean();
       for (const f of found) {
-        const k = `${String(f.artistId)} ${f.titleKey}`;
+        const k = `${String(f.artistId)}\u0000${f.titleKey}`;
         albumStatus.set(k, bestStatus(albumStatus.get(k), f.status));
       }
     }
@@ -232,7 +232,7 @@ export async function planBackfill(opts: BackfillOptions): Promise<{ rows: Backf
       continue;
     }
     const parentId = parents[0];
-    const s = albumStatus.get(`${String(parentId)} ${albumKey(c.name)}`);
+    const s = albumStatus.get(`${String(parentId)}\u0000${albumKey(c.name)}`);
     if (s) {
       rows.push(mkRow(c, 'skipped_existing', s));
       continue;

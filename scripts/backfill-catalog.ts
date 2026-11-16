@@ -30,6 +30,8 @@
  *  - Created entries occupy slots of the submitter's own 5-pending cap until reviewed.
  *  - If a user withdraws a backfilled request, a later run can propose it again.
  *  - Candidates are taken from private projects too, and credited to their owner.
+ *  - Approval grants the submitter XP (+125 artist / +250 album) and can trigger badges for an entry they never clicked.
+ *  - Reviewers (and the submitter) see the submitter's account name on the entry.
  */
 import 'dotenv/config';
 import fs from 'node:fs';
