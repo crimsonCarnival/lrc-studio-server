@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import AssistUsage from './assist-usage.model.js';
@@ -50,25 +50,38 @@ describe('runHeavy', () => {
     expect(await stored(u)).toBe(20);
   });
 
-  it('a provider failure refunds the run', async () => {
+  it('assist_unavailable (nothing billed) refunds the run', async () => {
+    const u = newUser();
+    await expect(runHeavy(u, async () => { throw new AssistError('assist_unavailable'); }, now)).rejects.toMatchObject({ code: 'assist_unavailable' });
+    expect(await stored(u)).toBe(0);
+  });
+
+  it('assist_upstream is not refunded', async () => {
     const u = newUser();
     await expect(runHeavy(u, async () => { throw new AssistError('assist_upstream'); }, now)).rejects.toMatchObject({ code: 'assist_upstream' });
-    expect(await stored(u)).toBe(0);
+    expect(await stored(u)).toBe(1);
   });
 
-  it('a non-AssistError is rethrown and also refunded', async () => {
+  it('a plain Error is rethrown and not refunded', async () => {
     const u = newUser();
     await expect(runHeavy(u, async () => { throw new TypeError('boom'); }, now)).rejects.toBeInstanceOf(TypeError);
-    expect(await stored(u)).toBe(0);
+    expect(await stored(u)).toBe(1);
   });
 
-  it('refund after midnight credits the charged day', async () => {
+  it('refund after midnight credits the charged day (clock moves mid-run)', async () => {
     const u = newUser();
-    let clock = now;
-    await expect(
-      runHeavy(u, async () => { clock = new Date('2026-11-16T00:00:05Z'); throw new AssistError('assist_upstream'); }, now),
-    ).rejects.toBeInstanceOf(AssistError);
-    expect(clock.getTime()).toBeGreaterThan(now.getTime());
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(now);
+      await expect(
+        runHeavy(u, async () => {
+          vi.setSystemTime(new Date('2026-11-16T00:00:05Z'));
+          throw new AssistError('assist_unavailable');
+        }),
+      ).rejects.toBeInstanceOf(AssistError);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(await stored(u, D1)).toBe(0);
     expect(await stored(u, D2)).toBeUndefined();
   });
@@ -78,10 +91,31 @@ describe('runHeavy', () => {
     await expect(
       runHeavy(u, async () => {
         await AssistUsage.updateOne({ userId: u, day: D1 }, { $set: { heavy: 0 } });
-        throw new AssistError('assist_upstream');
+        throw new AssistError('assist_unavailable');
       }, now),
     ).rejects.toBeInstanceOf(AssistError);
     expect(await stored(u)).toBe(0);
+  });
+
+  it('a first-run E11000 race is retried once and charged once', async () => {
+    const u = newUser();
+    const spy = vi.spyOn(AssistUsage, 'findOneAndUpdate').mockImplementationOnce((() => {
+      throw Object.assign(new Error('dup'), { code: 11000 });
+    }) as never);
+    const { usage } = await runHeavy(u, ok, now);
+    spy.mockRestore();
+    expect(usage.used).toBe(1);
+    expect(await stored(u)).toBe(1);
+  });
+
+  it('a failing refund is logged and the original error is rethrown', async () => {
+    const u = newUser();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const upd = vi.spyOn(AssistUsage, 'updateOne').mockRejectedValueOnce(new Error('db down') as never);
+    await expect(runHeavy(u, async () => { throw new AssistError('assist_unavailable'); }, now)).rejects.toMatchObject({ code: 'assist_unavailable' });
+    expect(log).toHaveBeenCalled();
+    upd.mockRestore();
+    log.mockRestore();
   });
 
   it('a new UTC day starts from 0', async () => {

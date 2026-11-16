@@ -16,15 +16,17 @@ export function heavyCap(): number {
   return Number.isFinite(n) && n >= 1 ? n : DEFAULT_CAP;
 }
 
-const toUsage = (used: number, day: Date): HeavyUsage => {
-  const cap = heavyCap();
-  return { used, cap, remaining: Math.max(0, cap - used), resetsAt: new Date(day.getTime() + DAY_MS) };
-};
+const toUsage = (used: number, cap: number, day: Date): HeavyUsage => ({
+  used,
+  cap,
+  remaining: Math.max(0, cap - used),
+  resetsAt: new Date(day.getTime() + DAY_MS),
+});
 
 export async function getHeavyUsage(userId: string, now: Date = new Date()): Promise<HeavyUsage> {
   const day = utcDay(now);
   const doc = await AssistUsage.findOne({ userId: new mongoose.Types.ObjectId(userId), day }).lean();
-  return toUsage(doc?.heavy ?? 0, day);
+  return toUsage(doc?.heavy ?? 0, heavyCap(), day);
 }
 
 /**
@@ -42,28 +44,42 @@ export async function runHeavy<T>(
   const day = utcDay(now);
   const cap = heavyCap();
 
-  let reserved: { heavy: number } | null;
-  try {
-    reserved = await AssistUsage.findOneAndUpdate(
-      { userId: uid, day, heavy: { $lt: cap } },
-      { $inc: { heavy: 1 } },
-      { upsert: true, returnDocument: 'after' },
-    ).lean();
-  } catch (err) {
-    if ((err as { code?: number }).code === 11000) {
-      const capped = new AssistError('assist_daily_cap') as AssistError & { resetsAt: Date };
-      capped.resetsAt = new Date(day.getTime() + DAY_MS);
-      throw capped;
+  // E11000 can mean "at the cap" (the guarded upsert collided with the existing doc) or
+  // a first-run insert race between two concurrent upserts. A retry disambiguates: the
+  // doc now exists, so a second E11000 can only be the cap.
+  let reserved: { heavy: number } | null = null;
+  for (let attempt = 1; attempt <= 2 && !reserved; attempt++) {
+    try {
+      reserved = await AssistUsage.findOneAndUpdate(
+        { userId: uid, day, heavy: { $lt: cap } },
+        { $inc: { heavy: 1 } },
+        { upsert: true, returnDocument: 'after' },
+      ).lean();
+    } catch (err) {
+      if ((err as { code?: number }).code !== 11000) throw err;
+      if (attempt === 2) {
+        const capped = new AssistError('assist_daily_cap') as AssistError & { resetsAt: Date };
+        capped.resetsAt = new Date(day.getTime() + DAY_MS);
+        throw capped;
+      }
     }
-    throw err;
   }
 
   try {
     const result = await fn();
-    return { result, usage: toUsage(reserved?.heavy ?? 0, day) };
+    return { result, usage: toUsage(reserved?.heavy ?? 0, cap, day) };
   } catch (err) {
-    // Refund to the day that was charged (captured above), once, floored at 0.
-    await AssistUsage.updateOne({ userId: uid, day, heavy: { $gt: 0 } }, { $inc: { heavy: -1 } });
+    // Refund only when nothing was billed (key missing / 401 / 403). Every other failure,
+    // including invalid or unparseable model output, may have consumed provider capacity;
+    // refunding those would let crafted input mint unlimited runs. Refund goes to the
+    // charged `day` captured above, once, floored at 0.
+    if (err instanceof AssistError && err.code === 'assist_unavailable') {
+      try {
+        await AssistUsage.updateOne({ userId: uid, day, heavy: { $gt: 0 } }, { $inc: { heavy: -1 } });
+      } catch (refundErr) {
+        console.error('assist refund failed', { userId }, refundErr);
+      }
+    }
     throw err;
   }
 }
