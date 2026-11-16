@@ -38,7 +38,7 @@ function tokenizeOriginal(text: string): string[] {
   return text.trim().split(/\s+/).filter(Boolean);
 }
 
-function levenshtein(a: string, b: string): number {
+export function levenshtein(a: string, b: string): number {
   const m = a.length, n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;

@@ -33,6 +33,7 @@ import rootRoutes from './modules/root/root.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
 import ogRoutes from './modules/og/og.routes.js';
 import asrRoutes from './modules/asr/asr.routes.js';
+import assistRoutes from './modules/assist/assist.routes.js';
 import collabRoutes from './modules/collab/collab.routes.js';
 import { deriveErrorCode } from './graphql/error-code.js';
 
@@ -184,6 +185,7 @@ async function build() {
   await app.register(notificationsRoutes, { prefix: '/notifications' });
   await app.register(ogRoutes, { prefix: '/og' });
   await app.register(asrRoutes, { prefix: '/asr' });
+  await app.register(assistRoutes, { prefix: '/assist' });
   await app.register(collabRoutes, { prefix: '/collab' });
 
   return app;
