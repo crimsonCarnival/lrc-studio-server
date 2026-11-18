@@ -39,6 +39,10 @@ async function geniusGet(path: string): Promise<unknown | null> {
   }
 }
 
+function assertValidId(id: unknown): void {
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new Error('genius_invalid_id');
+}
+
 export async function searchSong(q: string): Promise<GeniusHit[] | null> {
   const body = await geniusGet(`/search?q=${encodeURIComponent(q)}`) as
     { response?: { hits?: { result?: GeniusHit }[] } } | null;
@@ -48,6 +52,7 @@ export async function searchSong(q: string): Promise<GeniusHit[] | null> {
 }
 
 export async function getSong(id: number): Promise<GeniusSong | null> {
+  assertValidId(id);
   const body = await geniusGet(`/songs/${id}?text_format=plain`) as
     { response?: { song?: GeniusSong } } | null;
   if (!body) return null;
@@ -56,6 +61,7 @@ export async function getSong(id: number): Promise<GeniusSong | null> {
 }
 
 export async function getArtist(id: number): Promise<GeniusArtistDetail | null> {
+  assertValidId(id);
   const body = await geniusGet(`/artists/${id}?text_format=plain`) as
     { response?: { artist?: { id: number; name: string; url: string; image_url?: string } } } | null;
   if (!body) return null;

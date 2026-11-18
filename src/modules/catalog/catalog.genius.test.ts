@@ -8,7 +8,7 @@ vi.mock('../genius/genius.client.js', async (orig) => ({
   searchSong: vi.fn(),
 }));
 
-import { searchSong, getArtist, type GeniusHit } from '../genius/genius.client.js';
+import { searchSong, type GeniusHit } from '../genius/genius.client.js';
 import { isGeniusImageUrl, searchGeniusArtists } from './catalog.genius.service.js';
 
 const hits = (): GeniusHit[] =>
@@ -34,6 +34,10 @@ describe('isGeniusImageUrl', () => {
     expect(isGeniusImageUrl('https://images.genius.com.evil.test/a.png')).toBe(false);
     expect(isGeniusImageUrl('https://x@images.genius.com/a.png')).toBe(false);
     expect(isGeniusImageUrl('https://images.genius.com:8443/a.png')).toBe(false);
+    expect(isGeniusImageUrl('https://images.genius.com\\@evil.test/x.png')).toBe(false);
+    expect(isGeniusImageUrl('https://images.gen\nius.com/a.png')).toBe(false);
+    expect(isGeniusImageUrl('https://IMAGES.genius.com/a.png')).toBe(false);
+    expect(isGeniusImageUrl('https://assets.genius.com/Images/Default_cover_image.png')).toBe(false);
     expect(isGeniusImageUrl(42)).toBe(false);
     expect(isGeniusImageUrl(undefined)).toBe(false);
   });
@@ -69,6 +73,15 @@ describe('searchGeniusArtists', () => {
     expect(ids).not.toContain(14);
   });
 
+  it('keeps a later hit of the same artist when the first has no usable image', async () => {
+    const a = { id: 1, name: 'Dup', url: 'https://genius.com/artists/Dup' };
+    search.mockResolvedValue([
+      { id: 1, title: 't', url: 'u', primary_artist: { ...a, image_url: 'https://assets.genius.com/images/default_cover_image.png' } },
+      { id: 2, title: 't', url: 'u', primary_artist: { ...a, image_url: 'https://images.genius.com/ok.jpg' } },
+    ]);
+    expect((await searchGeniusArtists('x'))?.map((m) => m.geniusId)).toEqual([1]);
+  });
+
   it('drops entries without an id', async () => {
     search.mockResolvedValue(hits());
     expect((await searchGeniusArtists('x'))?.map((m) => m.name)).not.toContain('No Id');
@@ -100,6 +113,22 @@ describe('getArtist', () => {
     const real = await vi.importActual<typeof import('../genius/genius.client.js')>('../genius/genius.client.js');
     delete env.GENIUS_CLIENT_ACCESS_TOKEN;
     expect(await real.getArtist(5)).toBeNull();
-    expect(getArtist).toBeDefined();
+  });
+  it('rejects invalid ids before any fetch', async () => {
+    const real = await vi.importActual<typeof import('../genius/genius.client.js')>('../genius/genius.client.js');
+    const f = vi.fn();
+    vi.stubGlobal('fetch', f);
+    for (const bad of [NaN, -1, 1.5, 1e21, '1' as unknown as number]) {
+      await expect(real.getArtist(bad)).rejects.toThrow('genius_invalid_id');
+      await expect(real.getSong(bad)).rejects.toThrow('genius_invalid_id');
+    }
+    expect(f).not.toHaveBeenCalled();
+  });
+  it('thrown errors never contain the token', async () => {
+    const real = await vi.importActual<typeof import('../genius/genius.client.js')>('../genius/genius.client.js');
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom secret-token-xyz'); }));
+    const err = await real.getArtist(5).catch((e: Error) => e);
+    expect((err as Error).message).toBe('genius_upstream');
+    expect((err as Error).message).not.toContain('secret-token-xyz');
   });
 });
