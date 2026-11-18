@@ -12,6 +12,8 @@ import BadgeDefinition from '../modules/badges/badge-definition.model.js';
 import { STAFF_NAME_TAG } from '../modules/badges/badge.service.js';
 import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
+import CatalogArtist from '../modules/catalog/catalog-artist.model.js';
+import { artistKey } from '../modules/artists/artist.service.js';
 import { loadProjectCredits } from '../modules/collab/collab-credits.service.js';
 import { canViewProject } from './resolvers/auth-guards.js';
 import type { Context } from './resolvers/context.js';
@@ -201,7 +203,27 @@ async function activityTargetLoader(queries: Array<{ obj: LoaderObj }>): Promise
   });
 }
 
+/**
+ * Slug of the approved catalog artist whose name key equals the credit's, one query per
+ * request. Two or more approved artists sharing a key (homonyms) resolve to null: linking
+ * the wrong person's page is worse than not linking.
+ */
+async function catalogSlugLoader(queries: Array<{ obj: LoaderObj }>): Promise<Array<string | null>> {
+  const keys = queries.map(({ obj }) => artistKey(String(obj.name ?? '')));
+  const found = await CatalogArtist
+    .find({ status: 'approved', nameKey: { $in: [...new Set(keys)] }, slug: { $type: 'string' } })
+    .select('nameKey slug')
+    .lean<Array<{ nameKey: string; slug: string }>>();
+  const byKey = new Map<string, string[]>();
+  for (const a of found) byKey.set(a.nameKey, [...(byKey.get(a.nameKey) ?? []), a.slug]);
+  return keys.map((key) => {
+    const slugs = byKey.get(key);
+    return slugs?.length === 1 ? slugs[0] : null;
+  });
+}
+
 export const loaders: MercuriusLoaders = {
+  ArtistCredit: { catalogSlug: { loader: catalogSlugLoader } },
   Activity: { target: { loader: activityTargetLoader } },
   ReportEntry: { messageCount: { loader: reportMessageCountLoader } },
   MyReport: { messageCount: { loader: reportMessageCountLoader } },
