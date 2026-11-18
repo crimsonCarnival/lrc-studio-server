@@ -10,6 +10,7 @@ import {
 } from './catalog.service.js';
 import { importAlbumsFromSongs } from './catalog.import.service.js';
 import { CATALOG_LIMITS } from './catalog.limits.js';
+import { CATALOG_IMAGE_SOURCES, type CatalogImageSource } from './catalog.types.js';
 import { artistKey } from '../artists/artist.service.js';
 import { isCatalogImageUrl } from '../uploads/uploads.service.js';
 import { hasPermission } from '../../shared/permissions.js';
@@ -18,7 +19,11 @@ import { logAdminAction } from '../admin/admin.service.js';
 
 const MAX_DISAMBIGUATION = 80;
 
-export type AdminArtistInput = ArtistInput & { disambiguation?: string };
+export type AdminArtistInput = ArtistInput & {
+  disambiguation?: string;
+  imageSource?: CatalogImageSource | null;
+  imageSourceUrl?: string | null;
+};
 /** In a patch, `undefined` leaves a field unchanged; `null` on imageUrl/coverUrl clears it. */
 export type AdminArtistPatch = Partial<AdminArtistInput>;
 export type AdminAlbumPatch = Partial<Omit<AlbumInput, 'artistId'>>;
@@ -33,7 +38,7 @@ const logFailure = (what: string, err: unknown): void => console.error(`[catalog
 
 // The DB copy is authoritative: a permission revoked, or a ban applied, after the session
 // loaded the user is honoured here. Sudo is enforced at the GraphQL layer.
-async function assertManager(adminId: string): Promise<CatalogError | null> {
+export async function assertManager(adminId: string): Promise<CatalogError | null> {
   const denied = fail(403, 'CATALOG_FORBIDDEN', 'You cannot manage the catalog');
   if (!validId(adminId)) return denied;
   const user = await User.findById(adminId).select('permissions isDeleted ban').lean<{ permissions?: string[]; isDeleted?: boolean; ban?: { active?: boolean } }>();
@@ -46,6 +51,30 @@ function cleanAdminImage(raw: unknown): string | null | CatalogError {
   if (raw === undefined || raw === null) return null;
   if (!isCatalogImageUrl(raw)) return fail(422, 'CATALOG_INVALID_IMAGE', 'Image must be uploaded through the catalog uploader');
   return raw;
+}
+
+/** A canonical Genius page: https, host exactly genius.com, no credentials, port, query or hash. */
+export function isGeniusPageUrl(url: unknown): url is string {
+  if (typeof url !== 'string' || url.length > 512) return false;
+  try {
+    const u = new URL(url);
+    return u.href === url && u.protocol === 'https:' && u.hostname === 'genius.com' && !u.username && !u.password && !u.port && !u.search && !u.hash;
+  } catch {
+    return false;
+  }
+}
+
+type ImageCredit = { imageSource: CatalogImageSource | null; imageSourceUrl: string | null };
+
+// Applied whenever imageUrl is written: the credit can never outlive or mismatch the photo.
+function resolveImageCredit(imageUrl: string | null, source: unknown, sourceUrl: unknown): ImageCredit | CatalogError {
+  if (source != null && !(CATALOG_IMAGE_SOURCES as readonly unknown[]).includes(source)) return invalid('Unknown image source');
+  if (imageUrl === null) return { imageSource: null, imageSourceUrl: null };
+  if (source === 'genius') {
+    if (!isGeniusPageUrl(sourceUrl)) return invalid('Image source URL must be a genius.com page');
+    return { imageSource: 'genius', imageSourceUrl: sourceUrl };
+  }
+  return { imageSource: 'upload', imageSourceUrl: null };
 }
 
 function cleanDisambiguation(raw: unknown): string | CatalogError {
@@ -77,6 +106,8 @@ export async function adminCreateCatalogArtist(adminId: string, input: AdminArti
   if (isError(bio)) return bio;
   const imageUrl = cleanAdminImage(input.imageUrl);
   if (isError(imageUrl)) return imageUrl;
+  const credit = resolveImageCredit(imageUrl, input.imageSource, input.imageSourceUrl);
+  if (isError(credit)) return credit;
   const disambiguation = cleanDisambiguation(input.disambiguation);
   if (isError(disambiguation)) return disambiguation;
 
@@ -84,7 +115,7 @@ export async function adminCreateCatalogArtist(adminId: string, input: AdminArti
   if (!disambiguation && (await CatalogArtist.exists({ nameKey, status: 'approved' }))) return needsDisambiguation();
 
   const artist = await CatalogArtist.create({
-    name, nameKey, bio, imageUrl, disambiguation, slug: null, status: 'approved', source: 'admin',
+    name, nameKey, bio, imageUrl, ...credit, disambiguation, slug: null, status: 'approved', source: 'admin',
     submittedBy: oid(adminId), reviewedBy: oid(adminId), reviewedAt: new Date(),
   });
   await assignArtistSlug(artist._id, name);
@@ -180,7 +211,11 @@ export async function adminUpdateCatalogEntry(
     if (p.imageUrl !== undefined) {
       const imageUrl = cleanAdminImage(p.imageUrl);
       if (isError(imageUrl)) return imageUrl;
-      set.imageUrl = imageUrl;
+      const credit = resolveImageCredit(imageUrl, p.imageSource, p.imageSourceUrl);
+      if (isError(credit)) return credit;
+      Object.assign(set, { imageUrl, ...credit });
+    } else if (p.imageSource !== undefined || p.imageSourceUrl !== undefined) {
+      return invalid('An image source can only be set together with an image');
     }
     const artist = await CatalogArtist.findOneAndUpdate({ _id: current._id }, { $set: set }, { returnDocument: 'after' });
     if (!artist) return notFound();

@@ -184,6 +184,72 @@ describe('admin catalog update', () => {
   });
 });
 
+describe('admin artist image credit', () => {
+  const G = 'https://genius.com/artists/Foo';
+  const create = async (admin: string, extra: Record<string, unknown> = {}) =>
+    ((await adminCreateCatalogArtist(admin, { name: 'Foo', imageUrl: img(), ...extra } as any)) as { artist: any }).artist;
+
+  it('create with a genius source stores the credit', async () => {
+    const admin = await seedUser();
+    const a = await create(admin, { imageSource: 'genius', imageSourceUrl: G });
+    expect(a.imageSource).toBe('genius');
+    expect(a.imageSourceUrl).toBe(G);
+  });
+
+  it('create with an image but no source stores upload', async () => {
+    const admin = await seedUser();
+    const a = await create(admin);
+    expect(a.imageSource).toBe('upload');
+    expect(a.imageSourceUrl).toBeNull();
+  });
+
+  it('updating only the bio keeps a genius credit', async () => {
+    const admin = await seedUser();
+    const a = await create(admin, { imageSource: 'genius', imageSourceUrl: G });
+    const r = (await adminUpdateCatalogEntry(admin, 'artist', String(a._id), { bio: 'new' })) as { artist: any };
+    expect(r.artist.imageSource).toBe('genius');
+    expect(r.artist.imageSourceUrl).toBe(G);
+  });
+
+  it('replacing the image without a source resets to upload', async () => {
+    const admin = await seedUser();
+    const a = await create(admin, { imageSource: 'genius', imageSourceUrl: G });
+    const r = (await adminUpdateCatalogEntry(admin, 'artist', String(a._id), { imageUrl: img('other') })) as { artist: any };
+    expect(r.artist.imageSource).toBe('upload');
+    expect(r.artist.imageSourceUrl).toBeNull();
+  });
+
+  it('clearing the image clears the credit', async () => {
+    const admin = await seedUser();
+    const a = await create(admin, { imageSource: 'genius', imageSourceUrl: G });
+    const r = (await adminUpdateCatalogEntry(admin, 'artist', String(a._id), { imageUrl: null })) as { artist: any };
+    expect(r.artist.imageUrl).toBeNull();
+    expect(r.artist.imageSource).toBeNull();
+    expect(r.artist.imageSourceUrl).toBeNull();
+  });
+
+  it.each(['http://genius.com/a', 'https://genius.com.evil.test/a', 'https://user@genius.com/a', 'https://genius.com/a?x=1', 'https://genius.com:444/a', 'https://genius.com/a#h'])(
+    'genius source with a non-genius.com URL is refused: %s',
+    async (url) => {
+      const admin = await seedUser();
+      const r = errOf(await adminCreateCatalogArtist(admin, { name: 'Foo', imageUrl: img(), imageSource: 'genius', imageSourceUrl: url } as any));
+      expect(r.code).toBe('CATALOG_INVALID_INPUT');
+      const a = await create(admin, { name: 'Bar' });
+      const u = errOf(await adminUpdateCatalogEntry(admin, 'artist', String(a._id), { imageUrl: img('x'), imageSource: 'genius', imageSourceUrl: url }));
+      expect(u.code).toBe('CATALOG_INVALID_INPUT');
+    },
+  );
+
+  it('imageSource without imageUrl in a patch is refused', async () => {
+    const admin = await seedUser();
+    const a = await create(admin);
+    const r = errOf(await adminUpdateCatalogEntry(admin, 'artist', String(a._id), { imageSource: 'genius', imageSourceUrl: G }));
+    expect(r.code).toBe('CATALOG_INVALID_INPUT');
+    const r2 = errOf(await adminUpdateCatalogEntry(admin, 'artist', String(a._id), { imageSourceUrl: G }));
+    expect(r2.code).toBe('CATALOG_INVALID_INPUT');
+  });
+});
+
 describe('admin input edge cases', () => {
   it('returns CATALOG_INVALID_INPUT for null input and patch', async () => {
     const admin = await seedUser();

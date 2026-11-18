@@ -28,6 +28,7 @@ import { googleRoutes } from './modules/google/google.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import youtubeRoutes from './modules/youtube/youtube.routes.js';
 import geniusRoutes from './modules/genius/genius.routes.js';
+import catalogRoutes from './modules/catalog/catalog.routes.js';
 import healthRoutes from './modules/health/health.routes.js';
 import rootRoutes from './modules/root/root.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
@@ -187,6 +188,7 @@ async function build() {
   await app.register(asrRoutes, { prefix: '/asr' });
   await app.register(assistRoutes, { prefix: '/assist' });
   await app.register(collabRoutes, { prefix: '/collab' });
+  await app.register(catalogRoutes, { prefix: '/catalog' });
 
   return app;
 }

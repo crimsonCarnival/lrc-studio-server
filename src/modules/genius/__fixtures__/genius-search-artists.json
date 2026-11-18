@@ -1,0 +1,108 @@
+{
+  "response": {
+    "hits": [
+      {
+        "result": {
+          "id": 1,
+          "title": "t1",
+          "url": "https://genius.com/t1",
+          "primary_artist": {
+            "id": 10,
+            "name": "Kendrick Lamar",
+            "url": "https://genius.com/artists/Kendrick-Lamar",
+            "api_path": "/artists/10",
+            "is_verified": true,
+            "image_url": "https://images.genius.com/aaa.1000x1000x1.jpg"
+          }
+        }
+      },
+      {
+        "result": {
+          "id": 2,
+          "title": "t2",
+          "url": "https://genius.com/t2",
+          "primary_artist": {
+            "id": 11,
+            "name": "Kanye West",
+            "url": "https://genius.com/artists/Kanye-West",
+            "api_path": "/artists/11",
+            "is_verified": true,
+            "image_url": "https://images.genius.com/bbb.1000x1000x1.png"
+          }
+        }
+      },
+      {
+        "result": {
+          "id": 3,
+          "title": "t3",
+          "url": "https://genius.com/t3",
+          "primary_artist": {
+            "id": 10,
+            "name": "Kendrick Lamar",
+            "url": "https://genius.com/artists/Kendrick-Lamar",
+            "api_path": "/artists/10",
+            "is_verified": true,
+            "image_url": "https://images.genius.com/aaa.1000x1000x1.jpg"
+          }
+        }
+      },
+      {
+        "result": {
+          "id": 4,
+          "title": "t4",
+          "url": "https://genius.com/t4",
+          "primary_artist": {
+            "id": 12,
+            "name": "No Photo",
+            "url": "https://genius.com/artists/No-Photo",
+            "api_path": "/artists/12",
+            "is_verified": true,
+            "image_url": "https://assets.genius.com/images/default_cover_image.png"
+          }
+        }
+      },
+      {
+        "result": {
+          "id": 5,
+          "title": "t5",
+          "url": "https://genius.com/t5",
+          "primary_artist": {
+            "id": 13,
+            "name": "Filepicker Guy",
+            "url": "https://genius.com/artists/Filepicker-Guy",
+            "api_path": "/artists/13",
+            "is_verified": true,
+            "image_url": "https://filepicker-images.genius.com/u4uhfac3uem"
+          }
+        }
+      },
+      {
+        "result": {
+          "id": 6,
+          "title": "t6",
+          "url": "https://genius.com/t6",
+          "primary_artist": {
+            "id": 14,
+            "name": "Insecure Guy",
+            "url": "https://genius.com/artists/Insecure-Guy",
+            "api_path": "/artists/14",
+            "is_verified": true,
+            "image_url": "http://images.genius.com/ccc.jpg"
+          }
+        }
+      },
+      {
+        "result": {
+          "id": 7,
+          "title": "t7",
+          "url": "https://genius.com/t7",
+          "primary_artist": {
+            "name": "No Id",
+            "url": "https://genius.com/artists/No-Id",
+            "image_url": "https://images.genius.com/ddd.jpg"
+          }
+        }
+      }
+    ]
+  }
+}

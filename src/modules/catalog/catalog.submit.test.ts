@@ -31,10 +31,10 @@ beforeEach(async () => {
 });
 
 let seq = 0;
-const seedUser = async (isVerified = true): Promise<string> => {
+const seedUser = async (isVerified = true, permissions: string[] = []): Promise<string> => {
   const n = ++seq;
   const { insertedId } = await User.collection.insertOne({
-    accountName: `u${n}`, email: `u${n}@x.test`, passwordHash: 'x', isVerified,
+    accountName: `u${n}`, email: `u${n}@x.test`, passwordHash: 'x', isVerified, permissions,
   });
   return insertedId.toString();
 };
@@ -320,5 +320,49 @@ describe('catalog submissions', () => {
     expect(artists.map((a) => a.name)).toEqual(['Second', 'First']);
     expect(artists[1].reviewNote).toBe('too vague');
     expect(albums).toEqual([]);
+  });
+
+  describe('submission source', () => {
+    it('a submitter holding catalog.manage creates admin-source artists and albums', async () => {
+      const u = await seedUser(true, ['catalog.manage']);
+      const r = await submitCatalogArtist(u, { name: 'Staff Artist' });
+      if (!('artist' in r)) throw new Error('expected artist');
+      expect(r.artist.source).toBe('admin');
+      expect(r.artist.status).toBe('pending');
+      expect(r.artist.slug).toBeNull();
+      const parent = await CatalogArtist.create({
+        name: 'Parent', nameKey: 'parent', slug: 'parent', status: 'approved', source: 'community', submittedBy: u,
+      });
+      const a = await submitCatalogAlbum(u, { artistId: String(parent._id), title: 'Staff Album' });
+      if (!('album' in a)) throw new Error('expected album');
+      expect(a.album.source).toBe('admin');
+      expect(a.album.status).toBe('pending');
+      expect(a.album.slug).toBeNull();
+    });
+
+    it('a catalog.review-only submitter stays community', async () => {
+      const u = await seedUser(true, ['catalog.review']);
+      const r = await submitCatalogArtist(u, { name: 'Reviewer Artist' });
+      if (!('artist' in r)) throw new Error('expected artist');
+      expect(r.artist.source).toBe('community');
+    });
+
+    it('permission is read from the DB at submit time', async () => {
+      const u = await seedUser();
+      await User.updateOne({ _id: u }, { $set: { permissions: ['catalog.manage'] } });
+      const r = await submitCatalogArtist(u, { name: 'Promoted' });
+      if (!('artist' in r)) throw new Error('expected artist');
+      expect(r.artist.source).toBe('admin');
+    });
+
+    it('staff submissions still count against the caps', async () => {
+      const u = await seedUser(true, ['catalog.manage']);
+      for (let i = 0; i < CATALOG_LIMITS.maxPending; i++) {
+        const ok = await submitCatalogArtist(u, { name: `Staff ${i}` });
+        expect('artist' in ok).toBe(true);
+      }
+      const r = errOf(await submitCatalogArtist(u, { name: 'Staff overflow' }));
+      expect(r.code).toBe('CATALOG_PENDING_CAP');
+    });
   });
 });

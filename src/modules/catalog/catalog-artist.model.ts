@@ -1,5 +1,5 @@
 import mongoose, { type Document, type Model } from 'mongoose';
-import { CATALOG_SOURCES, CATALOG_STATUSES, type CatalogSource, type CatalogStatus } from './catalog.types.js';
+import { CATALOG_IMAGE_SOURCES, CATALOG_SOURCES, CATALOG_STATUSES, type CatalogImageSource, type CatalogSource, type CatalogStatus } from './catalog.types.js';
 
 /**
  * A canonical, site-wide artist. Unlike the per-user `Artist` shelf, entries
@@ -13,6 +13,10 @@ export interface ICatalogArtist extends Document {
   slug: string | null;
   disambiguation: string;
   imageUrl: string | null;
+  /** Where the photo came from; null when there is none (or for legacy entries). */
+  imageSource: CatalogImageSource | null;
+  /** The Genius page credited when imageSource is 'genius'. */
+  imageSourceUrl: string | null;
   bio: string;
   status: CatalogStatus;
   source: CatalogSource;
@@ -32,6 +36,8 @@ const catalogArtistSchema = new mongoose.Schema<ICatalogArtist>(
     slug: { type: String, default: null },
     disambiguation: { type: String, default: '', maxlength: 80 },
     imageUrl: { type: String, default: null },
+    imageSource: { type: String, enum: CATALOG_IMAGE_SOURCES, default: null },
+    imageSourceUrl: { type: String, default: null, maxlength: 512 },
     bio: { type: String, default: '', maxlength: 1000 },
     status: { type: String, enum: CATALOG_STATUSES, required: true },
     source: { type: String, enum: CATALOG_SOURCES, required: true },
