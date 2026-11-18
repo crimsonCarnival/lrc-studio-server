@@ -57,7 +57,7 @@ describe('isGeniusImageUrl', () => {
 describe('searchGeniusArtists', () => {
   it('returns distinct artists in hit order, exact name first', async () => {
     search.mockResolvedValue(hits());
-    const r = await searchGeniusArtists(' kanye west ');
+    const r = await searchGeniusArtists('u1', ' kanye west ');
     expect(r?.map((m) => m.geniusId)).toEqual([11, 10, 13]);
     expect(r?.[0]).toEqual({
       geniusId: 11,
@@ -74,12 +74,12 @@ describe('searchGeniusArtists', () => {
         primary_artist: { id: 100 + i, name: `A${i}`, url: `https://genius.com/artists/A${i}`, image_url: `https://images.genius.com/${i}.jpg` },
       })),
     );
-    expect(await searchGeniusArtists('zzz')).toHaveLength(5);
+    expect(await searchGeniusArtists('u1', 'zzz')).toHaveLength(5);
   });
 
   it('drops placeholder and disallowed images', async () => {
     search.mockResolvedValue(hits());
-    const ids = (await searchGeniusArtists('x'))?.map((m) => m.geniusId);
+    const ids = (await searchGeniusArtists('u1', 'x'))?.map((m) => m.geniusId);
     expect(ids).not.toContain(12);
     expect(ids).not.toContain(14);
   });
@@ -90,22 +90,29 @@ describe('searchGeniusArtists', () => {
       { id: 1, title: 't', url: 'u', primary_artist: { ...a, image_url: 'https://assets.genius.com/images/default_cover_image.png' } },
       { id: 2, title: 't', url: 'u', primary_artist: { ...a, image_url: 'https://images.genius.com/ok.jpg' } },
     ]);
-    expect((await searchGeniusArtists('x'))?.map((m) => m.geniusId)).toEqual([1]);
+    expect((await searchGeniusArtists('u1', 'x'))?.map((m) => m.geniusId)).toEqual([1]);
   });
 
   it('drops entries without an id', async () => {
     search.mockResolvedValue(hits());
-    expect((await searchGeniusArtists('x'))?.map((m) => m.name)).not.toContain('No Id');
+    expect((await searchGeniusArtists('u1', 'x'))?.map((m) => m.name)).not.toContain('No Id');
+  });
+
+  it('denies a non-manager without calling Genius', async () => {
+    vi.mocked(assertManager).mockResolvedValueOnce({ error: 'x', status: 403, code: 'CATALOG_FORBIDDEN' });
+    expect(await searchGeniusArtists('u1', 'x')).toEqual({ error: 'x', status: 403, code: 'CATALOG_FORBIDDEN' });
+    expect(search).not.toHaveBeenCalled();
+    expect(assertManager).toHaveBeenCalledWith('u1');
   });
 
   it('returns null when Genius is not configured', async () => {
     search.mockResolvedValue(null);
-    expect(await searchGeniusArtists('x')).toBeNull();
+    expect(await searchGeniusArtists('u1', 'x')).toBeNull();
   });
 
   it('propagates genius_unauthorized', async () => {
     search.mockRejectedValue(new Error('genius_unauthorized'));
-    await expect(searchGeniusArtists('x')).rejects.toThrow('genius_unauthorized');
+    await expect(searchGeniusArtists('u1', 'x')).rejects.toThrow('genius_unauthorized');
   });
 });
 

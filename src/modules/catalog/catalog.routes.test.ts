@@ -3,22 +3,26 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 
 const genius = vi.hoisted(() => ({ searchGeniusArtists: vi.fn(), copyGeniusArtistPhoto: vi.fn() }));
-const admin = vi.hoisted(() => ({ assertManager: vi.fn() }));
 vi.mock('./catalog.genius.service.js', () => genius);
-vi.mock('./catalog.admin.service.js', () => admin);
 
 import catalogRoutes from './catalog.routes.js';
 
 let app: FastifyInstance;
+const permsAsked: string[] = [];
 
 beforeAll(async () => {
   app = Fastify();
   await app.register(rateLimit, { global: false });
-  // Stub auth: the user comes from a test header, 401 when absent.
-  app.decorate('requireAuth', async (req: any, reply: any) => {
-    const id = req.headers['x-user'];
-    if (!id) return reply.code(401).send({ error: 'Unauthorized' });
-    req.userId = id;
+  // Stub auth: the user comes from a test header, 401 when absent; set before the limiter's key generator runs.
+  // Stub requirePermission: users named 'nomanage' lack the permission (403); records the permission asked for.
+  app.decorate('requirePermission', (perm: string) => {
+    permsAsked.push(perm);
+    return async (req: any, reply: any) => {
+      const id = req.headers['x-user'];
+      if (!id) return reply.code(401).send({ error: 'Authentication required' });
+      req.userId = id;
+      if (id === 'nomanage') return reply.code(403).send({ error: 'Insufficient permissions' });
+    };
   });
   await app.register(catalogRoutes, { prefix: '/catalog' });
   await app.ready();
@@ -31,7 +35,6 @@ afterAll(async () => {
 beforeEach(() => {
   genius.searchGeniusArtists.mockReset().mockResolvedValue([]);
   genius.copyGeniusArtistPhoto.mockReset().mockResolvedValue({ imageUrl: 'https://x/y.jpg', sourceUrl: 'https://genius.com/artists/A' });
-  admin.assertManager.mockReset().mockResolvedValue(null);
 });
 
 const get = (qs: string, user = 'u1') =>
@@ -68,12 +71,21 @@ describe('catalog genius routes', () => {
     expect(genius.copyGeniusArtistPhoto).toHaveBeenCalledWith('u1', 7);
   });
 
-  it('403 without catalog.manage (search checks before calling Genius)', async () => {
-    admin.assertManager.mockResolvedValue({ status: 403, code: 'CATALOG_FORBIDDEN', error: 'You cannot manage the catalog' });
+  it('403 at the route for a signed-in user without catalog.manage, before any service call', async () => {
+    expect(permsAsked).toEqual(['catalog.manage', 'catalog.manage']);
+    const a = await get('?q=a', 'nomanage');
+    expect(a.statusCode).toBe(403);
+    const p = await post({ geniusId: 1 }, 'nomanage');
+    expect(p.statusCode).toBe(403);
+    expect(genius.searchGeniusArtists).not.toHaveBeenCalled();
+    expect(genius.copyGeniusArtistPhoto).not.toHaveBeenCalled();
+  });
+
+  it('service-level denial maps to { error, code } 403', async () => {
+    genius.searchGeniusArtists.mockResolvedValue({ status: 403, code: 'CATALOG_FORBIDDEN', error: 'You cannot manage the catalog' });
     const res = await get('?q=a');
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: 'You cannot manage the catalog', code: 'catalog_forbidden' });
-    expect(genius.searchGeniusArtists).not.toHaveBeenCalled();
   });
 
   it('maps service errors to { error, code }', async () => {

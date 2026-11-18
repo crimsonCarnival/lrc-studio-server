@@ -1,5 +1,4 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { assertManager } from './catalog.admin.service.js';
 import { copyGeniusArtistPhoto, searchGeniusArtists } from './catalog.genius.service.js';
 import { isError, type CatalogError } from './catalog.service.js';
 
@@ -11,10 +10,9 @@ const upstream = (reply: FastifyReply) =>
   reply.code(502).send({ error: 'Genius is unavailable right now', code: 'catalog_genius_upstream' });
 
 export async function geniusArtists(request: FastifyRequest, reply: FastifyReply) {
-  const denied = await assertManager(request.userId as string);
-  if (denied) return send(reply, denied);
   try {
-    const artists = await searchGeniusArtists((request.query as { q: string }).q);
+    const artists = await searchGeniusArtists(request.userId as string, (request.query as { q: string }).q);
+    if (artists && isError(artists)) return send(reply, artists);
     if (!artists) {
       return reply.code(503).send({ error: 'Genius is not configured', code: 'catalog_genius_unavailable' });
     }

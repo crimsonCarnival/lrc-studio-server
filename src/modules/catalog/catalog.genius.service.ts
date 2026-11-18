@@ -29,7 +29,9 @@ export type GeniusArtistMatch = { geniusId: number; name: string; imageUrl: stri
 type GeniusMatchCandidate = GeniusArtistMatch;
 
 /** Up to 5 distinct Genius artists with a usable photo; null when Genius is unconfigured. */
-export async function searchGeniusArtists(q: string): Promise<GeniusArtistMatch[] | null> {
+export async function searchGeniusArtists(adminId: string, q: string): Promise<GeniusArtistMatch[] | null | CatalogError> {
+  const denied = await assertManager(adminId);
+  if (denied) return denied;
   const hits = await searchSong(q);
   if (!hits) return null;
 
