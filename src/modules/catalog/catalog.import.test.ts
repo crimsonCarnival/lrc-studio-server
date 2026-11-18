@@ -55,4 +55,21 @@ describe('importAlbumsFromSongs', () => {
     const titles = (await CatalogAlbum.find({ artistId: artist._id }).lean()).map((a) => a.title);
     expect(titles).toEqual(['Homogenic']);
   });
+
+  it('matches a dismissal whose song spelling differs only in whitespace (same key as Detect albums)', async () => {
+    const artist = await seedArtist();
+    await seedSong('  Greatest   Hits ');
+    await CatalogAlbumDismissal.create({ artistId: artist._id, titleKey: 'greatest hits', dismissedBy: admin });
+
+    expect(await importAlbumsFromSongs(artist, String(admin))).toBe(0);
+  });
+
+  it('stores a squashed, tag-free title', async () => {
+    const artist = await seedArtist();
+    await seedSong('<b>Vespertine</b>   Live');
+
+    expect(await importAlbumsFromSongs(artist, String(admin))).toBe(1);
+    const [album] = await CatalogAlbum.find({ artistId: artist._id }).lean();
+    expect(album.title).toBe('Vespertine Live');
+  });
 });
