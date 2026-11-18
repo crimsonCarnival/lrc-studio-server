@@ -7,6 +7,8 @@ import { CATALOG_LIMITS } from './catalog.limits.js';
 import { artistKey } from '../artists/artist.service.js';
 import { isCatalogImageUrl } from '../uploads/uploads.service.js';
 import { stripHtml } from '../../utils/sanitize.js';
+import { hasPermission } from '../../shared/permissions.js';
+import type { CatalogSource } from './catalog.types.js';
 
 export type CatalogErrorCode =
   | 'CATALOG_UNVERIFIED'
@@ -21,7 +23,12 @@ export type CatalogErrorCode =
   | 'CATALOG_SELF_REVIEW'
   | 'CATALOG_ALREADY_REVIEWED'
   | 'CATALOG_CHANGED'
-  | 'CATALOG_DISAMBIGUATION_REQUIRED';
+  | 'CATALOG_DISAMBIGUATION_REQUIRED'
+  | 'CATALOG_GENIUS_UNAVAILABLE'
+  | 'CATALOG_GENIUS_UPSTREAM'
+  | 'CATALOG_GENIUS_NOT_FOUND'
+  | 'CATALOG_GENIUS_IMAGE_REJECTED'
+  | 'CATALOG_INTERNAL';
 
 /** `existing` is set only for approved entries or the caller's own pending one. */
 export type CatalogError = {
@@ -102,9 +109,10 @@ async function logSubmission(userId: string): Promise<void> {
   await CatalogSubmissionLog.create({ userId: oid(userId), at: new Date() });
 }
 
-async function assertCanSubmit(userId: string): Promise<CatalogError | null> {
-  const user = await User.findById(userId).select('isVerified').lean();
-  if (!user?.isVerified) return fail(403, 'CATALOG_UNVERIFIED', 'Verify your email to submit to the catalog');
+/** One user read: gates the caps and decides the entry's source (staff submissions are 'admin'). */
+async function assertCanSubmit(userId: string): Promise<{ blocked: CatalogError } | { source: CatalogSource }> {
+  const user = await User.findById(userId).select('isVerified permissions').lean();
+  if (!user?.isVerified) return { blocked: fail(403, 'CATALOG_UNVERIFIED', 'Verify your email to submit to the catalog') };
   const submittedBy = oid(userId);
   const since = new Date(Date.now() - CATALOG_LIMITS.windowMs);
   // The day window counts the submission log, not live docs, so withdrawing cannot reset it.
@@ -113,9 +121,9 @@ async function assertCanSubmit(userId: string): Promise<CatalogError | null> {
     CatalogArtist.countDocuments({ submittedBy, status: 'pending' }),
     CatalogAlbum.countDocuments({ submittedBy, status: 'pending' }),
   ]);
-  if (day >= CATALOG_LIMITS.maxPerDay) return fail(429, 'CATALOG_RATE_LIMITED', 'Too many submissions in the last 24 hours');
-  if (pendA + pendB >= CATALOG_LIMITS.maxPending) return fail(429, 'CATALOG_PENDING_CAP', 'Too many pending submissions');
-  return null;
+  if (day >= CATALOG_LIMITS.maxPerDay) return { blocked: fail(429, 'CATALOG_RATE_LIMITED', 'Too many submissions in the last 24 hours') };
+  if (pendA + pendB >= CATALOG_LIMITS.maxPending) return { blocked: fail(429, 'CATALOG_PENDING_CAP', 'Too many pending submissions') };
+  return { source: hasPermission(user.permissions, 'catalog.manage') ? 'admin' : 'community' };
 }
 
 type Dupable = { _id: unknown; slug: string | null; status: string; submittedBy: unknown };
@@ -155,14 +163,14 @@ export async function submitCatalogArtist(userId: string, input: ArtistInput): P
   if (isError(imageUrl)) return imageUrl;
 
   return withUserLock(userId, async () => {
-    const blocked = await assertCanSubmit(userId);
-    if (blocked) return blocked;
+    const gate = await assertCanSubmit(userId);
+    if ('blocked' in gate) return gate.blocked;
     const nameKey = artistKey(name);
     const dup = await findArtistDuplicate(userId, nameKey);
     if (dup) return dup;
 
     const artist = await CatalogArtist.create({
-      name, nameKey, bio, imageUrl, slug: null, status: 'pending', source: 'community', submittedBy: oid(userId),
+      name, nameKey, bio, imageUrl, slug: null, status: 'pending', source: gate.source, submittedBy: oid(userId),
     });
     await logSubmission(userId);
     return { artist };
@@ -187,8 +195,8 @@ async function createAlbum(
   year: string | null,
   coverUrl: string | null,
 ): Promise<{ album: ICatalogAlbum } | CatalogError> {
-  const blocked = await assertCanSubmit(userId);
-  if (blocked) return blocked;
+  const gate = await assertCanSubmit(userId);
+  if ('blocked' in gate) return gate.blocked;
   const parentError = fail(422, 'CATALOG_PARENT_NOT_APPROVED', 'The artist must be approved first');
   if (!validId(input.artistId)) return parentError;
   const parent = await CatalogArtist.findOne({ _id: oid(input.artistId), status: 'approved' }).select('_id').lean();
@@ -199,7 +207,7 @@ async function createAlbum(
   if (dup) return dup;
 
   const album = await CatalogAlbum.create({
-    artistId: parent._id, title, titleKey, year, coverUrl, slug: null, status: 'pending', source: 'community', submittedBy: oid(userId),
+    artistId: parent._id, title, titleKey, year, coverUrl, slug: null, status: 'pending', source: gate.source, submittedBy: oid(userId),
   });
   await logSubmission(userId);
   return { album };

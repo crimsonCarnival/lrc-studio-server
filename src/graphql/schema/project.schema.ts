@@ -137,6 +137,8 @@ export const projectSchema = `
     name: String!
     role: ArtistRole!
     order: Int!
+    # Slug of the approved catalog artist with this exact name key; null when none or ambiguous.
+    catalogSlug: String
   }
 
   input ArtistCreditInput {

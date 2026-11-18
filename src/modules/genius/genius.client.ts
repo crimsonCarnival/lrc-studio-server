@@ -3,7 +3,8 @@ import { getEnv } from '../../config/env.js';
 const BASE_URL = 'https://api.genius.com';
 const FETCH_TIMEOUT_MS = 8000;
 
-export type GeniusArtist = { name: string };
+export type GeniusArtist = { id?: number; name: string; url?: string; image_url?: string };
+export type GeniusArtistDetail = { id: number; name: string; url: string; image_url: string | null };
 export type GeniusHit = { id: number; title: string; url: string; primary_artist: GeniusArtist };
 export type GeniusRelatedSong = GeniusHit & { song_art_image_thumbnail_url?: string };
 export type GeniusSong = GeniusHit & {
@@ -16,7 +17,7 @@ export type GeniusSong = GeniusHit & {
  * GET against api.genius.com. Returns null when the token is unset (feature off).
  * Errors are opaque codes: neither the token nor upstream text ever reaches a message.
  */
-async function geniusGet(path: string): Promise<unknown | null> {
+async function geniusGet(path: string, opts: { distinguishNotFound?: boolean } = {}): Promise<unknown | null> {
   const token = getEnv().GENIUS_CLIENT_ACCESS_TOKEN;
   if (!token) return null;
 
@@ -30,12 +31,17 @@ async function geniusGet(path: string): Promise<unknown | null> {
     throw new Error('genius_upstream');
   }
   if (res.status === 401 || res.status === 403) throw new Error('genius_unauthorized');
+  if (res.status === 404 && opts.distinguishNotFound) throw new Error('genius_not_found');
   if (!res.ok) throw new Error('genius_upstream');
   try {
     return await res.json();
   } catch {
     throw new Error('genius_upstream');
   }
+}
+
+function assertValidId(id: unknown): void {
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new Error('genius_invalid_id');
 }
 
 export async function searchSong(q: string): Promise<GeniusHit[] | null> {
@@ -47,9 +53,20 @@ export async function searchSong(q: string): Promise<GeniusHit[] | null> {
 }
 
 export async function getSong(id: number): Promise<GeniusSong | null> {
+  assertValidId(id);
   const body = await geniusGet(`/songs/${id}?text_format=plain`) as
     { response?: { song?: GeniusSong } } | null;
   if (!body) return null;
   if (!body.response?.song) throw new Error('genius_upstream');
   return body.response.song;
+}
+
+export async function getArtist(id: number): Promise<GeniusArtistDetail | null> {
+  assertValidId(id);
+  const body = await geniusGet(`/artists/${id}?text_format=plain`, { distinguishNotFound: true }) as
+    { response?: { artist?: { id: number; name: string; url: string; image_url?: string } } } | null;
+  if (!body) return null;
+  const a = body.response?.artist;
+  if (!a) throw new Error('genius_upstream');
+  return { id: a.id, name: a.name, url: a.url, image_url: a.image_url ?? null };
 }

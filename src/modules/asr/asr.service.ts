@@ -1,5 +1,6 @@
 import { getIO } from '../../socket/socket.manager.js';
 import Upload from '../uploads/upload.model.js';
+import { readCappedBody, CappedBodyError } from '../../utils/read-capped-body.js';
 import { transcribeAudio, AsrError, isAsrConfigured } from './groq.client.js';
 import { stampLines } from './align.service.js';
 import type { LineInput } from './align.service.js';
@@ -59,27 +60,17 @@ async function fetchCloudinaryAudio(url: string, signal: AbortSignal): Promise<{
     throw new AsrError('asr_unsupported_audio', 'audio too large');
   }
   // Belt-and-braces vs a lying/missing Content-Length: cap the actual bytes read too.
-  const buf = await readCappedBody(res, MAX_AUDIO_BYTES);
+  let buf: Buffer;
+  try {
+    buf = await readCappedBody(res, MAX_AUDIO_BYTES);
+  } catch (err) {
+    if (err instanceof CappedBodyError) {
+      throw new AsrError('asr_unsupported_audio', err.reason === 'empty' ? 'empty audio body' : 'audio too large');
+    }
+    throw err;
+  }
   const ext = parsed.pathname.split('.').pop()?.toLowerCase() ?? 'mp3';
   return { data: buf, format: ext };
-}
-
-async function readCappedBody(res: Response, maxBytes: number): Promise<Buffer> {
-  if (!res.body) throw new AsrError('asr_unsupported_audio', 'empty audio body');
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw new AsrError('asr_unsupported_audio', 'audio too large');
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks);
 }
 
 async function runJob(userId: string, jobId: string, lines: LineInput[], audio: ResolvedAudio, fuzzyTolerance?: number): Promise<void> {

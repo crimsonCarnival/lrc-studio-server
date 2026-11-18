@@ -9,6 +9,8 @@ vi.mock('../../modules/catalog/catalog.rewards.js', () => ({ awardCatalogCredit:
 import User from '../../modules/users/user.model.js';
 import CatalogArtist from '../../modules/catalog/catalog-artist.model.js';
 import CatalogAlbum from '../../modules/catalog/catalog-album.model.js';
+import Project from '../../modules/projects/project.model.js';
+import CatalogAlbumDismissal from '../../modules/catalog/catalog-album-dismissal.model.js';
 import CatalogSubmissionLog from '../../modules/catalog/catalog-submission-log.model.js';
 import Notification from '../../modules/notifications/notification.model.js';
 import { catalogResolvers } from './catalog.resolvers.js';
@@ -19,7 +21,7 @@ let repl: MongoMemoryReplSet;
 beforeAll(async () => {
   repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(repl.getUri());
-  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init(), Notification.init()]);
+  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init(), Notification.init(), CatalogAlbumDismissal.init()]);
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
@@ -29,6 +31,7 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}), CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({}),
     CatalogSubmissionLog.deleteMany({}), Notification.deleteMany({}),
+    CatalogAlbumDismissal.deleteMany({}), Project.collection.deleteMany({}),
   ]);
 });
 
@@ -167,5 +170,71 @@ describe('catalog resolvers', () => {
     expect(page.songs).toEqual([]);
     expect(await Q.catalogArtist({}, { slug: 'pend' }, ctx())).toBeNull();
     expect(await Q.catalogArtist({}, { slug: 'nope' }, ctx())).toBeNull();
+  });
+
+  it('adminUpdateCatalogEntry passes imageSource and imageSourceUrl', async () => {
+    const admin = await seedUser(['catalog.manage']);
+    const a = await CatalogArtist.create({ name: 'Cr', nameKey: 'cr', status: 'approved', slug: 'cr', source: 'admin', submittedBy: admin });
+    const url = 'https://genius.com/artists/Cr';
+    vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'democloud');
+    const imageUrl = 'https://res.cloudinary.com/democloud/image/upload/v1/catalog/x/p.webp';
+    await M.adminUpdateCatalogEntry({}, { kind: 'artist', id: String(a._id), imageUrl, imageSource: 'genius', imageSourceUrl: url }, ctx(admin));
+    const row = await CatalogArtist.findById(a._id).lean();
+    expect(row?.imageSource).toBe('genius');
+    expect(row?.imageSourceUrl).toBe(url);
+  });
+
+  it('catalogArtist exposes imageSource and imageSourceUrl publicly', async () => {
+    const s = await seedUser();
+    await CatalogArtist.create({
+      name: 'Cr2', nameKey: 'cr2', status: 'approved', slug: 'cr2', source: 'admin', submittedBy: s,
+      imageUrl: 'https://x.test/p.webp', imageSource: 'genius', imageSourceUrl: 'https://genius.com/artists/Cr2',
+    });
+    const page = await Q.catalogArtist({}, { slug: 'cr2' }, ctx());
+    expect(page.artist.imageSource).toBe('genius');
+    expect(page.artist.imageSourceUrl).toBe('https://genius.com/artists/Cr2');
+  });
+  describe('album detection', () => {
+    const seedDetect = async (admin: string) => {
+      const a = await CatalogArtist.create({ name: 'Bjork', nameKey: 'bjork', status: 'approved', slug: 'bjork', source: 'admin', submittedBy: admin });
+      for (let i = 0; i < 2; i++) {
+        await Project.collection.insertOne({
+          publicId: `dp${++seq}`, userId: new mongoose.Types.ObjectId(), title: 't', kind: 'song', public: false,
+          metadata: { artists: [{ name: 'Bjork', role: 'primary' }], songAlbum: 'Homogenic', songYear: '1997' },
+        });
+      }
+      return String(a._id);
+    };
+
+    it('anonymous callers get unauthorized', async () => {
+      const id = String(new mongoose.Types.ObjectId());
+      expect(await codeOf(Q.catalogDetectAlbums({}, { artistId: id }, ctx()))).toBe('unauthorized');
+      expect(await codeOf(M.approveDetectedAlbum({}, { artistId: id, title: 'X' }, ctx()))).toBe('unauthorized');
+      expect(await codeOf(M.dismissDetectedAlbum({}, { artistId: id, key: 'x' }, ctx()))).toBe('unauthorized');
+    });
+
+    it('plain users and review-only staff are forbidden on all three', async () => {
+      const id = String(new mongoose.Types.ObjectId());
+      for (const u of [await seedUser(), await seedUser(['catalog.review'])]) {
+        expect(await codeOf(Q.catalogDetectAlbums({}, { artistId: id }, ctx(u)))).toBe('forbidden');
+        expect(await codeOf(M.approveDetectedAlbum({}, { artistId: id, title: 'X' }, ctx(u)))).toBe('forbidden');
+        expect(await codeOf(M.dismissDetectedAlbum({}, { artistId: id, key: 'x' }, ctx(u)))).toBe('forbidden');
+      }
+    });
+
+    it('manager detects, approves (admin source, once) and dismisses idempotently', async () => {
+      const admin = await seedUser(['catalog.manage']);
+      const artistId = await seedDetect(admin);
+      const found = await Q.catalogDetectAlbums({}, { artistId }, ctx(admin));
+      expect(found).toEqual([{ key: expect.any(String), title: 'Homogenic', songCount: 2, year: '1997' }]);
+
+      const album = await M.approveDetectedAlbum({}, { artistId, title: 'Homogenic', year: '1997' }, ctx(admin));
+      expect(album).toMatchObject({ title: 'Homogenic', status: 'approved', source: 'admin' });
+      expect(await codeOf(M.approveDetectedAlbum({}, { artistId, title: 'Homogenic', year: '1997' }, ctx(admin)))).toBe('catalog_duplicate');
+      expect(await CatalogAlbum.countDocuments()).toBe(1);
+
+      expect(await M.dismissDetectedAlbum({}, { artistId, key: 'vespertine' }, ctx(admin))).toBe(true);
+      expect(await M.dismissDetectedAlbum({}, { artistId, key: 'vespertine' }, ctx(admin))).toBe(true);
+    });
   });
 });
