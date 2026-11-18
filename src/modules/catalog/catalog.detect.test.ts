@@ -163,6 +163,30 @@ describe('detectAlbums', () => {
   });
 });
 
+describe('detectAlbums spellings and normalisation', () => {
+  it('keeps case variants apart so the most frequent spelling wins', async () => {
+    const admin = await seedUser();
+    const artist = await seedArtist(admin);
+    await seedProject({ album: 'HOMOGENIC' });
+    await seedMany(2, { album: 'Homogenic' });
+    expect(await list(admin, artist)).toEqual([{ key: 'homogenic', title: 'Homogenic', songCount: 3, year: null }]);
+  });
+
+  it('matches an NFD-stored credit', async () => {
+    const admin = await seedUser();
+    const artist = await seedArtist(admin, 'Björk');
+    await seedProject({ album: 'Post', artists: [{ name: 'Björk', role: 'primary' }] });
+    expect((await list(admin, artist))[0]?.songCount).toBe(1);
+  });
+
+  it('matches a CJK credit', async () => {
+    const admin = await seedUser();
+    const artist = await seedArtist(admin, '星野源');
+    await seedProject({ album: 'Yellow Dancer', artists: [{ name: '星野源', role: 'primary' }] });
+    expect((await list(admin, artist))[0]?.songCount).toBe(1);
+  });
+});
+
 describe('approve and dismiss', () => {
   it('approve creates an approved admin album and it leaves the findings', async () => {
     const admin = await seedUser();
@@ -190,6 +214,21 @@ describe('approve and dismiss', () => {
     expect(await dismissDetectedAlbum(admin, artist, 'post ')).toEqual({ ok: true });
     expect(await CatalogAlbumDismissal.countDocuments({})).toBe(1);
     expect(await AdminLog.countDocuments({ action: 'catalog.dismiss_album' })).toBe(1);
+  });
+
+  it('dismiss normalises internal whitespace like detection', async () => {
+    const admin = await seedUser();
+    const artist = await seedArtist(admin);
+    await seedProject({ album: 'Big   Album' });
+    await dismissDetectedAlbum(admin, artist, 'Big   Album');
+    expect(await list(admin, artist)).toEqual([]);
+    expect((await CatalogAlbumDismissal.findOne({}).lean())?.titleKey).toBe('big album');
+  });
+
+  it('dismiss refuses a pending artist', async () => {
+    const admin = await seedUser();
+    const pending = await seedArtist(admin, 'Pend', 'pending');
+    expect(errOf(await dismissDetectedAlbum(admin, pending, 'x')).code).toBe('CATALOG_NOT_FOUND');
   });
 
   it('concurrent dismisses both succeed', async () => {

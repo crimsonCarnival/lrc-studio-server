@@ -14,7 +14,7 @@ const MAX_KEY = 500;
 /** Aggregate only: never project ids, titles, owners or any per-project data. */
 export type DetectedAlbum = { key: string; title: string; songCount: number; year: string | null };
 
-type Group = { _id: { album: string; year: string | null; primaries: string[] }; n: number };
+type Row = { album: string; year: string | null; primaries: string[] };
 
 async function approvedArtist(artistId: string): Promise<{ _id: mongoose.Types.ObjectId; name: string; nameKey: string; approved: boolean } | null> {
   if (!validId(artistId)) return null;
@@ -40,8 +40,12 @@ export async function detectAlbums(adminId: string, artistId: string): Promise<D
   if (!artist || !artist.approved) return notFound();
 
   // $toLower is ASCII-only, so the name filter relies on a case-insensitive collation and
-  // JS re-checks artistKey exactly below. The projection keeps whole projects out of memory.
-  const groups = await Project.aggregate<Group>([
+  // JS re-checks artistKey exactly below. The collation only MATCHES: grouping is done in JS,
+  // because a collated $group would merge case variants and make "most frequent spelling"
+  // arbitrary. The projection keeps whole projects out of memory.
+  // This is a collection scan (no index on metadata.artists / songAlbum): acceptable for an
+  // on-demand admin tool.
+  const rows = await Project.aggregate<Row>([
     { $match: {
       kind: { $ne: 'subtitles' },
       'metadata.songAlbum': { $nin: ['', null] },
@@ -53,21 +57,20 @@ export async function detectAlbums(adminId: string, artistId: string): Promise<D
       year: '$metadata.songYear',
       primaries: { $map: { input: { $filter: { input: '$metadata.artists', cond: { $eq: ['$$this.role', 'primary'] } } }, in: '$$this.name' } },
     } },
-    { $group: { _id: { album: '$album', year: '$year', primaries: '$primaries' }, n: { $sum: 1 } } },
-  ]).collation({ locale: 'en', strength: 2 });
+  ]).collation({ locale: 'en', strength: 2, normalization: true });
 
   type Bucket = { titles: Map<string, number>; years: Map<string, number>; songCount: number };
   const buckets = new Map<string, Bucket>();
-  for (const g of groups) {
-    if (!g._id.primaries.some((p) => typeof p === 'string' && artistKey(p) === artist.nameKey)) continue;
-    const title = squash(String(g._id.album));
+  for (const g of rows) {
+    if (!Array.isArray(g.primaries) || !g.primaries.some((p) => typeof p === 'string' && artistKey(p) === artist.nameKey)) continue;
+    const title = squash(String(g.album));
     const key = albumKey(title);
     if (!key) continue;
     const b = buckets.get(key) ?? { titles: new Map(), years: new Map(), songCount: 0 };
     buckets.set(key, b);
-    b.songCount += g.n;
-    bump(b.titles, title, g.n);
-    if (typeof g._id.year === 'string' && /^\d{4}$/.test(g._id.year)) bump(b.years, g._id.year, g.n);
+    b.songCount += 1;
+    bump(b.titles, title, 1);
+    if (typeof g.year === 'string' && /^\d{4}$/.test(g.year)) bump(b.years, g.year, 1);
   }
 
   const [catalog, dismissed] = await Promise.all([
@@ -102,10 +105,11 @@ export async function approveDetectedAlbum(
 export async function dismissDetectedAlbum(adminId: string, artistId: string, key: string): Promise<{ ok: true } | CatalogError> {
   const denied = await assertManager(adminId);
   if (denied) return denied;
-  if (!(await approvedArtist(artistId))) return notFound();
+  const artist = await approvedArtist(artistId);
+  if (!artist || !artist.approved) return notFound();
   if (typeof key !== 'string' || key.trim() === '' || key.length > MAX_KEY) return invalid('Key is required');
 
-  const titleKey = albumKey(key);
+  const titleKey = albumKey(squash(key));
   if (!titleKey || titleKey.length > MAX_KEY) return invalid('Key is required');
   let inserted = false;
   try {
@@ -117,11 +121,11 @@ export async function dismissDetectedAlbum(adminId: string, artistId: string, ke
     inserted = res.upsertedCount === 1;
   } catch (err) {
     // A concurrent upsert of the same key lost the race on the unique index: already dismissed.
-    if ((err as { code?: number })?.code !== 11000) return fail(500, 'CATALOG_INVALID_INPUT', 'Could not dismiss');
+    if ((err as { code?: number })?.code !== 11000) return fail(500, 'CATALOG_INTERNAL', 'Could not dismiss');
   }
   if (inserted) {
     try {
-      await logAdminAction({ adminId, action: 'catalog.dismiss_album', targetId: artistId, details: JSON.stringify({ key }) });
+      await logAdminAction({ adminId, action: 'catalog.dismiss_album', targetId: artistId, details: JSON.stringify({ key: titleKey }) });
     } catch (err) {
       console.error('[catalog] admin log failed', err);
     }

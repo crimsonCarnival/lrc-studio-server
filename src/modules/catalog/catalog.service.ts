@@ -27,7 +27,8 @@ export type CatalogErrorCode =
   | 'CATALOG_GENIUS_UNAVAILABLE'
   | 'CATALOG_GENIUS_UPSTREAM'
   | 'CATALOG_GENIUS_NOT_FOUND'
-  | 'CATALOG_GENIUS_IMAGE_REJECTED';
+  | 'CATALOG_GENIUS_IMAGE_REJECTED'
+  | 'CATALOG_INTERNAL';
 
 /** `existing` is set only for approved entries or the caller's own pending one. */
 export type CatalogError = {
