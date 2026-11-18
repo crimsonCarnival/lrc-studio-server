@@ -21,6 +21,7 @@ import {
   adminUpdateCatalogEntry,
   adminDeleteCatalogEntry,
 } from '../../modules/catalog/catalog.admin.service.js';
+import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum } from '../../modules/catalog/catalog.detect.service.js';
 import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug } from '../../modules/catalog/catalog.query.service.js';
 
 type Kind = 'artist' | 'album';
@@ -105,6 +106,11 @@ export const catalogResolvers = {
       await requirePermission(context, 'catalog.manage');
       return listApprovedAlbums(artistId);
     },
+
+    catalogDetectAlbums: async (_root: unknown, { artistId }: { artistId: string }, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      return unwrap(await detectAlbums(userId, artistId));
+    },
   },
 
   Mutation: {
@@ -165,6 +171,18 @@ export const catalogResolvers = {
       const { userId } = await requirePermission(context, 'catalog.manage');
       requireSudo(context);
       unwrap(await adminDeleteCatalogEntry(userId, args.kind, args.id, { revokeCredit: args.revokeCredit === true }));
+      return true;
+    },
+
+    // No sudo: nothing is deleted.
+    approveDetectedAlbum: async (_root: unknown, args: { artistId: string; title: string; year?: string | null }, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      return unwrap(await approveDetectedAlbum(userId, args.artistId, args.title, args.year ?? null)).album;
+    },
+
+    dismissDetectedAlbum: async (_root: unknown, args: { artistId: string; key: string }, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      unwrap(await dismissDetectedAlbum(userId, args.artistId, args.key));
       return true;
     },
   },

@@ -67,6 +67,14 @@ export const catalogSchema = `
     songs: [Project!]!
   }
 
+  # Aggregate only: no project ids, titles or owners.
+  type DetectedAlbum {
+    key: String!
+    title: String!
+    songCount: Int!
+    year: String
+  }
+
   extend type Query {
     # Null when the slug is unknown or the entry is not approved.
     catalogArtist(slug: String!): CatalogArtistPage
@@ -74,6 +82,7 @@ export const catalogSchema = `
     catalogReviewQueue: CatalogQueue!
     catalogAdminArtists(query: String, offset: Int, limit: Int): [CatalogArtist!]!
     catalogAdminAlbums(artistId: ID!): [CatalogAlbum!]!
+    catalogDetectAlbums(artistId: ID!): [DetectedAlbum!]!
   }
 
   extend type Mutation {
@@ -86,5 +95,7 @@ export const catalogSchema = `
     adminCreateCatalogAlbum(artistId: ID!, title: String!, year: String, coverUrl: String): CatalogAlbum!
     adminUpdateCatalogEntry(kind: CatalogKind!, id: ID!, name: String, disambiguation: String, title: String, bio: String, imageUrl: String, year: String, coverUrl: String, imageSource: CatalogImageSource, imageSourceUrl: String): Boolean!
     adminDeleteCatalogEntry(kind: CatalogKind!, id: ID!, revokeCredit: Boolean): Boolean!
+    approveDetectedAlbum(artistId: ID!, title: String!, year: String): CatalogAlbum!
+    dismissDetectedAlbum(artistId: ID!, key: String!): Boolean!
   }
 `;
