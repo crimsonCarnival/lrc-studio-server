@@ -201,6 +201,16 @@ describe('approve and dismiss', () => {
     expect(await list(admin, artist)).toEqual([]);
   });
 
+  it('a finding with markup is shown clean and leaves the findings once approved', async () => {
+    const admin = await seedUser();
+    const artist = await seedArtist(admin);
+    await seedProject({ album: '<i>Medúlla</i>  Live' });
+    const [finding] = await list(admin, artist);
+    expect(finding.title).toBe('Medúlla Live');
+    await approveDetectedAlbum(admin, artist, finding.title, null);
+    expect(await list(admin, artist)).toEqual([]);
+  });
+
   it('second approve -> CATALOG_DUPLICATE, one album', async () => {
     const admin = await seedUser();
     const artist = await seedArtist(admin);

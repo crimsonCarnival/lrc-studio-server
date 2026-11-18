@@ -4,7 +4,7 @@ import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum, { type ICatalogAlbum } from './catalog-album.model.js';
 import CatalogAlbumDismissal from './catalog-album-dismissal.model.js';
 import { assertManager, adminCreateCatalogAlbum } from './catalog.admin.service.js';
-import { fail, invalid, notFound, validId, oid, squash, albumKey, type CatalogError } from './catalog.service.js';
+import { fail, invalid, notFound, validId, oid, cleanCatalogText, albumKey, type CatalogError } from './catalog.service.js';
 import { artistKey } from '../artists/artist.service.js';
 import { logAdminAction } from '../admin/admin.service.js';
 
@@ -63,7 +63,7 @@ export async function detectAlbums(adminId: string, artistId: string): Promise<D
   const buckets = new Map<string, Bucket>();
   for (const g of rows) {
     if (!Array.isArray(g.primaries) || !g.primaries.some((p) => typeof p === 'string' && artistKey(p) === artist.nameKey)) continue;
-    const title = squash(String(g.album));
+    const title = cleanCatalogText(String(g.album));
     const key = albumKey(title);
     if (!key) continue;
     const b = buckets.get(key) ?? { titles: new Map(), years: new Map(), songCount: 0 };
@@ -109,7 +109,7 @@ export async function dismissDetectedAlbum(adminId: string, artistId: string, ke
   if (!artist || !artist.approved) return notFound();
   if (typeof key !== 'string' || key.trim() === '' || key.length > MAX_KEY) return invalid('Key is required');
 
-  const titleKey = albumKey(squash(key));
+  const titleKey = albumKey(cleanCatalogText(key));
   if (!titleKey || titleKey.length > MAX_KEY) return invalid('Key is required');
   let inserted = false;
   try {

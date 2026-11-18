@@ -1,8 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
+vi.mock('../../socket/socket.manager.js', () => ({ getIO: () => { throw new Error('no socket'); } }));
+vi.mock('../badges/badge.service.js', () => ({ triggerBadgeCheck: async () => [] }));
+vi.mock('./catalog.rewards.js', () => ({ awardCatalogCredit: async () => undefined, revokeCatalogCredit: async () => undefined }));
+
+import User from '../users/user.model.js';
 import Project from '../projects/project.model.js';
+import { detectAlbums, dismissDetectedAlbum } from './catalog.detect.service.js';
+import { cleanCatalogText } from './catalog.service.js';
 import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum from './catalog-album.model.js';
 import CatalogAlbumDismissal from './catalog-album-dismissal.model.js';
@@ -21,7 +28,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await Promise.all([
-    CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({}), CatalogAlbumDismissal.deleteMany({}), Project.collection.deleteMany({}),
+    User.deleteMany({}), CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({}), CatalogAlbumDismissal.deleteMany({}), Project.collection.deleteMany({}),
   ]);
 });
 
@@ -62,6 +69,32 @@ describe('importAlbumsFromSongs', () => {
     await CatalogAlbumDismissal.create({ artistId: artist._id, titleKey: 'greatest hits', dismissedBy: admin });
 
     expect(await importAlbumsFromSongs(artist, String(admin))).toBe(0);
+  });
+
+  it('a title dismissed through Detect albums stays out, markup and spacing included', async () => {
+    const { insertedId } = await User.collection.insertOne({
+      accountName: 'imp', email: 'imp@x.test', passwordHash: 'x', isVerified: true, permissions: ['catalog.manage'],
+    });
+    const adminId = String(insertedId);
+    const artist = await seedArtist();
+    await seedSong('<i>Medúlla</i>  (Deluxe)');
+
+    const [finding] = (await detectAlbums(adminId, String(artist._id))) as { key: string }[];
+    expect(await dismissDetectedAlbum(adminId, String(artist._id), finding.key)).toEqual({ ok: true });
+    expect(await importAlbumsFromSongs(artist, adminId)).toBe(0);
+  });
+
+  it('skips titles over the length limit instead of truncating them', async () => {
+    const artist = await seedArtist();
+    await seedSong('x'.repeat(1000));
+    expect(await importAlbumsFromSongs(artist, String(admin))).toBe(0);
+  });
+
+  it('cleanCatalogText is idempotent', () => {
+    for (const raw of ['<b>A</b>  &amp; B', 'a < b', 'Tom & Jerry', '  Ｆｕｌｌ  ', "O'Brien &lt;x&gt;"]) {
+      const once = cleanCatalogText(raw);
+      expect(cleanCatalogText(once)).toBe(once);
+    }
   });
 
   it('stores a squashed, tag-free title', async () => {
