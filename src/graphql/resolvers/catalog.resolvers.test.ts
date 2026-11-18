@@ -168,4 +168,27 @@ describe('catalog resolvers', () => {
     expect(await Q.catalogArtist({}, { slug: 'pend' }, ctx())).toBeNull();
     expect(await Q.catalogArtist({}, { slug: 'nope' }, ctx())).toBeNull();
   });
+
+  it('adminUpdateCatalogEntry passes imageSource and imageSourceUrl', async () => {
+    const admin = await seedUser(['catalog.manage']);
+    const a = await CatalogArtist.create({ name: 'Cr', nameKey: 'cr', status: 'approved', slug: 'cr', source: 'admin', submittedBy: admin });
+    const url = 'https://genius.com/artists/Cr';
+    vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'democloud');
+    const imageUrl = 'https://res.cloudinary.com/democloud/image/upload/v1/catalog/x/p.webp';
+    await M.adminUpdateCatalogEntry({}, { kind: 'artist', id: String(a._id), imageUrl, imageSource: 'genius', imageSourceUrl: url }, ctx(admin));
+    const row = await CatalogArtist.findById(a._id).lean();
+    expect(row?.imageSource).toBe('genius');
+    expect(row?.imageSourceUrl).toBe(url);
+  });
+
+  it('catalogArtist exposes imageSource and imageSourceUrl publicly', async () => {
+    const s = await seedUser();
+    await CatalogArtist.create({
+      name: 'Cr2', nameKey: 'cr2', status: 'approved', slug: 'cr2', source: 'admin', submittedBy: s,
+      imageUrl: 'https://x.test/p.webp', imageSource: 'genius', imageSourceUrl: 'https://genius.com/artists/Cr2',
+    });
+    const page = await Q.catalogArtist({}, { slug: 'cr2' }, ctx());
+    expect(page.artist.imageSource).toBe('genius');
+    expect(page.artist.imageSourceUrl).toBe('https://genius.com/artists/Cr2');
+  });
 });

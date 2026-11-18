@@ -9,12 +9,19 @@ export const catalogSchema = `
     reject
   }
 
+  enum CatalogImageSource {
+    upload
+    genius
+  }
+
   type CatalogArtist {
     id: ID!
     name: String!
     disambiguation: String!
     slug: String
     imageUrl: String
+    imageSource: CatalogImageSource
+    imageSourceUrl: String
     bio: String!
     status: String!
     source: String!
@@ -75,9 +82,9 @@ export const catalogSchema = `
     updateMyCatalogEntry(kind: CatalogKind!, id: ID!, name: String, title: String, bio: String, imageUrl: String, year: String, coverUrl: String): Boolean!
     withdrawMyCatalogEntry(kind: CatalogKind!, id: ID!): Boolean!
     reviewCatalogEntry(kind: CatalogKind!, id: ID!, decision: CatalogDecision!, note: String, expectedUpdatedAt: String): Boolean!
-    adminCreateCatalogArtist(name: String!, disambiguation: String, bio: String, imageUrl: String): CatalogArtist!
+    adminCreateCatalogArtist(name: String!, disambiguation: String, bio: String, imageUrl: String, imageSource: CatalogImageSource, imageSourceUrl: String): CatalogArtist!
     adminCreateCatalogAlbum(artistId: ID!, title: String!, year: String, coverUrl: String): CatalogAlbum!
-    adminUpdateCatalogEntry(kind: CatalogKind!, id: ID!, name: String, disambiguation: String, title: String, bio: String, imageUrl: String, year: String, coverUrl: String): Boolean!
+    adminUpdateCatalogEntry(kind: CatalogKind!, id: ID!, name: String, disambiguation: String, title: String, bio: String, imageUrl: String, year: String, coverUrl: String, imageSource: CatalogImageSource, imageSourceUrl: String): Boolean!
     adminDeleteCatalogEntry(kind: CatalogKind!, id: ID!, revokeCredit: Boolean): Boolean!
   }
 `;

@@ -13,6 +13,7 @@ import {
   isError,
   type CatalogError,
 } from '../../modules/catalog/catalog.service.js';
+import type { CatalogImageSource } from '../../modules/catalog/catalog.types.js';
 import { reviewCatalogEntry } from '../../modules/catalog/catalog.review.service.js';
 import {
   adminCreateCatalogArtist,
@@ -53,11 +54,11 @@ function unwrap<T>(result: T | CatalogError): T {
 const defined = <T extends Record<string, unknown>>(o: T): Partial<T> =>
   Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
 
-type EntryFields = { name?: string | null; title?: string | null; bio?: string | null; imageUrl?: string | null; year?: string | null; coverUrl?: string | null; disambiguation?: string | null };
+type EntryFields = { name?: string | null; title?: string | null; bio?: string | null; imageUrl?: string | null; year?: string | null; coverUrl?: string | null; disambiguation?: string | null; imageSource?: CatalogImageSource | null; imageSourceUrl?: string | null };
 // GraphQL null on a text field means "not provided"; only the image and year fields can be cleared with null.
 const text = (v: string | null | undefined): string | undefined => v ?? undefined;
 const artistPatch = (a: EntryFields) =>
-  defined({ name: text(a.name), bio: text(a.bio), imageUrl: a.imageUrl, disambiguation: text(a.disambiguation) });
+  defined({ name: text(a.name), bio: text(a.bio), imageUrl: a.imageUrl, imageSource: a.imageSource, imageSourceUrl: a.imageSourceUrl, disambiguation: text(a.disambiguation) });
 const albumPatch = (a: EntryFields) => defined({ title: text(a.title), year: a.year, coverUrl: a.coverUrl });
 
 const iso = (d: Date | string | undefined | null): string | null => (d ? new Date(d).toISOString() : null);
@@ -143,7 +144,7 @@ export const catalogResolvers = {
       return true;
     },
 
-    adminCreateCatalogArtist: async (_root: unknown, args: { name: string; disambiguation?: string | null; bio?: string | null; imageUrl?: string | null }, context: Context) => {
+    adminCreateCatalogArtist: async (_root: unknown, args: { name: string; disambiguation?: string | null; bio?: string | null; imageUrl?: string | null; imageSource?: CatalogImageSource | null; imageSourceUrl?: string | null }, context: Context) => {
       const { userId } = await requirePermission(context, 'catalog.manage');
       return unwrap(await adminCreateCatalogArtist(userId, { name: args.name, ...artistPatch({ ...args, name: undefined }) })).artist;
     },
