@@ -6,10 +6,21 @@ vi.mock('../../config/env.js', () => ({ getEnv: () => env }));
 vi.mock('../genius/genius.client.js', async (orig) => ({
   ...(await orig<typeof import('../genius/genius.client.js')>()),
   searchSong: vi.fn(),
+  getArtist: vi.fn(),
+}));
+vi.mock('./catalog.admin.service.js', async (orig) => ({
+  ...(await orig<typeof import('./catalog.admin.service.js')>()),
+  assertManager: vi.fn(),
+}));
+vi.mock('../uploads/uploads.service.js', async (orig) => ({
+  ...(await orig<typeof import('../uploads/uploads.service.js')>()),
+  uploadCatalogImageBuffer: vi.fn(),
 }));
 
-import { searchSong, type GeniusHit } from '../genius/genius.client.js';
-import { isGeniusImageUrl, searchGeniusArtists } from './catalog.genius.service.js';
+import { searchSong, getArtist, type GeniusHit } from '../genius/genius.client.js';
+import { assertManager } from './catalog.admin.service.js';
+import { uploadCatalogImageBuffer } from '../uploads/uploads.service.js';
+import { isGeniusImageUrl, searchGeniusArtists, copyGeniusArtistPhoto } from './catalog.genius.service.js';
 
 const hits = (): GeniusHit[] =>
   JSON.parse(readFileSync(new URL('../genius/__fixtures__/genius-search-artists.json', import.meta.url), 'utf8')).response.hits.map(
@@ -109,6 +120,12 @@ describe('getArtist', () => {
     stub({ response: {} });
     await expect(real.getArtist(7)).rejects.toThrow('genius_upstream');
   });
+  it('distinguishes a 404 for artists only', async () => {
+    const real = await vi.importActual<typeof import('../genius/genius.client.js')>('../genius/genius.client.js');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
+    await expect(real.getArtist(5)).rejects.toThrow('genius_not_found');
+    await expect(real.getSong(5)).rejects.toThrow('genius_upstream');
+  });
   it('null without a token', async () => {
     const real = await vi.importActual<typeof import('../genius/genius.client.js')>('../genius/genius.client.js');
     delete env.GENIUS_CLIENT_ACCESS_TOKEN;
@@ -130,5 +147,120 @@ describe('getArtist', () => {
     const err = await real.getArtist(5).catch((e: Error) => e);
     expect((err as Error).message).toBe('genius_upstream');
     expect((err as Error).message).not.toContain('secret-token-xyz');
+  });
+});
+
+describe('copyGeniusArtistPhoto', () => {
+  const ADMIN = '64b000000000000000000001';
+  const IMG = 'https://images.genius.com/bbb.1000x1000x1.png';
+  const PAGE = 'https://genius.com/artists/Kanye-West';
+  const CANON = `https://res.cloudinary.com/democloud/image/upload/c_fill,w_600,h_600,f_webp,q_auto/v1/catalog/${ADMIN}/x.webp`;
+  const MB = 1024 * 1024;
+
+  const artist = (over: Record<string, unknown> = {}) => ({ id: 11, name: 'Kanye West', url: PAGE, image_url: IMG, ...over });
+  const imgRes = (body: BodyInit | null = new Uint8Array([1, 2, 3]), headers: Record<string, string> = {}, status = 200) =>
+    new Response(body, { status, headers: { 'content-type': 'image/png', 'content-length': '3', ...headers } });
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.mocked(assertManager).mockReset().mockResolvedValue(null);
+    vi.mocked(getArtist).mockReset().mockResolvedValue(artist());
+    vi.mocked(uploadCatalogImageBuffer).mockReset().mockResolvedValue(CANON);
+    fetchMock.mockReset().mockImplementation(async () => imgRes());
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  it('copies the re-resolved image and returns the canonical URL and page', async () => {
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toEqual({ imageUrl: CANON, sourceUrl: PAGE });
+    expect(getArtist).toHaveBeenCalledWith(11);
+    expect(fetchMock).toHaveBeenCalledWith(IMG, expect.objectContaining({ redirect: 'error' }));
+    const [buf, type, user] = vi.mocked(uploadCatalogImageBuffer).mock.calls[0];
+    expect([...buf]).toEqual([1, 2, 3]);
+    expect([type, user]).toEqual(['image/png', ADMIN]);
+  });
+
+  it('takes no URL parameter', () => {
+    expect(copyGeniusArtistPhoto.length).toBe(2);
+  });
+
+  it('refuses a non-manager before anything else', async () => {
+    vi.mocked(assertManager).mockResolvedValue({ error: 'x', status: 403, code: 'CATALOG_FORBIDDEN' });
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 403 });
+    expect(getArtist).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a placeholder or foreign-host image_url', async () => {
+    for (const image_url of ['https://assets.genius.com/images/default_cover_image.png', 'https://evil.test/a.png', null]) {
+      vi.mocked(getArtist).mockResolvedValue(artist({ image_url }));
+      expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 422, code: 'CATALOG_GENIUS_IMAGE_REJECTED' });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-genius page url', async () => {
+    vi.mocked(getArtist).mockResolvedValue(artist({ url: 'https://evil.test/artists/x' }));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 422 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a redirect fails closed', async () => {
+    fetchMock.mockRejectedValue(new TypeError('fetch failed: unexpected redirect'));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 502, code: 'CATALOG_GENIUS_UPSTREAM' });
+    expect(uploadCatalogImageBuffer).not.toHaveBeenCalled();
+  });
+
+  it('refuses Content-Length over 5 MB', async () => {
+    fetchMock.mockResolvedValue(imgRes(new Uint8Array(3), { 'content-length': String(5 * MB + 1) }));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 422, code: 'CATALOG_GENIUS_IMAGE_REJECTED' });
+    expect(uploadCatalogImageBuffer).not.toHaveBeenCalled();
+  });
+
+  it('refuses a lying Content-Length', async () => {
+    fetchMock.mockResolvedValue(imgRes(new Uint8Array(6 * MB), { 'content-length': '100' }));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 422, code: 'CATALOG_GENIUS_IMAGE_REJECTED' });
+    expect(uploadCatalogImageBuffer).not.toHaveBeenCalled();
+  });
+
+  it('refuses text/html and image/svg+xml', async () => {
+    for (const ct of ['text/html', 'image/svg+xml', '']) {
+      fetchMock.mockResolvedValue(imgRes(new Uint8Array(3), { 'content-type': ct }));
+      expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 422 });
+    }
+    expect(uploadCatalogImageBuffer).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-ok image response as upstream failure', async () => {
+    fetchMock.mockResolvedValue(imgRes(null, {}, 500));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 502 });
+  });
+
+  it('times out at 8 s', async () => {
+    await copyGeniusArtistPhoto(ADMIN, 11);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    fetchMock.mockRejectedValue(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 502, code: 'CATALOG_GENIUS_UPSTREAM' });
+  });
+
+  it('unknown geniusId → 404', async () => {
+    vi.mocked(getArtist).mockRejectedValue(new Error('genius_not_found'));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 404, code: 'CATALOG_GENIUS_NOT_FOUND' });
+    vi.mocked(getArtist).mockRejectedValue(new Error('genius_invalid_id'));
+    expect(await copyGeniusArtistPhoto(ADMIN, -1)).toMatchObject({ status: 404 });
+  });
+
+  it('no Genius token → 503', async () => {
+    vi.mocked(getArtist).mockResolvedValue(null);
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 503, code: 'CATALOG_GENIUS_UNAVAILABLE' });
+  });
+
+  it('unconfigured storage → 503; upstream errors stay opaque', async () => {
+    vi.mocked(uploadCatalogImageBuffer).mockRejectedValue(new Error('storage_unconfigured'));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 503, code: 'CATALOG_GENIUS_UNAVAILABLE' });
+    vi.mocked(getArtist).mockRejectedValue(new Error('genius_upstream secret-token-xyz'));
+    const r = await copyGeniusArtistPhoto(ADMIN, 11);
+    expect(r).toMatchObject({ status: 502 });
+    expect(JSON.stringify(r)).not.toContain('secret-token-xyz');
   });
 });

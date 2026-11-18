@@ -17,7 +17,7 @@ export type GeniusSong = GeniusHit & {
  * GET against api.genius.com. Returns null when the token is unset (feature off).
  * Errors are opaque codes: neither the token nor upstream text ever reaches a message.
  */
-async function geniusGet(path: string): Promise<unknown | null> {
+async function geniusGet(path: string, opts: { distinguishNotFound?: boolean } = {}): Promise<unknown | null> {
   const token = getEnv().GENIUS_CLIENT_ACCESS_TOKEN;
   if (!token) return null;
 
@@ -31,6 +31,7 @@ async function geniusGet(path: string): Promise<unknown | null> {
     throw new Error('genius_upstream');
   }
   if (res.status === 401 || res.status === 403) throw new Error('genius_unauthorized');
+  if (res.status === 404 && opts.distinguishNotFound) throw new Error('genius_not_found');
   if (!res.ok) throw new Error('genius_upstream');
   try {
     return await res.json();
@@ -62,7 +63,7 @@ export async function getSong(id: number): Promise<GeniusSong | null> {
 
 export async function getArtist(id: number): Promise<GeniusArtistDetail | null> {
   assertValidId(id);
-  const body = await geniusGet(`/artists/${id}?text_format=plain`) as
+  const body = await geniusGet(`/artists/${id}?text_format=plain`, { distinguishNotFound: true }) as
     { response?: { artist?: { id: number; name: string; url: string; image_url?: string } } } | null;
   if (!body) return null;
   const a = body.response?.artist;

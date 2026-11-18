@@ -238,6 +238,24 @@ export function isCatalogImageUrl(url: unknown, uploaderId?: string): url is str
   return true;
 }
 
+/** Stores bytes the server fetched itself in the admin's catalog folder; returns the canonical secure_url. */
+export async function uploadCatalogImageBuffer(data: Buffer, contentType: string, userId: string): Promise<string> {
+  if (!isStorageConfigured()) throw new Error('storage_unconfigured');
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+  const result = await cloudinary.uploader.upload(`data:${contentType};base64,${data.toString('base64')}`, {
+    folder: `${CATALOG_FOLDER}/${userId}`,
+    transformation: CATALOG_TRANSFORMATION,
+    resource_type: 'image',
+  });
+  // Same guard admin create/update apply: a stored URL that would later be rejected is useless.
+  if (!isCatalogImageUrl(result?.secure_url, userId)) throw new Error('storage_bad_url');
+  return result.secure_url;
+}
+
 const PROFILE_COVER_FOLDER = 'lyrics-syncer/profile-covers';
 const MAX_PROFILE_COVER_SIZE = 5 * 1024 * 1024;
 // 1200x400 = the 3:1 ratio the client's crop step outputs. c_fill (not c_limit, like the
