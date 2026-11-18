@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { groupShelf } from './shelf.group.js'
+import { albumKey, groupShelf } from './shelf.group.js'
 import type { ShelfRow, VisibilityRow } from './shelf.types.js'
 
 type Credit = { name: string; role: 'primary' | 'featured'; artistId?: unknown }
@@ -96,6 +96,25 @@ describe('groupShelf', () => {
     expect(out[0].albums[0].rows).toHaveLength(2)
   })
 
+  it('merges album names that differ only in inner whitespace', () => {
+    const out = groupShelf(
+      [
+        row('a', [A()], { album: 'Small  Hours', edited: '2026-01-01' }),
+        row('b', [A()], { album: 'Small Hours', edited: '2026-01-02' })
+      ],
+      names,
+      [],
+      owner
+    )
+    expect(out[0].albums).toHaveLength(1)
+    expect(out[0].albums[0].key).toBe('small hours')
+  })
+
+  it('albumKey collapses whitespace, trims and lowercases', () => {
+    expect(albumKey('  Small \t  Hours ')).toBe('small hours')
+    expect(albumKey('')).toBe('')
+  })
+
   it("empty album goes to the '' bucket, ordered last", () => {
     const out = groupShelf(
       [
@@ -134,6 +153,12 @@ describe('groupShelf', () => {
       ['x', false],
       ['y', true]
     ])
+  })
+
+  it('an album row stored under an older key form still hides the album', () => {
+    const rows = [row('s', [A()], { album: 'Small  Hours' }), row('t', [A()], { album: 'Y' })]
+    const vis = [pub('a1', null), pub('a1', 'small  hours', false)]
+    expect(groupShelf(rows, names, vis, visitor)[0].albums.map(a => a.key)).toEqual(['y'])
   })
 
   it('private artist hides its albums even with album rows public', () => {

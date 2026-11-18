@@ -134,7 +134,8 @@ export async function getSongConnections(
   if ('geniusId' in q && (!Number.isInteger(q.geniusId) || q.geniusId <= 0)) return null;
   const key = 'geniusId' in q
     ? `g:${q.geniusId}`
-    : `t:${matchKey(q.track)}|${matchKey(q.artist)}`;
+    // JSON-encoded so a '|' inside a title or name can't make two pairs share a key.
+    : `t:${JSON.stringify([matchKey(q.track), matchKey(q.artist)])}`;
   const cached = cacheGet(key);
   if (cached) return cached.value;
 

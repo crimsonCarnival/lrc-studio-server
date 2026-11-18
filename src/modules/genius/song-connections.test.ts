@@ -116,6 +116,14 @@ describe('getSongConnections', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps track/artist pairs containing "|" in separate cache entries', async () => {
+    const fn = stubFetch(load());
+    await getSongConnections({ track: 'a|b', artist: 'c' });
+    const afterFirst = fn.mock.calls.length;
+    await getSongConnections({ track: 'a', artist: 'b|c' });
+    expect(fn.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+
   it('never puts the token in a thrown error message', async () => {
     for (const status of [401, 500]) {
       clearConnectionsCache();
