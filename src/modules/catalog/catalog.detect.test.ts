@@ -174,8 +174,10 @@ describe('detectAlbums spellings and normalisation', () => {
 
   it('matches an NFD-stored credit', async () => {
     const admin = await seedUser();
-    const artist = await seedArtist(admin, 'Björk');
-    await seedProject({ album: 'Post', artists: [{ name: 'Björk', role: 'primary' }] });
+    const artist = await seedArtist(admin, 'Björk'); // NFC: precomposed o-umlaut
+    const nfd = 'Björk'; // NFD: o + combining diaeresis
+    expect(nfd).not.toBe('Björk');
+    await seedProject({ album: 'Post', artists: [{ name: nfd, role: 'primary' }] });
     expect((await list(admin, artist))[0]?.songCount).toBe(1);
   });
 
