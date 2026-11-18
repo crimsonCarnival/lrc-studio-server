@@ -20,9 +20,10 @@ import {
   adminCreateCatalogAlbum,
   adminUpdateCatalogEntry,
   adminDeleteCatalogEntry,
+  adminImportCatalogAlbums,
 } from '../../modules/catalog/catalog.admin.service.js';
 import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum } from '../../modules/catalog/catalog.detect.service.js';
-import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug } from '../../modules/catalog/catalog.query.service.js';
+import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, lookupCatalogSlugs } from '../../modules/catalog/catalog.query.service.js';
 
 type Kind = 'artist' | 'album';
 
@@ -88,6 +89,8 @@ const entryFields = {
 
 export const catalogResolvers = {
   Query: {
+    catalogArtistSlugs: async (_root: unknown, { names }: { names: string[] }) => lookupCatalogSlugs(names),
+
     catalogArtist: async (_root: unknown, { slug }: { slug: string }) => getPublicArtistBySlug(slug),
 
     myCatalogSubmissions: async (_root: unknown, _args: unknown, context: Context) => listMySubmissions(requireUser(context)),
@@ -165,6 +168,11 @@ export const catalogResolvers = {
       if (args.kind === 'artist') unwrap(await adminUpdateCatalogEntry(userId, 'artist', args.id, artistPatch(args)));
       else unwrap(await adminUpdateCatalogEntry(userId, 'album', args.id, albumPatch(args)));
       return true;
+    },
+
+    adminImportCatalogAlbums: async (_root: unknown, { artistId }: { artistId: string }, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      return unwrap(await adminImportCatalogAlbums(userId, artistId)).created;
     },
 
     adminDeleteCatalogEntry: async (_root: unknown, args: { kind: Kind; id: string; revokeCredit?: boolean | null }, context: Context) => {

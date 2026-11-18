@@ -67,6 +67,13 @@ export const catalogSchema = `
     songs: [Project!]!
   }
 
+  type CatalogArtistRef {
+    name: String!
+    # artistKey(name): match it against the lower-cased, NFC-normalised name you asked for.
+    key: String!
+    slug: String!
+  }
+
   # Aggregate only: no project ids, titles or owners.
   type DetectedAlbum {
     key: String!
@@ -76,6 +83,8 @@ export const catalogSchema = `
   }
 
   extend type Query {
+    # Public. Approved catalog artists matching these names; unknown names are left out (max 50 names).
+    catalogArtistSlugs(names: [String!]!): [CatalogArtistRef!]!
     # Null when the slug is unknown or the entry is not approved.
     catalogArtist(slug: String!): CatalogArtistPage
     myCatalogSubmissions: MyCatalogSubmissions!
@@ -94,6 +103,8 @@ export const catalogSchema = `
     adminCreateCatalogArtist(name: String!, disambiguation: String, bio: String, imageUrl: String, imageSource: CatalogImageSource, imageSourceUrl: String): CatalogArtist!
     adminCreateCatalogAlbum(artistId: ID!, title: String!, year: String, coverUrl: String): CatalogAlbum!
     adminUpdateCatalogEntry(kind: CatalogKind!, id: ID!, name: String, disambiguation: String, title: String, bio: String, imageUrl: String, year: String, coverUrl: String, imageSource: CatalogImageSource, imageSourceUrl: String): Boolean!
+    # Creates approved albums from the album names on the artist's public songs; returns how many were new.
+    adminImportCatalogAlbums(artistId: ID!): Int!
     adminDeleteCatalogEntry(kind: CatalogKind!, id: ID!, revokeCredit: Boolean): Boolean!
     approveDetectedAlbum(artistId: ID!, title: String!, year: String): CatalogAlbum!
     dismissDetectedAlbum(artistId: ID!, key: String!): Boolean!
