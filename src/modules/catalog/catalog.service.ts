@@ -57,9 +57,17 @@ export const validId = (id: unknown): id is string => typeof id === 'string' && 
 export const oid = (id: string) => new mongoose.Types.ObjectId(id);
 export const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
+/**
+ * The stored form of a catalog name or title: tags stripped, whitespace squashed, NFC.
+ * Idempotent, so it can be re-applied to a value (or key) that already went through it.
+ * Every album key is `albumKey(cleanCatalogText(raw))`: admin create/update, Detect albums,
+ * dismissals and song imports must all derive it this way or they stop matching each other.
+ */
+export const cleanCatalogText = (raw: string): string => squash(stripHtml(raw)).normalize('NFC');
+
 export function cleanName(raw: unknown, max: number, label: string): string | CatalogError {
   if (typeof raw !== 'string') return invalid(`${label} is required`);
-  const v = squash(stripHtml(raw)).normalize('NFC');
+  const v = cleanCatalogText(raw);
   if (!v) return invalid(`${label} is required`);
   if (v.length > max) return invalid(`${label} must be at most ${max} characters`);
   return v;
