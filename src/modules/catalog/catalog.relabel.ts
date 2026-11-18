@@ -57,7 +57,8 @@ export async function runRelabel(opts: { write: boolean; log?: (m: string) => vo
   ];
   const submitterIds = [...new Set(rows.map((r) => r.submittedBy))];
   log(`Community entries: ${artists.length} artists, ${albums.length} albums, ${submitterIds.length} distinct submitters`);
-  const users = await User.find({ _id: { $in: submitterIds } }).select('permissions role').lean();
+  // Soft-deleted users are excluded; banned staff stay in (staff still created those entries).
+  const users = await User.find({ _id: { $in: submitterIds }, isDeleted: { $ne: true } }).select('permissions role').lean();
   const staffIds = new Set(users.filter(isCatalogStaff).map((u) => String(u._id)));
 
   const plan = planRelabel(rows, staffIds);

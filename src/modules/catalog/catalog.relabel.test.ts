@@ -101,6 +101,21 @@ describe('runRelabel', () => {
     expect((await User.collection.findOne({ _id: staff }))!.progression).toEqual({ xp: 10 });
   });
 
+  it('skips soft-deleted staff, relabels pending rows, and lists albums in the dry run', async () => {
+    const staff = await seedUser({ permissions: ['catalog.manage'] });
+    const gone = await seedUser({ permissions: ['catalog.manage'], isDeleted: true });
+    const pending = await seedArtist('Pend', staff);
+    await CatalogArtist.updateOne({ _id: pending._id }, { $set: { status: 'pending', slug: null } });
+    const goneArtist = await seedArtist('Gone', gone);
+    await seedAlbum('StaffAlbum', staff);
+    const dry = await runRelabel({ write: false });
+    expect(dry.counts.album).toBe(1);
+    expect(dry.ids.album).toHaveLength(1);
+    await runRelabel({ write: true });
+    expect((await CatalogArtist.findById(pending._id).lean())!.source).toBe('admin');
+    expect((await CatalogArtist.findById(goneArtist._id).lean())!.source).toBe('community');
+  });
+
   it('second write run is a no-op', async () => {
     const staff = await seedUser({ permissions: ['catalog.manage'] });
     await seedArtist('A', staff);

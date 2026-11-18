@@ -18,6 +18,9 @@
  * Values are separate arguments ("--report out.json"); "--flag=value", unknown flags and
  * missing values are rejected before any connection is made.
  *
+ * Staff rule: soft-deleted users are excluded; banned staff are INCLUDED (their entries were still
+ * created by staff). `timestamps: false` keeps updatedAt stable on purpose: pending entries keep the
+ * expectedUpdatedAt a reviewer's queue holds, and once approved they earn no XP as source 'admin'.
  * Only `source` changes (updatedAt is kept). creditAwarded, XP and user stats are never touched:
  * entries that already paid out are counted below for information, and no XP is revoked.
  */
@@ -64,6 +67,14 @@ for (const [i, a] of argv.entries()) {
 
 const WRITE = values.write === true;
 const REPORT_PATH = typeof values.report === 'string' ? values.report : undefined;
+// Fail on an unwritable --report path now, not after the writes have happened.
+if (REPORT_PATH) {
+  try {
+    fs.closeSync(fs.openSync(REPORT_PATH, 'a'));
+  } catch (err) {
+    fail(`--report path is not writable: ${(err as Error).message}`);
+  }
+}
 
 async function main(): Promise<void> {
   // No autoIndex/autoCreate: even a dry run must not build indexes or collections on the target database.
@@ -86,7 +97,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((err) => {
-    console.error('❌  Relabel failed:', err);
+    console.error('❌  Relabel failed:', err instanceof Error ? err.message : String(err));
     process.exitCode = 1;
   })
   .finally(() => mongoose.disconnect());
