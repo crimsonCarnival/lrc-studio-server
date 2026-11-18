@@ -1,4 +1,5 @@
 import CatalogAlbum from './catalog-album.model.js';
+import CatalogAlbumDismissal from './catalog-album-dismissal.model.js';
 import { assignAlbumSlug } from './catalog.slug.js';
 import { albumKey, oid } from './catalog.service.js';
 import { CATALOG_LIMITS } from './catalog.limits.js';
@@ -11,8 +12,8 @@ type SongRow = {
 
 /**
  * Creates approved catalog albums for the album names found on an artist's public songs.
- * Existing albums (any status) with the same title are left alone, so re-running is safe and
- * a rejected album is never resurrected. Returns how many were created.
+ * Existing albums (any status) and dismissed titles are left alone, so re-running is safe and
+ * neither a rejected album nor a dismissed title is resurrected. Returns how many were created.
  */
 export async function importAlbumsFromSongs(artist: Pick<ICatalogArtist, '_id' | 'name'>, actorId: string): Promise<number> {
   const songs = (await listPublicSongsByArtist(artist.name)) as unknown as SongRow[];
@@ -28,10 +29,14 @@ export async function importAlbumsFromSongs(artist: Pick<ICatalogArtist, '_id' |
   }
   if (groups.size === 0) return 0;
 
-  const existing = new Set(
-    (await CatalogAlbum.find({ artistId: artist._id, titleKey: { $in: [...groups.keys()] } }).select('titleKey').lean<{ titleKey: string }[]>())
-      .map((a) => a.titleKey),
-  );
+  // Skip albums that already exist (any status) and titles an admin dismissed in Detect albums,
+  // so neither a rejection nor a dismissal is undone by an import.
+  const keys = { $in: [...groups.keys()] };
+  const [albums, dismissals] = await Promise.all([
+    CatalogAlbum.find({ artistId: artist._id, titleKey: keys }).select('titleKey').lean<{ titleKey: string }[]>(),
+    CatalogAlbumDismissal.find({ artistId: artist._id, titleKey: keys }).select('titleKey').lean<{ titleKey: string }[]>(),
+  ]);
+  const existing = new Set([...albums, ...dismissals].map((a) => a.titleKey));
   let created = 0;
   for (const [titleKey, g] of groups) {
     if (existing.has(titleKey)) continue;
