@@ -223,7 +223,7 @@ describe('copyGeniusArtistPhoto', () => {
   });
 
   it('refuses text/html and image/svg+xml', async () => {
-    for (const ct of ['text/html', 'image/svg+xml', '']) {
+    for (const ct of ['text/html', 'image/svg+xml', '', 'image/png,xyz', 'image/x-anything', 'image/avif']) {
       fetchMock.mockResolvedValue(imgRes(new Uint8Array(3), { 'content-type': ct }));
       expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 422 });
     }
@@ -248,6 +248,17 @@ describe('copyGeniusArtistPhoto', () => {
     expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 404, code: 'CATALOG_GENIUS_NOT_FOUND' });
     vi.mocked(getArtist).mockRejectedValue(new Error('genius_invalid_id'));
     expect(await copyGeniusArtistPhoto(ADMIN, -1)).toMatchObject({ status: 404 });
+  });
+
+  it('accepts jpeg/webp/gif and normalises params', async () => {
+    fetchMock.mockImplementation(async () => imgRes(new Uint8Array(3), { 'content-type': 'Image/JPEG; charset=binary' }));
+    await copyGeniusArtistPhoto(ADMIN, 11);
+    expect(vi.mocked(uploadCatalogImageBuffer).mock.calls[0][1]).toBe('image/jpeg');
+  });
+
+  it('genius_unauthorized → 503 unavailable', async () => {
+    vi.mocked(getArtist).mockRejectedValue(new Error('genius_unauthorized'));
+    expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 503, code: 'CATALOG_GENIUS_UNAVAILABLE' });
   });
 
   it('no Genius token → 503', async () => {

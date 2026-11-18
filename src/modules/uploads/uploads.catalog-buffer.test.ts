@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const upload = vi.hoisted(() => vi.fn());
-vi.mock('cloudinary', () => ({ v2: { config: vi.fn(), uploader: { upload }, utils: {} } }));
+const { upload, destroy } = vi.hoisted(() => ({ upload: vi.fn(), destroy: vi.fn() }));
+vi.mock('cloudinary', () => ({ v2: { config: vi.fn(), uploader: { upload, destroy }, utils: {} } }));
 
 import { uploadCatalogImageBuffer } from './uploads.service.js';
 
@@ -10,6 +10,7 @@ const GOOD = `https://res.cloudinary.com/democloud/image/upload/c_fill,w_600,h_6
 
 beforeEach(() => {
   upload.mockReset();
+  destroy.mockReset().mockResolvedValue({});
   vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'democloud');
   vi.stubEnv('CLOUDINARY_API_KEY', 'k');
   vi.stubEnv('CLOUDINARY_API_SECRET', 's');
@@ -31,7 +32,10 @@ describe('uploadCatalogImageBuffer', () => {
     expect(upload).not.toHaveBeenCalled();
   });
   it('rejects a result that fails the catalog URL guard', async () => {
-    upload.mockResolvedValue({ secure_url: 'https://evil.test/a.png' });
+    upload.mockResolvedValue({ secure_url: 'https://evil.test/a.png', public_id: 'catalog/x/y' });
+    await expect(uploadCatalogImageBuffer(Buffer.from([1]), 'image/png', ADMIN)).rejects.toThrow('storage_bad_url');
+    expect(destroy).toHaveBeenCalledWith('catalog/x/y', { resource_type: 'image' });
+    destroy.mockRejectedValue(new Error('nope'));
     await expect(uploadCatalogImageBuffer(Buffer.from([1]), 'image/png', ADMIN)).rejects.toThrow('storage_bad_url');
     upload.mockResolvedValue({ secure_url: GOOD });
     await expect(uploadCatalogImageBuffer(Buffer.from([1]), 'image/png', '64b000000000000000000002')).rejects.toThrow('storage_bad_url');

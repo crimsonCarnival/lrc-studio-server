@@ -252,7 +252,15 @@ export async function uploadCatalogImageBuffer(data: Buffer, contentType: string
     resource_type: 'image',
   });
   // Same guard admin create/update apply: a stored URL that would later be rejected is useless.
-  if (!isCatalogImageUrl(result?.secure_url, userId)) throw new Error('storage_bad_url');
+  if (!isCatalogImageUrl(result?.secure_url, userId)) {
+    // Don't leave an orphan behind an asset we refuse to reference.
+    if (result?.public_id) {
+      await cloudinary.uploader.destroy(result.public_id, { resource_type: 'image' }).catch((err: unknown) => {
+        console.warn('Failed to delete rejected catalog upload', { publicId: result.public_id, err });
+      });
+    }
+    throw new Error('storage_bad_url');
+  }
   return result.secure_url;
 }
 

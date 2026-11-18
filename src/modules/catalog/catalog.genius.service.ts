@@ -8,6 +8,7 @@ import { assertManager, isGeniusPageUrl } from './catalog.admin.service.js';
 export const GENIUS_IMAGE_HOSTS = ['images.genius.com', 'filepicker-images.genius.com', 'assets.genius.com'] as const;
 
 const MAX_MATCHES = 5;
+const RASTER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const IMAGE_TIMEOUT_MS = 8000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -65,6 +66,7 @@ export async function copyGeniusArtistPhoto(adminId: string, geniusId: number): 
     artist = await getArtist(geniusId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : '';
+    if (msg === 'genius_unauthorized') return fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Genius is not configured');
     if (msg === 'genius_not_found' || msg === 'genius_invalid_id') return fail(404, 'CATALOG_GENIUS_NOT_FOUND', 'Genius artist not found');
     return upstream();
   }
@@ -80,7 +82,7 @@ export async function copyGeniusArtistPhoto(adminId: string, geniusId: number): 
   if (!res.ok) return upstream();
 
   const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-  if (!contentType.startsWith('image/') || contentType === 'image/svg+xml') return rejected();
+  if (!RASTER_TYPES.has(contentType)) return rejected();
   const declared = res.headers.get('content-length');
   if (declared !== null && Number(declared) > MAX_IMAGE_BYTES) return rejected();
 
