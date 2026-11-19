@@ -122,6 +122,13 @@ export const catalogSchema = `
     year: String
   }
 
+  # Aggregate only: no project ids, titles or owners.
+  type DetectedArtist {
+    key: String!
+    name: String!
+    songCount: Int!
+  }
+
   extend type Query {
     # Public. Approved catalog artists matching these names; unknown names are left out (max 50 names).
     catalogArtistSlugs(names: [String!]!): [CatalogArtistRef!]!
@@ -140,6 +147,8 @@ export const catalogSchema = `
     catalogAdminArtists(query: String, offset: Int, limit: Int): [CatalogArtist!]!
     catalogAdminAlbums(artistId: ID!): [CatalogAlbum!]!
     catalogDetectAlbums(artistId: ID!): [DetectedAlbum!]!
+    # Primary artist names on songs that have no catalog entry and were not dismissed.
+    catalogDetectArtists: [DetectedArtist!]!
   }
 
   extend type Mutation {
@@ -156,5 +165,7 @@ export const catalogSchema = `
     adminDeleteCatalogEntry(kind: CatalogKind!, id: ID!, revokeCredit: Boolean): Boolean!
     approveDetectedAlbum(artistId: ID!, title: String!, year: String): CatalogAlbum!
     dismissDetectedAlbum(artistId: ID!, key: String!): Boolean!
+    approveDetectedArtist(name: String!): CatalogArtist!
+    dismissDetectedArtist(key: String!): Boolean!
   }
 `;

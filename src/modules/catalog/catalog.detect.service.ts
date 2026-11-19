@@ -3,7 +3,10 @@ import Project from '../projects/project.model.js';
 import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum, { type ICatalogAlbum } from './catalog-album.model.js';
 import CatalogAlbumDismissal from './catalog-album-dismissal.model.js';
-import { assertManager, adminCreateCatalogAlbum } from './catalog.admin.service.js';
+import CatalogArtistDismissal from './catalog-artist-dismissal.model.js';
+import { CATALOG_LIMITS } from './catalog.limits.js';
+import { assertManager, adminCreateCatalogAlbum, adminCreateCatalogArtist } from './catalog.admin.service.js';
+import type { ICatalogArtist } from './catalog-artist.model.js';
 import { fail, invalid, notFound, validId, oid, cleanCatalogText, albumKey, type CatalogError } from './catalog.service.js';
 import { artistKey } from '../artists/artist.service.js';
 import { logAdminAction } from '../admin/admin.service.js';
@@ -126,6 +129,94 @@ export async function dismissDetectedAlbum(adminId: string, artistId: string, ke
   if (inserted) {
     try {
       await logAdminAction({ adminId, action: 'catalog.dismiss_album', targetId: artistId, details: JSON.stringify({ key: titleKey }) });
+    } catch (err) {
+      console.error('[catalog] admin log failed', err);
+    }
+  }
+  return { ok: true };
+}
+
+/** Aggregate only: never project ids, titles or owners. */
+export type DetectedArtist = { key: string; name: string; songCount: number };
+
+type NameRow = { _id: string; n: number };
+
+/**
+ * Primary artist names found on songs that have no catalog entry (any status) and were not
+ * dismissed. Site-wide, unlike detectAlbums which is scoped to one catalog artist.
+ */
+export async function detectArtists(adminId: string): Promise<DetectedArtist[] | CatalogError> {
+  const denied = await assertManager(adminId);
+  if (denied) return denied;
+
+  // Grouped by exact stored spelling here and re-grouped by artistKey in JS: a collated $group
+  // would merge case variants and make "most frequent spelling" arbitrary. $setUnion counts a
+  // project once per spelling even if it lists the same primary twice. Collection scan (no index
+  // on metadata.artists): acceptable for an on-demand admin tool.
+  const rows = await Project.aggregate<NameRow>([
+    { $match: { kind: { $ne: 'subtitles' }, 'metadata.artists.role': 'primary' } },
+    { $project: {
+      _id: 0,
+      names: { $setUnion: [{ $map: { input: { $filter: { input: '$metadata.artists', cond: { $eq: ['$$this.role', 'primary'] } } }, in: '$$this.name' } }, []] },
+    } },
+    { $unwind: '$names' },
+    { $match: { names: { $type: 'string' } } },
+    { $group: { _id: '$names', n: { $sum: 1 } } },
+  ]);
+
+  type Bucket = { names: Map<string, number>; songCount: number };
+  const buckets = new Map<string, Bucket>();
+  for (const r of rows) {
+    const name = cleanCatalogText(r._id);
+    if (!name || name.length > CATALOG_LIMITS.maxArtistName) continue;
+    const key = artistKey(name);
+    const b = buckets.get(key) ?? { names: new Map(), songCount: 0 };
+    buckets.set(key, b);
+    b.songCount += r.n;
+    bump(b.names, name, r.n);
+  }
+
+  const [catalog, dismissed] = await Promise.all([
+    CatalogArtist.find({ nameKey: { $in: [...buckets.keys()] } }).select('nameKey').lean(),
+    CatalogArtistDismissal.find({ nameKey: { $in: [...buckets.keys()] } }).select('nameKey').lean(),
+  ]);
+  const hidden = new Set([...catalog.map((c) => c.nameKey), ...dismissed.map((d) => d.nameKey)]);
+
+  const out: DetectedArtist[] = [];
+  for (const [key, b] of buckets) {
+    if (hidden.has(key)) continue;
+    out.push({ key, name: mostFrequent(b.names, (a, c) => (a < c ? -1 : a > c ? 1 : 0)) ?? key, songCount: b.songCount });
+  }
+  out.sort((a, b) => b.songCount - a.songCount || a.name.localeCompare(b.name));
+  return out.slice(0, MAX_FINDINGS);
+}
+
+export async function approveDetectedArtist(adminId: string, name: string): Promise<{ artist: ICatalogArtist } | CatalogError> {
+  return adminCreateCatalogArtist(adminId, { name });
+}
+
+export async function dismissDetectedArtist(adminId: string, key: string): Promise<{ ok: true } | CatalogError> {
+  const denied = await assertManager(adminId);
+  if (denied) return denied;
+  if (typeof key !== 'string' || key.trim() === '' || key.length > MAX_KEY) return invalid('Key is required');
+
+  const nameKey = artistKey(cleanCatalogText(key));
+  if (!nameKey || nameKey.length > MAX_KEY) return invalid('Key is required');
+  let inserted = false;
+  try {
+    const res = await CatalogArtistDismissal.updateOne(
+      { nameKey },
+      { $setOnInsert: { dismissedBy: oid(adminId), createdAt: new Date() } },
+      { upsert: true },
+    );
+    inserted = res.upsertedCount === 1;
+  } catch (err) {
+    // A concurrent upsert of the same key lost the race on the unique index: already dismissed.
+    if ((err as { code?: number })?.code !== 11000) return fail(500, 'CATALOG_INTERNAL', 'Could not dismiss');
+  }
+  if (inserted) {
+    try {
+      await logAdminAction({ adminId, action: 'catalog.dismiss_artist', targetName: nameKey, details: JSON.stringify({ key: nameKey }) });
     } catch (err) {
       console.error('[catalog] admin log failed', err);
     }
