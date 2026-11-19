@@ -22,7 +22,8 @@ describe('uploadCatalogImageBuffer', () => {
     expect(await uploadCatalogImageBuffer(Buffer.from([1, 2]), 'image/png', ADMIN)).toBe(GOOD);
     expect(upload).toHaveBeenCalledWith(`data:image/png;base64,${Buffer.from([1, 2]).toString('base64')}`, {
       folder: `catalog/${ADMIN}`,
-      transformation: 'c_fill,w_600,h_600,f_webp,q_auto',
+      // raw_transformation, not transformation: the SDK treats a string there as a named transformation and Cloudinary 400s.
+      raw_transformation: 'c_fill,w_600,h_600,f_webp,q_auto',
       resource_type: 'image',
     });
   });
