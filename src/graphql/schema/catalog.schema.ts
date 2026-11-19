@@ -75,6 +75,9 @@ export const catalogSchema = `
     albumCards: [CatalogAlbumCard!]!
     # Every public song crediting this artist, from any user (capped at 500).
     songs: [Project!]!
+    # The signed-in viewer's own artist for this name, when they have songs crediting it as primary
+    # (private ones included). Null for anonymous viewers.
+    viewerShelf: CatalogViewerShelf
   }
 
   # Public: one approved album of an approved artist, with the public songs that credit the artist
@@ -92,6 +95,11 @@ export const catalogSchema = `
     name: String!
     slug: String
     disambiguation: String!
+  }
+
+  type CatalogViewerShelf {
+    artistId: ID!
+    songCount: Int!
   }
 
   type CatalogArtistRef {

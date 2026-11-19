@@ -23,7 +23,7 @@ import {
   adminImportCatalogAlbums,
 } from '../../modules/catalog/catalog.admin.service.js';
 import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum } from '../../modules/catalog/catalog.detect.service.js';
-import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, getPublicAlbumBySlugs, lookupCatalogSlugs, suggestCatalog } from '../../modules/catalog/catalog.query.service.js';
+import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, getPublicAlbumBySlugs, lookupCatalogSlugs, suggestCatalog, viewerShelfFor } from '../../modules/catalog/catalog.query.service.js';
 
 type Kind = 'artist' | 'album';
 
@@ -199,6 +199,11 @@ export const catalogResolvers = {
       unwrap(await dismissDetectedAlbum(userId, args.artistId, args.key));
       return true;
     },
+  },
+
+  CatalogArtistPage: {
+    viewerShelf: (page: { artist: { nameKey?: string } }, _args: unknown, context: Context) =>
+      viewerShelfFor(context.userId, page.artist.nameKey ?? ''),
   },
 
   CatalogArtist: entryFields,

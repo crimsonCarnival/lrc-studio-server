@@ -9,6 +9,7 @@ vi.mock('../../modules/catalog/catalog.rewards.js', () => ({ awardCatalogCredit:
 import User from '../../modules/users/user.model.js';
 import CatalogArtist from '../../modules/catalog/catalog-artist.model.js';
 import CatalogAlbum from '../../modules/catalog/catalog-album.model.js';
+import Artist from '../../modules/artists/artist.model.js';
 import Project from '../../modules/projects/project.model.js';
 import CatalogAlbumDismissal from '../../modules/catalog/catalog-album-dismissal.model.js';
 import CatalogSubmissionLog from '../../modules/catalog/catalog-submission-log.model.js';
@@ -275,6 +276,35 @@ describe('catalog resolvers', () => {
       expect(await Q.catalogSuggestions({}, { kind: 'album', artist: 'Nirvana' }, ctx())).toEqual([]);
       expect(await Q.catalogSuggestions({}, { kind: 'album', artist: 'Nobody' }, ctx())).toEqual([]);
       expect(await Q.catalogSuggestions({}, { kind: 'album' }, ctx())).toEqual([]);
+    });
+  });
+
+  describe('CatalogArtistPage.viewerShelf', () => {
+    const viewerShelf = (catalogResolvers as unknown as { CatalogArtistPage: { viewerShelf: (p: unknown, a: unknown, c: Context) => Promise<unknown> } })
+      .CatalogArtistPage.viewerShelf;
+    const page = { artist: { nameKey: 'robyn' } };
+    const song = (userId: string, artistId: unknown, role = 'primary', kind = 'song') =>
+      Project.collection.insertOne({ publicId: `v${++seq}`, userId: new mongoose.Types.ObjectId(userId), title: 't', kind, public: false, metadata: { artists: [{ name: 'Robyn', role, artistId }] } });
+
+    it("points the viewer at their own artist with their song count, private songs included", async () => {
+      const me = await seedUser();
+      const mine = await Artist.create({ userId: me, name: 'Robyn', nameLower: 'robyn' });
+      await song(me, mine._id);
+      await song(me, mine._id);
+      await song(me, mine._id, 'featured');
+      await song(me, mine._id, 'primary', 'subtitles');
+      expect(await viewerShelf(page, {}, ctx(me))).toEqual({ artistId: String(mine._id), songCount: 2 });
+    });
+
+    it('is null for anonymous viewers, other users, and viewers without primary songs', async () => {
+      const me = await seedUser();
+      const other = await seedUser();
+      const theirs = await Artist.create({ userId: other, name: 'Robyn', nameLower: 'robyn' });
+      await song(other, theirs._id);
+      expect(await viewerShelf(page, {}, ctx())).toBeNull();
+      expect(await viewerShelf(page, {}, ctx(me))).toBeNull();
+      await Artist.create({ userId: me, name: 'Robyn', nameLower: 'robyn' });
+      expect(await viewerShelf(page, {}, ctx(me))).toBeNull();
     });
   });
 

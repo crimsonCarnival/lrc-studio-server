@@ -1,6 +1,7 @@
 import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum from './catalog-album.model.js';
 import Project from '../projects/project.model.js';
+import Artist from '../artists/artist.model.js';
 import { artistKey } from '../artists/artist.service.js';
 import { validId, oid, albumKey, cleanCatalogText } from './catalog.service.js';
 
@@ -160,6 +161,23 @@ export async function suggestCatalog(
   const rows = await CatalogAlbum.find({ artistId: artists[0]._id, status: 'approved', ...(startsWith ? { titleKey: startsWith } : {}) })
     .select('title slug').sort({ year: -1, titleKey: 1, _id: 1 }).limit(limit).lean();
   return rows.map((r) => ({ id: String(r._id), name: r.title, slug: r.slug, disambiguation: '' }));
+}
+
+/**
+ * The viewer's own artist record for a catalog artist (same name key) and how many of their songs
+ * credit it as primary, private ones included: it points them at their personal artist page.
+ * Null for anonymous viewers and for viewers with no such songs.
+ */
+export async function viewerShelfFor(viewerId: string | null | undefined, nameKey: string): Promise<{ artistId: string; songCount: number } | null> {
+  if (!viewerId || !validId(viewerId) || !nameKey) return null;
+  const own = await Artist.findOne({ userId: oid(viewerId), nameLower: nameKey }).select('_id').lean();
+  if (!own) return null;
+  const songCount = await Project.countDocuments({
+    userId: oid(viewerId),
+    kind: { $ne: 'subtitles' },
+    'metadata.artists': { $elemMatch: { artistId: own._id, role: 'primary' } },
+  });
+  return songCount > 0 ? { artistId: String(own._id), songCount } : null;
 }
 
 /** Slugs of approved catalog artists matching the given names (case-insensitive); unknown names are omitted. */

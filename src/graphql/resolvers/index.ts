@@ -70,4 +70,5 @@ export const resolvers = {
   Activity: activityResolvers.Activity,
   CatalogArtist: catalogResolvers.CatalogArtist,
   CatalogAlbum:  catalogResolvers.CatalogAlbum,
+  CatalogArtistPage: catalogResolvers.CatalogArtistPage,
 };
