@@ -112,6 +112,7 @@ export const projectSchema = `
     singerColors: [String!]
     singers: [String!]
     songName: String
+    songVersion: String
     # Derived from artists, e.g. "Drake feat. Rihanna". Read-only: not accepted as input.
     songArtist: String
     artists: [ArtistCredit!]!
@@ -202,6 +203,7 @@ export const projectSchema = `
     singerColors: [String!]
     singers: [String!]
     songName: String
+    songVersion: String
     # Omit to leave the artists as they are; [] clears them. Order in the list is the display order.
     artists: [ArtistCreditInput!]
     songAlbum: String

@@ -73,6 +73,7 @@ export interface ProjectMetadata {
   tags?: string[];
   genre?: PrimaryGenre | '';
   songLanguage?: string;
+  songVersion?: string;
   trackNumber?: number | null;
   trackCount?: number | null;
   singers?: string[];

@@ -139,6 +139,8 @@ const metadataSchema = new mongoose.Schema(
     singerColors: { type: [String], default: [] },
     singers: { type: [String], default: [], set: singersSetter },
     songName: { type: String, default: '', maxlength: 500, set: textSetter },
+    // Optional free-form label that tells apart versions of one song ("Live", "Demo 2").
+    songVersion: { type: String, default: '', maxlength: 100, set: textSetter },
     // Derived from `artists` (see utils/artists.ts formatArtistDisplay) and never
     // client input; kept as a plain string for search, OG, slug and old readers.
     // Legacy rows without `artists` still carry their original text here.
