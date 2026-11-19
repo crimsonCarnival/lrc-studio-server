@@ -98,6 +98,8 @@ export async function copyGeniusArtistPhoto(adminId: string, geniusId: number): 
   try {
     return { imageUrl: await uploadCatalogImageBuffer(data, contentType, adminId), sourceUrl: artist.url };
   } catch (err) {
+    // The client only sees an opaque 502, so without this a storage failure is indistinguishable from Genius being down.
+    console.warn('Genius photo copy: storage upload failed', { geniusId, message: err instanceof Error ? err.message : String(err) });
     return err instanceof Error && err.message === 'storage_unconfigured'
       ? fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Image storage is not configured')
       : upstream();

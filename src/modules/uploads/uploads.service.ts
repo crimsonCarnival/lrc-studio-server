@@ -248,7 +248,9 @@ export async function uploadCatalogImageBuffer(data: Buffer, contentType: string
   });
   const result = await cloudinary.uploader.upload(`data:${contentType};base64,${data.toString('base64')}`, {
     folder: `${CATALOG_FOLDER}/${userId}`,
-    transformation: CATALOG_TRANSFORMATION,
+    // The SDK reads a plain string here as a *named* transformation ("Unknown transformation c_fill"),
+    // so the same transformation the client-signed path sends as a string goes in as raw options.
+    raw_transformation: CATALOG_TRANSFORMATION,
     resource_type: 'image',
   });
   // Same guard admin create/update apply: a stored URL that would later be rejected is useless.
