@@ -13,6 +13,8 @@ import { STAFF_NAME_TAG } from '../modules/badges/badge.service.js';
 import mongoose from 'mongoose';
 import type { LineEntry, SectionEntry } from '../types/index.js';
 import CatalogArtist from '../modules/catalog/catalog-artist.model.js';
+import CatalogAlbum from '../modules/catalog/catalog-album.model.js';
+import { songAlbumKey } from '../modules/catalog/catalog.query.service.js';
 import { artistKey } from '../modules/artists/artist.service.js';
 import { loadProjectCredits } from '../modules/collab/collab-credits.service.js';
 import { canViewProject } from './resolvers/auth-guards.js';
@@ -222,8 +224,50 @@ async function catalogSlugLoader(queries: Array<{ obj: LoaderObj }>): Promise<Ar
   });
 }
 
+type AlbumLink = { artistSlug: string; albumSlug: string };
+
+/**
+ * The approved catalog album a song names, under its first primary artist that has exactly one
+ * approved catalog entry (homonyms never link). Same keys as the album page, so a link always lands
+ * on a page that lists this song. Two queries per request, whatever the number of songs.
+ */
+async function catalogAlbumLoader(queries: Array<{ obj: LoaderObj }>): Promise<Array<AlbumLink | null>> {
+  const rows = queries.map(({ obj }) => {
+    const credits = Array.isArray(obj.artists) ? (obj.artists as Array<{ name?: unknown; role?: unknown }>) : [];
+    const primaries = credits.filter((c) => c?.role === 'primary').map((c) => artistKey(String(c.name ?? '').trim())).filter(Boolean);
+    return { albumKey: songAlbumKey({ metadata: { songAlbum: obj.songAlbum as string | null } }), primaries };
+  });
+  const keys = [...new Set(rows.filter((r) => r.albumKey).flatMap((r) => r.primaries))];
+  if (keys.length === 0) return rows.map(() => null);
+
+  const artists = await CatalogArtist.find({ status: 'approved', nameKey: { $in: keys }, slug: { $type: 'string' } })
+    .select('nameKey slug').lean<Array<{ _id: mongoose.Types.ObjectId; nameKey: string; slug: string }>>();
+  const byKey = new Map<string, Array<{ _id: mongoose.Types.ObjectId; slug: string }>>();
+  for (const a of artists) byKey.set(a.nameKey, [...(byKey.get(a.nameKey) ?? []), a]);
+  const unique = (k: string) => { const hits = byKey.get(k); return hits?.length === 1 ? hits[0] : null; };
+
+  const picks = rows.map((r) => {
+    if (!r.albumKey) return null;
+    const artist = r.primaries.map(unique).find(Boolean);
+    return artist ? { artist, titleKey: r.albumKey } : null;
+  });
+  const wanted = picks.filter((p): p is NonNullable<typeof p> => !!p);
+  if (wanted.length === 0) return rows.map(() => null);
+  const albums = await CatalogAlbum.find({
+    status: 'approved',
+    slug: { $type: 'string' },
+    $or: wanted.map((p) => ({ artistId: p.artist._id, titleKey: p.titleKey })),
+  }).select('artistId titleKey slug').lean<Array<{ artistId: mongoose.Types.ObjectId; titleKey: string; slug: string }>>();
+  const albumSlug = new Map(albums.map((a) => [`${String(a.artistId)}|${a.titleKey}`, a.slug]));
+  return picks.map((p) => {
+    const slug = p && albumSlug.get(`${String(p.artist._id)}|${p.titleKey}`);
+    return p && slug ? { artistSlug: p.artist.slug, albumSlug: slug } : null;
+  });
+}
+
 export const loaders: MercuriusLoaders = {
   ArtistCredit: { catalogSlug: { loader: catalogSlugLoader } },
+  ProjectMetadata: { catalogAlbum: { loader: catalogAlbumLoader } },
   Activity: { target: { loader: activityTargetLoader } },
   ReportEntry: { messageCount: { loader: reportMessageCountLoader } },
   MyReport: { messageCount: { loader: reportMessageCountLoader } },

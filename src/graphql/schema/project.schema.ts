@@ -116,6 +116,9 @@ export const projectSchema = `
     songArtist: String
     artists: [ArtistCredit!]!
     songAlbum: String
+    # The approved catalog album songAlbum names, under the first primary artist with a single
+    # approved catalog entry. Null when there is none, so clients link only when it is set.
+    catalogAlbum: CatalogAlbumLink
     songYear: String
     songGenre: String
     songLanguage: String
@@ -129,6 +132,11 @@ export const projectSchema = `
   enum ArtistRole {
     primary
     featured
+  }
+
+  type CatalogAlbumLink {
+    artistSlug: String!
+    albumSlug: String!
   }
 
   type ArtistCredit {
