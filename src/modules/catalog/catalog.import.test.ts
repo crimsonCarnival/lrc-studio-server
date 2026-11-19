@@ -105,4 +105,16 @@ describe('importAlbumsFromSongs', () => {
     const [album] = await CatalogAlbum.find({ artistId: artist._id }).lean();
     expect(album.title).toBe('Vespertine Live');
   });
+
+  it('ignores songs the artist is only featured on', async () => {
+    const artist = await seedArtist();
+    await Project.collection.insertOne({
+      publicId: `i${++seq}`, userId: new mongoose.Types.ObjectId(), title: 't', kind: 'song', public: true, ownerListed: true,
+      metadata: { artists: [{ name: 'Someone Else', role: 'primary' }, { name: 'Björk', role: 'featured' }], songAlbum: 'Their Album', songYear: '' },
+    });
+    await seedSong('Post');
+    expect(await importAlbumsFromSongs(artist, String(admin))).toBe(1);
+    const titles = (await CatalogAlbum.find({ artistId: artist._id }).lean()).map((a) => a.title);
+    expect(titles).toEqual(['Post']);
+  });
 });

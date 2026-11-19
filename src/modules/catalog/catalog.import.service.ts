@@ -3,11 +3,11 @@ import CatalogAlbumDismissal from './catalog-album-dismissal.model.js';
 import { assignAlbumSlug } from './catalog.slug.js';
 import { albumKey, oid, cleanCatalogText } from './catalog.service.js';
 import { CATALOG_LIMITS } from './catalog.limits.js';
-import { listPublicSongsByArtist } from './catalog.query.service.js';
+import { listPublicSongsByArtist, isPrimaryOf } from './catalog.query.service.js';
 import type { ICatalogArtist } from './catalog-artist.model.js';
 
 type SongRow = {
-  metadata?: { songAlbum?: string | null; songYear?: string | number | null; } | null;
+  metadata?: { songAlbum?: string | null; songYear?: string | number | null; artists?: Array<{ name?: string | null; role?: string | null }> | null } | null;
 };
 
 /**
@@ -15,8 +15,9 @@ type SongRow = {
  * Existing albums (any status) and dismissed titles are left alone, so re-running is safe and
  * neither a rejected album nor a dismissed title is resurrected. Returns how many were created.
  */
-export async function importAlbumsFromSongs(artist: Pick<ICatalogArtist, '_id' | 'name'>, actorId: string): Promise<number> {
-  const songs = (await listPublicSongsByArtist(artist.name)) as unknown as SongRow[];
+export async function importAlbumsFromSongs(artist: Pick<ICatalogArtist, '_id' | 'name' | 'nameKey'>, actorId: string): Promise<number> {
+  // Primary credits only: a song this artist is merely featured on belongs to someone else's album.
+  const songs = ((await listPublicSongsByArtist(artist.name)) as unknown as SongRow[]).filter((s) => isPrimaryOf(s, artist.nameKey));
   // Same title/key derivation as admin create, Detect albums and dismissals (see cleanCatalogText).
   // Over-long titles are skipped, as cleanName rejects them: truncating would change the key.
   const groups = new Map<string, { title: string; years: string[] }>();

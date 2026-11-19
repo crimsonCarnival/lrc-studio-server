@@ -358,7 +358,7 @@ export async function adminImportCatalogAlbums(adminId: string, artistId: string
   const denied = await assertManager(adminId);
   if (denied) return denied;
   if (!validId(artistId)) return notFound();
-  const artist = await CatalogArtist.findOne({ _id: oid(artistId), status: 'approved' }).select('_id name').lean();
+  const artist = await CatalogArtist.findOne({ _id: oid(artistId), status: 'approved' }).select('_id name nameKey').lean();
   if (!artist) return notFound();
   const created = await importAlbumsFromSongs(artist, adminId);
   await audit(adminId, 'catalog.import', artistId, artist.name, { kind: 'album', created });

@@ -172,6 +172,66 @@ describe('catalog resolvers', () => {
     expect(await Q.catalogArtist({}, { slug: 'nope' }, ctx())).toBeNull();
   });
 
+  describe('public album truth', () => {
+    let pub = 0;
+    const song = (o: { album: string; role?: 'primary' | 'featured'; track?: number; cover?: string; isPublic?: boolean }) =>
+      Project.collection.insertOne({
+        publicId: `s${++pub}`, userId: new mongoose.Types.ObjectId(), title: `Song ${pub}`, kind: 'song', public: o.isPublic ?? true, ownerListed: true,
+        coverImage: o.cover ?? '',
+        metadata: {
+          artists: o.role === 'featured' ? [{ name: 'Other', role: 'primary' }, { name: 'Robyn', role: 'featured' }] : [{ name: 'Robyn', role: 'primary' }],
+          songAlbum: o.album, songYear: '', trackNumber: o.track ?? null,
+        },
+      });
+    const seed = async () => {
+      const s = await seedUser();
+      const a = await CatalogArtist.create({ name: 'Robyn', nameKey: 'robyn', status: 'approved', slug: 'robyn', source: 'admin', submittedBy: s });
+      await CatalogAlbum.create({ artistId: a._id, title: 'Honey', titleKey: 'honey', status: 'approved', slug: 'honey', source: 'admin', submittedBy: s });
+      await CatalogAlbum.create({ artistId: a._id, title: 'Bootleg', titleKey: 'bootleg', status: 'rejected', source: 'community', submittedBy: s });
+      await CatalogAlbumDismissal.create({ artistId: a._id, titleKey: 'b-sides', dismissedBy: s });
+      return a;
+    };
+
+    it('albumCards lists approved albums only, counting primary songs by cleaned key', async () => {
+      await seed();
+      await song({ album: '  honey ', cover: 'https://x.test/c.webp' });
+      await song({ album: '<b>Honey</b>' });
+      await song({ album: 'Honey', role: 'featured' });
+      await song({ album: 'Bootleg' });
+      await song({ album: 'B-Sides' });
+      await song({ album: 'Never Catalogued' });
+      const page = await Q.catalogArtist({}, { slug: 'robyn' }, ctx());
+      expect(page.albumCards.map((c: { album: { title: string }; songCount: number; coverUrl: string | null }) => [c.album.title, c.songCount, c.coverUrl]))
+        .toEqual([['Honey', 2, 'https://x.test/c.webp']]);
+      // Featured and uncatalogued songs still appear in the song list.
+      expect(page.songs).toHaveLength(6);
+    });
+
+    it('catalogAlbum returns the album with its primary public songs in track order', async () => {
+      await seed();
+      await song({ album: 'Honey', track: 2 });
+      await song({ album: 'honey', track: 1 });
+      await song({ album: 'Honey', role: 'featured', track: 3 });
+      await song({ album: 'Honey', isPublic: false });
+      await song({ album: 'Other' });
+      const page = await Q.catalogAlbum({}, { artistSlug: 'ROBYN', albumSlug: 'honey' }, ctx());
+      expect(page.album.title).toBe('Honey');
+      expect(page.artist.name).toBe('Robyn');
+      expect(page.album.submittedBy).toBeUndefined();
+      expect(page.songs.map((x: { metadata: { trackNumber: number } }) => x.metadata.trackNumber)).toEqual([1, 2]);
+    });
+
+    it('catalogAlbum is null for unapproved or mismatched slugs', async () => {
+      const a = await seed();
+      const other = await CatalogArtist.create({ name: 'Mo', nameKey: 'mo', status: 'approved', slug: 'mo', source: 'admin', submittedBy: a.submittedBy });
+      await CatalogAlbum.create({ artistId: other._id, title: 'Pend', titleKey: 'pend', status: 'pending', slug: null, source: 'community', submittedBy: a.submittedBy });
+      expect(await Q.catalogAlbum({}, { artistSlug: 'mo', albumSlug: 'honey' }, ctx())).toBeNull();
+      expect(await Q.catalogAlbum({}, { artistSlug: 'robyn', albumSlug: 'nope' }, ctx())).toBeNull();
+      expect(await Q.catalogAlbum({}, { artistSlug: 'nope', albumSlug: 'honey' }, ctx())).toBeNull();
+      expect(await Q.catalogAlbum({}, { artistSlug: '', albumSlug: '' }, ctx())).toBeNull();
+    });
+  });
+
   it('adminUpdateCatalogEntry passes imageSource and imageSourceUrl', async () => {
     const admin = await seedUser(['catalog.manage']);
     const a = await CatalogArtist.create({ name: 'Cr', nameKey: 'cr', status: 'approved', slug: 'cr', source: 'admin', submittedBy: admin });

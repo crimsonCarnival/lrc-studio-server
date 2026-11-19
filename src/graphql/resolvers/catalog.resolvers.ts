@@ -23,7 +23,7 @@ import {
   adminImportCatalogAlbums,
 } from '../../modules/catalog/catalog.admin.service.js';
 import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum } from '../../modules/catalog/catalog.detect.service.js';
-import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, lookupCatalogSlugs } from '../../modules/catalog/catalog.query.service.js';
+import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, getPublicAlbumBySlugs, lookupCatalogSlugs } from '../../modules/catalog/catalog.query.service.js';
 
 type Kind = 'artist' | 'album';
 
@@ -92,6 +92,9 @@ export const catalogResolvers = {
     catalogArtistSlugs: async (_root: unknown, { names }: { names: string[] }) => lookupCatalogSlugs(names),
 
     catalogArtist: async (_root: unknown, { slug }: { slug: string }) => getPublicArtistBySlug(slug),
+
+    catalogAlbum: async (_root: unknown, { artistSlug, albumSlug }: { artistSlug: string; albumSlug: string }) =>
+      getPublicAlbumBySlugs(artistSlug, albumSlug),
 
     myCatalogSubmissions: async (_root: unknown, _args: unknown, context: Context) => listMySubmissions(requireUser(context)),
 
