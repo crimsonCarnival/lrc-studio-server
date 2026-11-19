@@ -12,6 +12,7 @@ import CatalogAlbum from '../../modules/catalog/catalog-album.model.js';
 import Artist from '../../modules/artists/artist.model.js';
 import Project from '../../modules/projects/project.model.js';
 import CatalogAlbumDismissal from '../../modules/catalog/catalog-album-dismissal.model.js';
+import CatalogArtistDismissal from '../../modules/catalog/catalog-artist-dismissal.model.js';
 import CatalogSubmissionLog from '../../modules/catalog/catalog-submission-log.model.js';
 import Notification from '../../modules/notifications/notification.model.js';
 import { catalogResolvers } from './catalog.resolvers.js';
@@ -22,7 +23,7 @@ let repl: MongoMemoryReplSet;
 beforeAll(async () => {
   repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(repl.getUri());
-  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init(), Notification.init(), CatalogAlbumDismissal.init()]);
+  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init(), Notification.init(), CatalogAlbumDismissal.init(), CatalogArtistDismissal.init()]);
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
@@ -32,7 +33,7 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}), CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({}),
     CatalogSubmissionLog.deleteMany({}), Notification.deleteMany({}),
-    CatalogAlbumDismissal.deleteMany({}), Project.collection.deleteMany({}),
+    CatalogAlbumDismissal.deleteMany({}), CatalogArtistDismissal.deleteMany({}), Project.collection.deleteMany({}),
   ]);
 });
 
@@ -407,6 +408,40 @@ describe('catalog resolvers', () => {
 
       expect(await M.dismissDetectedAlbum({}, { artistId, key: 'vespertine' }, ctx(admin))).toBe(true);
       expect(await M.dismissDetectedAlbum({}, { artistId, key: 'vespertine' }, ctx(admin))).toBe(true);
+    });
+  });
+
+  describe('artist detection', () => {
+    it('anonymous callers get unauthorized', async () => {
+      expect(await codeOf(Q.catalogDetectArtists({}, {}, ctx()))).toBe('unauthorized');
+      expect(await codeOf(M.approveDetectedArtist({}, { name: 'X' }, ctx()))).toBe('unauthorized');
+      expect(await codeOf(M.dismissDetectedArtist({}, { key: 'x' }, ctx()))).toBe('unauthorized');
+    });
+
+    it('plain users and review-only staff are forbidden on all three', async () => {
+      for (const u of [await seedUser(), await seedUser(['catalog.review'])]) {
+        expect(await codeOf(Q.catalogDetectArtists({}, {}, ctx(u)))).toBe('forbidden');
+        expect(await codeOf(M.approveDetectedArtist({}, { name: 'X' }, ctx(u)))).toBe('forbidden');
+        expect(await codeOf(M.dismissDetectedArtist({}, { key: 'x' }, ctx(u)))).toBe('forbidden');
+      }
+    });
+
+    it('manager detects, approves (admin source) and dismisses idempotently', async () => {
+      const admin = await seedUser(['catalog.manage']);
+      for (const name of ['Newbie', 'Skip Me']) {
+        await Project.collection.insertOne({
+          publicId: `da${++seq}`, userId: new mongoose.Types.ObjectId(), title: 't', kind: 'song', public: false,
+          metadata: { artists: [{ name, role: 'primary' }] },
+        });
+      }
+      const found = await Q.catalogDetectArtists({}, {}, ctx(admin));
+      expect(found).toHaveLength(2);
+
+      const artist = await M.approveDetectedArtist({}, { name: 'Newbie' }, ctx(admin));
+      expect(artist).toMatchObject({ name: 'Newbie', status: 'approved', source: 'admin' });
+      expect(await M.dismissDetectedArtist({}, { key: 'skip me' }, ctx(admin))).toBe(true);
+      expect(await M.dismissDetectedArtist({}, { key: 'skip me' }, ctx(admin))).toBe(true);
+      expect(await Q.catalogDetectArtists({}, {}, ctx(admin))).toEqual([]);
     });
   });
 });

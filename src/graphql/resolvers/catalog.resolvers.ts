@@ -22,7 +22,7 @@ import {
   adminDeleteCatalogEntry,
   adminImportCatalogAlbums,
 } from '../../modules/catalog/catalog.admin.service.js';
-import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum } from '../../modules/catalog/catalog.detect.service.js';
+import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum, detectArtists, approveDetectedArtist, dismissDetectedArtist } from '../../modules/catalog/catalog.detect.service.js';
 import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, getPublicAlbumBySlugs, lookupCatalogSlugs, suggestCatalog, viewerShelfFor, browseCatalogArtists } from '../../modules/catalog/catalog.query.service.js';
 
 type Kind = 'artist' | 'album';
@@ -123,6 +123,11 @@ export const catalogResolvers = {
       const { userId } = await requirePermission(context, 'catalog.manage');
       return unwrap(await detectAlbums(userId, artistId));
     },
+
+    catalogDetectArtists: async (_root: unknown, _args: unknown, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      return unwrap(await detectArtists(userId));
+    },
   },
 
   Mutation: {
@@ -200,6 +205,17 @@ export const catalogResolvers = {
     dismissDetectedAlbum: async (_root: unknown, args: { artistId: string; key: string }, context: Context) => {
       const { userId } = await requirePermission(context, 'catalog.manage');
       unwrap(await dismissDetectedAlbum(userId, args.artistId, args.key));
+      return true;
+    },
+
+    approveDetectedArtist: async (_root: unknown, args: { name: string }, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      return unwrap(await approveDetectedArtist(userId, args.name)).artist;
+    },
+
+    dismissDetectedArtist: async (_root: unknown, args: { key: string }, context: Context) => {
+      const { userId } = await requirePermission(context, 'catalog.manage');
+      unwrap(await dismissDetectedArtist(userId, args.key));
       return true;
     },
   },

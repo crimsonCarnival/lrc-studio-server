@@ -12,14 +12,15 @@ import Project from '../projects/project.model.js';
 import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum from './catalog-album.model.js';
 import CatalogAlbumDismissal from './catalog-album-dismissal.model.js';
-import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum } from './catalog.detect.service.js';
+import CatalogArtistDismissal from './catalog-artist-dismissal.model.js';
+import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum, detectArtists, approveDetectedArtist, dismissDetectedArtist } from './catalog.detect.service.js';
 
 let repl: MongoMemoryReplSet;
 
 beforeAll(async () => {
   repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(repl.getUri());
-  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init(), CatalogAlbumDismissal.init(), AdminLog.init()]);
+  await Promise.all([User.init(), CatalogArtist.init(), CatalogAlbum.init(), CatalogAlbumDismissal.init(), CatalogArtistDismissal.init(), AdminLog.init()]);
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
@@ -28,7 +29,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}), CatalogArtist.deleteMany({}), CatalogAlbum.deleteMany({}),
-    CatalogAlbumDismissal.deleteMany({}), AdminLog.deleteMany({}), Project.collection.deleteMany({}),
+    CatalogAlbumDismissal.deleteMany({}), CatalogArtistDismissal.deleteMany({}), AdminLog.deleteMany({}), Project.collection.deleteMany({}),
   ]);
 });
 
@@ -258,5 +259,81 @@ describe('approve and dismiss', () => {
     expect(errOf(await approveDetectedAlbum(nobody, artist, 'Post', null)).code).toBe('CATALOG_FORBIDDEN');
     expect(errOf(await dismissDetectedAlbum(nobody, artist, 'Post')).code).toBe('CATALOG_FORBIDDEN');
     expect(await CatalogAlbum.countDocuments({})).toBe(0);
+  });
+});
+
+describe('detectArtists', () => {
+  type Found = { key: string; name: string; songCount: number };
+  const found = async (admin: string) => (await detectArtists(admin)) as Found[];
+
+  it('lists primary names across users, groups spellings and picks the most frequent', async () => {
+    const admin = await seedUser();
+    await seedProject({ artists: [{ name: 'Björk', role: 'primary' }] });
+    await seedProject({ artists: [{ name: 'Björk', role: 'primary' }] });
+    await seedProject({ artists: [{ name: 'BJÖRK', role: 'primary' }] });
+    expect(await found(admin)).toEqual([{ key: 'björk', name: 'Björk', songCount: 3 }]);
+  });
+
+  it('ignores featured credits, subtitles projects and empty names', async () => {
+    const admin = await seedUser();
+    await seedProject({ artists: [{ name: 'Lead', role: 'primary' }, { name: 'Guest', role: 'featured' }] });
+    await seedProject({ kind: 'subtitles', artists: [{ name: 'Subs', role: 'primary' }] });
+    await seedProject({ artists: [{ name: '  ', role: 'primary' }] });
+    expect((await found(admin)).map((r) => r.key)).toEqual(['lead']);
+  });
+
+  it('counts a project once even if it lists the same primary twice', async () => {
+    const admin = await seedUser();
+    await seedProject({ artists: [{ name: 'Dup', role: 'primary' }, { name: 'Dup', role: 'primary' }] });
+    expect((await found(admin))[0].songCount).toBe(1);
+  });
+
+  it('hides names already in the catalog in any status', async () => {
+    const admin = await seedUser();
+    for (const [i, status] of (['pending', 'rejected', 'approved'] as const).entries()) {
+      await seedArtist(admin, `Cat${i}`, status);
+      await seedProject({ artists: [{ name: `Cat${i}`, role: 'primary' }] });
+    }
+    await seedProject({ artists: [{ name: 'Fresh', role: 'primary' }] });
+    expect((await found(admin)).map((r) => r.key)).toEqual(['fresh']);
+  });
+
+  it('dismissed names stay hidden; dismiss is idempotent with one audit row', async () => {
+    const admin = await seedUser();
+    await seedProject({ artists: [{ name: 'Nope', role: 'primary' }] });
+    await seedProject({ artists: [{ name: 'Yes', role: 'primary' }] });
+    expect(await dismissDetectedArtist(admin, 'NOPE')).toEqual({ ok: true });
+    expect(await dismissDetectedArtist(admin, 'nope ')).toEqual({ ok: true });
+    expect((await found(admin)).map((r) => r.key)).toEqual(['yes']);
+    expect(await CatalogArtistDismissal.countDocuments({})).toBe(1);
+    expect(await AdminLog.countDocuments({ action: 'catalog.dismiss_artist' })).toBe(1);
+  });
+
+  it('sorts by songCount then name and returns aggregates only', async () => {
+    const admin = await seedUser();
+    await seedMany(2, { artists: [{ name: 'Zed', role: 'primary' }] });
+    await seedProject({ artists: [{ name: 'Bravo', role: 'primary' }] });
+    await seedProject({ artists: [{ name: 'Alpha', role: 'primary' }] });
+    const r = await found(admin);
+    expect(r.map((x) => x.name)).toEqual(['Zed', 'Alpha', 'Bravo']);
+    expect(Object.keys(r[0])).toEqual(['key', 'name', 'songCount']);
+    expect(JSON.stringify(r)).not.toContain('SECRET');
+  });
+
+  it('approve creates an approved admin artist and it leaves the findings', async () => {
+    const admin = await seedUser();
+    await seedProject({ artists: [{ name: 'Newcomer', role: 'primary' }] });
+    const r = (await approveDetectedArtist(admin, 'Newcomer')) as { artist: any };
+    expect(r.artist.status).toBe('approved');
+    expect(r.artist.source).toBe('admin');
+    expect(await found(admin)).toEqual([]);
+  });
+
+  it('non-managers are refused everywhere', async () => {
+    const nobody = await seedUser([]);
+    expect(errOf(await detectArtists(nobody)).code).toBe('CATALOG_FORBIDDEN');
+    expect(errOf(await approveDetectedArtist(nobody, 'X')).code).toBe('CATALOG_FORBIDDEN');
+    expect(errOf(await dismissDetectedArtist(nobody, 'x')).code).toBe('CATALOG_FORBIDDEN');
+    expect(await CatalogArtist.countDocuments({})).toBe(0);
   });
 });
