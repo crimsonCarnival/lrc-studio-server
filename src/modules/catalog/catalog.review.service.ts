@@ -127,9 +127,18 @@ export async function reviewCatalogEntry(
   await User.updateOne({ _id: oid(reviewer.userId) }, { $inc: { 'stats.catalogReviews': 1 } }).catch((err) =>
     logFailure('reviewer counter', err),
   );
-  await notifyCatalogReviewed(submitterId, kind, decision, entryName, reviewNote).catch((err) => logFailure('notification', err));
-
   const entry = (await Model.findById(claimed._id)) ?? claimed;
+  // Where the approved entry now lives, so the notification can open its page. Absent when slugging failed.
+  let link: { slug: string; artistSlug?: string } | undefined;
+  if (decision === 'approve' && entry.slug) {
+    if (kind === 'artist') link = { slug: entry.slug };
+    else {
+      const parent = await CatalogArtist.findById((entry as ICatalogAlbum).artistId).select('slug').lean().catch(() => null);
+      if (parent?.slug) link = { slug: entry.slug, artistSlug: parent.slug };
+    }
+  }
+  await notifyCatalogReviewed(submitterId, kind, decision, entryName, reviewNote, link).catch((err) => logFailure('notification', err));
+
   if (decision === 'approve') await onCatalogApproved(kind, entry).catch((err) => logFailure('onCatalogApproved', err));
   // A newly approved artist gets its albums from its public songs; approval stands if this fails.
   if (decision === 'approve' && kind === 'artist') await importAlbumsFromSongs(entry as ICatalogArtist, reviewer.userId).catch((err) => logFailure('album import', err));
