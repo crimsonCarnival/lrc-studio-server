@@ -151,7 +151,7 @@ describe('reviewCatalogEntry', () => {
     expect(r.entry.slug).toBe('bjork');
     const notes = await Notification.find({ userId: submitter }).lean();
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ type: 'catalog_approved', body: 'Björk', meta: { kind: 'artist' } });
+    expect(notes[0]).toMatchObject({ type: 'catalog_approved', body: 'Björk', meta: { kind: 'artist', slug: 'bjork' } });
     expect(await reviews(rev.userId)).toBe(1);
     expect(triggerBadgeCheck).toHaveBeenCalledTimes(1);
     expect(triggerBadgeCheck).toHaveBeenCalledWith(rev.userId, 'catalog_review');
@@ -231,6 +231,8 @@ describe('reviewCatalogEntry', () => {
     const stored = (await CatalogAlbum.findById(album._id))!;
     expect(stored).toMatchObject({ status: 'approved', slug: 'homogenic' });
     expect(awardCatalogCredit).toHaveBeenCalledWith(submitter, 'album');
+    const [note] = await Notification.find({ userId: submitter }).lean();
+    expect(note.meta).toEqual({ kind: 'album', slug: 'homogenic', artistSlug: 'bjork' });
   });
 
   it('rejects an album even when its artist is pending', async () => {

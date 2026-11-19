@@ -7,7 +7,8 @@ import { getIO } from '../../socket/socket.manager.js';
  * Tells a submitter their catalog entry was approved or rejected. Unlike badge
  * notifications there is no preference gate: it answers the user's own submission.
  * `meta` carries the entry kind (so the client can say artist or album) and, on a
- * rejection, the note; the body stays the entry name.
+ * rejection, the note; the body stays the entry name. On an approval, `link` carries the slugs of
+ * the new page (`slug`, plus `artistSlug` for an album) so the client can open it.
  */
 export async function notifyCatalogReviewed(
   userId: string,
@@ -15,6 +16,7 @@ export async function notifyCatalogReviewed(
   decision: 'approve' | 'reject',
   entryName: string,
   note: string,
+  link?: { slug: string; artistSlug?: string },
 ): Promise<void> {
   const notification = await Notification.create({
     userId: new mongoose.Types.ObjectId(userId),
@@ -22,7 +24,7 @@ export async function notifyCatalogReviewed(
     read: false,
     sticky: false,
     body: entryName,
-    meta: { kind, ...(decision === 'reject' && note ? { note } : {}) },
+    meta: { kind, ...(decision === 'reject' && note ? { note } : {}), ...(decision === 'approve' && link ? link : {}) },
   });
   enqueueNotif(userId, notification.toObject() as unknown as INotification);
   try {
