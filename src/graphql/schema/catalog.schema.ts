@@ -97,6 +97,11 @@ export const catalogSchema = `
     disambiguation: String!
   }
 
+  type CatalogArtistList {
+    items: [CatalogArtist!]!
+    total: Int!
+  }
+
   type CatalogViewerShelf {
     artistId: ID!
     songCount: Int!
@@ -122,6 +127,9 @@ export const catalogSchema = `
     catalogArtistSlugs(names: [String!]!): [CatalogArtistRef!]!
     # Null when the slug is unknown or the entry is not approved.
     catalogArtist(slug: String!): CatalogArtistPage
+    # Public browse/search of approved artists, A to Z. query matches anywhere in the name,
+    # case-insensitively. limit defaults to 24, max 48. Reviewer-only fields are always null.
+    catalogArtists(query: String, offset: Int, limit: Int): CatalogArtistList!
     # Null when either slug is unknown or either entry is not approved.
     catalogAlbum(artistSlug: String!, albumSlug: String!): CatalogAlbumPage
     # Public autocomplete. artist: names starting with prefix. album: approved albums of the one

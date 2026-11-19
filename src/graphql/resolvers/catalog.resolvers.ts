@@ -23,7 +23,7 @@ import {
   adminImportCatalogAlbums,
 } from '../../modules/catalog/catalog.admin.service.js';
 import { detectAlbums, approveDetectedAlbum, dismissDetectedAlbum } from '../../modules/catalog/catalog.detect.service.js';
-import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, getPublicAlbumBySlugs, lookupCatalogSlugs, suggestCatalog, viewerShelfFor } from '../../modules/catalog/catalog.query.service.js';
+import { listReviewQueue, listApprovedArtists, listApprovedAlbums, getPublicArtistBySlug, getPublicAlbumBySlugs, lookupCatalogSlugs, suggestCatalog, viewerShelfFor, browseCatalogArtists } from '../../modules/catalog/catalog.query.service.js';
 
 type Kind = 'artist' | 'album';
 
@@ -95,6 +95,9 @@ export const catalogResolvers = {
 
     catalogAlbum: async (_root: unknown, { artistSlug, albumSlug }: { artistSlug: string; albumSlug: string }) =>
       getPublicAlbumBySlugs(artistSlug, albumSlug),
+
+    catalogArtists: async (_root: unknown, args: { query?: string | null; offset?: number | null; limit?: number | null }) =>
+      browseCatalogArtists(args),
 
     catalogSuggestions: async (_root: unknown, args: { kind: Kind; prefix?: string | null; artist?: string | null; limit?: number | null }) =>
       suggestCatalog(args.kind, args),

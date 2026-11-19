@@ -308,6 +308,42 @@ describe('catalog resolvers', () => {
     });
   });
 
+  describe('catalogArtists (public browse)', () => {
+    const make = async (name: string, status = 'approved') => {
+      const s = await seedUser();
+      return CatalogArtist.create({ name, nameKey: name.normalize('NFC').toLowerCase(), status, slug: status === 'approved' ? `b${++seq}` : null, source: 'community', submittedBy: s, reviewNote: 'internal' });
+    };
+
+    it('lists approved artists A to Z with a total, hiding reviewer fields', async () => {
+      await make('Zola');
+      await make('Ada');
+      await make('Pending One', 'pending');
+      const page = await Q.catalogArtists({}, {}, ctx());
+      expect(page.total).toBe(2);
+      expect(page.items.map((a: { name: string }) => a.name)).toEqual(['Ada', 'Zola']);
+      expect(page.items[0].reviewNote).toBeUndefined();
+      expect(page.items[0].submittedBy).toBeUndefined();
+    });
+
+    it('searches anywhere in the name, case-insensitively and regex-safely', async () => {
+      await make('Björk');
+      await make('The Bjorn Again');
+      await make('A.B.C');
+      expect((await Q.catalogArtists({}, { query: 'BJÖ' }, ctx())).items.map((a: { name: string }) => a.name)).toEqual(['Björk']);
+      expect((await Q.catalogArtists({}, { query: 'bj' }, ctx())).total).toBe(2);
+      expect((await Q.catalogArtists({}, { query: '.' }, ctx())).items.map((a: { name: string }) => a.name)).toEqual(['A.B.C']);
+    });
+
+    it('pages with offset and caps limit', async () => {
+      for (let i = 0; i < 50; i++) await make(`Band ${String(i).padStart(2, '0')}`);
+      const first = await Q.catalogArtists({}, { limit: 500 }, ctx());
+      expect(first.items).toHaveLength(48);
+      expect(first.total).toBe(50);
+      const rest = await Q.catalogArtists({}, { offset: 48 }, ctx());
+      expect(rest.items.map((a: { name: string }) => a.name)).toEqual(['Band 48', 'Band 49']);
+    });
+  });
+
   it('adminUpdateCatalogEntry passes imageSource and imageSourceUrl', async () => {
     const admin = await seedUser(['catalog.manage']);
     const a = await CatalogArtist.create({ name: 'Cr', nameKey: 'cr', status: 'approved', slug: 'cr', source: 'admin', submittedBy: admin });

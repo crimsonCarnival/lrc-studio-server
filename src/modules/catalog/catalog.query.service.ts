@@ -163,6 +163,25 @@ export async function suggestCatalog(
   return rows.map((r) => ({ id: String(r._id), name: r.title, slug: r.slug, disambiguation: '' }));
 }
 
+const BROWSE_DEFAULT = 24;
+const BROWSE_MAX = 48;
+
+/**
+ * Public browse/search over approved artists: A to Z by name key, optionally filtered by a
+ * case-insensitive substring of the name. Reviewer-only fields are never selected.
+ */
+export async function browseCatalogArtists(opts: { query?: string | null; offset?: number | null; limit?: number | null }) {
+  const limit = Math.min(Math.max(Math.trunc(opts.limit ?? BROWSE_DEFAULT), 1), BROWSE_MAX);
+  const offset = Math.min(Math.max(Math.trunc(opts.offset ?? 0), 0), 10_000);
+  const q = typeof opts.query === 'string' ? opts.query.trim().normalize('NFC').slice(0, 100) : '';
+  const filter = { status: 'approved' as const, slug: { $type: 'string' as const }, ...(q ? { nameKey: { $regex: escapeRegex(q.toLowerCase()) } } : {}) };
+  const [items, total] = await Promise.all([
+    CatalogArtist.find(filter).select(PUBLIC_FIELDS).sort({ nameKey: 1, _id: 1 }).skip(offset).limit(limit).lean(),
+    CatalogArtist.countDocuments(filter),
+  ]);
+  return { items, total };
+}
+
 /**
  * The viewer's own artist record for a catalog artist (same name key) and how many of their songs
  * credit it as primary, private ones included: it points them at their personal artist page.
