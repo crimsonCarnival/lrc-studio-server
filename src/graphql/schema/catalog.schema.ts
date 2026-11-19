@@ -86,6 +86,14 @@ export const catalogSchema = `
     coverUrl: String
   }
 
+  # Autocomplete row: an approved artist (name, disambiguation) or album (title as name).
+  type CatalogSuggestion {
+    id: ID!
+    name: String!
+    slug: String
+    disambiguation: String!
+  }
+
   type CatalogArtistRef {
     name: String!
     # artistKey(name): match it against the lower-cased, NFC-normalised name you asked for.
@@ -108,6 +116,9 @@ export const catalogSchema = `
     catalogArtist(slug: String!): CatalogArtistPage
     # Null when either slug is unknown or either entry is not approved.
     catalogAlbum(artistSlug: String!, albumSlug: String!): CatalogAlbumPage
+    # Public autocomplete. artist: names starting with prefix. album: approved albums of the one
+    # approved artist named artist (empty for unknown names and homonyms). limit defaults to 8, max 20.
+    catalogSuggestions(kind: CatalogKind!, prefix: String, artist: String, limit: Int): [CatalogSuggestion!]!
     myCatalogSubmissions: MyCatalogSubmissions!
     catalogReviewQueue: CatalogQueue!
     catalogAdminArtists(query: String, offset: Int, limit: Int): [CatalogArtist!]!

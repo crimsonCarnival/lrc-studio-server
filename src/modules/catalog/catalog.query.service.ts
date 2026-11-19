@@ -127,6 +127,41 @@ export async function listPublicSongsByArtist(name: string) {
     .limit(SONGS_CAP);
 }
 
+const SUGGEST_DEFAULT = 8;
+const SUGGEST_MAX = 20;
+
+export type CatalogSuggestion = { id: string; name: string; slug: string | null; disambiguation: string };
+
+/**
+ * Autocomplete over approved entries. Artists: names whose key starts with `prefix`, A to Z.
+ * Albums: the approved albums of the one approved artist named `artist` (none for unknown names
+ * or homonyms, so a namesake's albums are never offered), filtered by title prefix when given.
+ */
+export async function suggestCatalog(
+  kind: 'artist' | 'album',
+  opts: { prefix?: string | null; artist?: string | null; limit?: number | null },
+): Promise<CatalogSuggestion[]> {
+  const limit = Math.min(Math.max(Math.trunc(opts.limit ?? SUGGEST_DEFAULT), 1), SUGGEST_MAX);
+  const prefix = artistKey(String(opts.prefix ?? '').trim().slice(0, 100));
+  // Anchored, so the { nameKey, status } index can serve it.
+  const startsWith = prefix ? { $regex: `^${escapeRegex(prefix)}` } : undefined;
+
+  if (kind === 'artist') {
+    if (!startsWith) return [];
+    const rows = await CatalogArtist.find({ status: 'approved', nameKey: startsWith })
+      .select('name slug disambiguation').sort({ nameKey: 1, _id: 1 }).limit(limit).lean();
+    return rows.map((r) => ({ id: String(r._id), name: r.name, slug: r.slug, disambiguation: r.disambiguation ?? '' }));
+  }
+
+  const artistName = artistKey(String(opts.artist ?? '').trim().slice(0, 300));
+  if (!artistName) return [];
+  const artists = await CatalogArtist.find({ status: 'approved', nameKey: artistName }).select('_id').limit(2).lean();
+  if (artists.length !== 1) return [];
+  const rows = await CatalogAlbum.find({ artistId: artists[0]._id, status: 'approved', ...(startsWith ? { titleKey: startsWith } : {}) })
+    .select('title slug').sort({ year: -1, titleKey: 1, _id: 1 }).limit(limit).lean();
+  return rows.map((r) => ({ id: String(r._id), name: r.title, slug: r.slug, disambiguation: '' }));
+}
+
 /** Slugs of approved catalog artists matching the given names (case-insensitive); unknown names are omitted. */
 export async function lookupCatalogSlugs(names: string[]) {
   const keys = [...new Set(names.slice(0, 50).map((n) => artistKey(String(n).trim())).filter(Boolean))];
