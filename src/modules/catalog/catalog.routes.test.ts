@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 
-const genius = vi.hoisted(() => ({ searchGeniusArtists: vi.fn(), copyGeniusArtistPhoto: vi.fn() }));
+const genius = vi.hoisted(() => ({ searchGeniusArtists: vi.fn(), copyGeniusArtistPhoto: vi.fn(), searchGeniusAlbums: vi.fn(), copyGeniusAlbumCover: vi.fn() }));
+const covers = vi.hoisted(() => ({ listProjectCoverProposals: vi.fn(), copyProjectCover: vi.fn() }));
 vi.mock('./catalog.genius.service.js', () => genius);
+vi.mock('./catalog.album-cover.service.js', () => covers);
 
 import catalogRoutes from './catalog.routes.js';
 
@@ -35,6 +37,10 @@ afterAll(async () => {
 beforeEach(() => {
   genius.searchGeniusArtists.mockReset().mockResolvedValue([]);
   genius.copyGeniusArtistPhoto.mockReset().mockResolvedValue({ imageUrl: 'https://x/y.jpg', sourceUrl: 'https://genius.com/artists/A' });
+  genius.searchGeniusAlbums.mockReset().mockResolvedValue([]);
+  genius.copyGeniusAlbumCover.mockReset().mockResolvedValue({ imageUrl: 'https://x/z.jpg', sourceUrl: 'https://genius.com/albums/A/B' });
+  covers.listProjectCoverProposals.mockReset().mockResolvedValue([]);
+  covers.copyProjectCover.mockReset().mockResolvedValue({ imageUrl: 'https://x/p.jpg' });
 });
 
 const get = (qs: string, user = 'u1') =>
@@ -72,7 +78,7 @@ describe('catalog genius routes', () => {
   });
 
   it('403 at the route for a signed-in user without catalog.manage, before any service call', async () => {
-    expect(permsAsked).toEqual(['catalog.manage', 'catalog.manage']);
+    expect(permsAsked).toEqual(Array(6).fill('catalog.manage'));
     const a = await get('?q=a', 'nomanage');
     expect(a.statusCode).toBe(403);
     const p = await post({ geniusId: 1 }, 'nomanage');
@@ -117,5 +123,58 @@ describe('catalog genius routes', () => {
     expect((await get('?q=a', 'other')).statusCode).toBe(200);
     // the photo route has its own bucket
     expect((await post({ geniusId: 1 }, 'limited')).statusCode).toBe(200);
+  });
+});
+
+describe('catalog album cover routes', () => {
+  const ARTIST = 'a'.repeat(24);
+  const albums = (qs: string, user = 'u1') => app.inject({ method: 'GET', url: `/catalog/genius/albums${qs}`, headers: { 'x-user': user } });
+  const albumCover = (payload: unknown, user = 'u1') => app.inject({ method: 'POST', url: '/catalog/genius/album-cover', payload: payload as object, headers: { 'x-user': user } });
+  const proj = (qs: string, user = 'u1') => app.inject({ method: 'GET', url: `/catalog/album-covers/projects${qs}`, headers: { 'x-user': user } });
+  const projCopy = (payload: unknown, user = 'u1') => app.inject({ method: 'POST', url: '/catalog/album-covers/project', payload: payload as object, headers: { 'x-user': user } });
+
+  it('403 without catalog.manage, before any service call', async () => {
+    expect((await albums('?q=a', 'nomanage')).statusCode).toBe(403);
+    expect((await albumCover({ geniusId: 1 }, 'nomanage')).statusCode).toBe(403);
+    expect((await proj(`?artistId=${ARTIST}&title=t`, 'nomanage')).statusCode).toBe(403);
+    expect((await projCopy({ artistId: ARTIST, title: 't', publicId: 'p' }, 'nomanage')).statusCode).toBe(403);
+    expect(genius.searchGeniusAlbums).not.toHaveBeenCalled();
+    expect(genius.copyGeniusAlbumCover).not.toHaveBeenCalled();
+    expect(covers.listProjectCoverProposals).not.toHaveBeenCalled();
+    expect(covers.copyProjectCover).not.toHaveBeenCalled();
+  });
+
+  it('validates input; the project copy takes ids only, never a URL', async () => {
+    expect((await albums('')).statusCode).toBe(400);
+    expect((await albumCover({ geniusId: 0 })).statusCode).toBe(400);
+    expect((await proj('?title=t')).statusCode).toBe(400);
+    expect((await projCopy({ artistId: ARTIST, title: 't', publicId: 'p', imageUrl: 'https://evil/x.png' })).statusCode).toBe(400);
+    expect((await projCopy({ artistId: ARTIST, title: 't' })).statusCode).toBe(400);
+    expect(covers.copyProjectCover).not.toHaveBeenCalled();
+  });
+
+  it('200 for a manager, passing the user and ids to the services', async () => {
+    genius.searchGeniusAlbums.mockResolvedValue([{ geniusId: 1, name: 'A', artistName: 'B', imageUrl: 'i', url: 'u' }]);
+    expect((await albums('?q=a')).json()).toEqual({ albums: [{ geniusId: 1, name: 'A', artistName: 'B', imageUrl: 'i', url: 'u' }] });
+    expect((await albumCover({ geniusId: 7 })).statusCode).toBe(200);
+    expect(genius.copyGeniusAlbumCover).toHaveBeenCalledWith('u1', 7);
+    covers.listProjectCoverProposals.mockResolvedValue([{ publicId: 'p1', title: 'T', coverUrl: 'c' }]);
+    expect((await proj(`?artistId=${ARTIST}&title=Alb`)).json()).toEqual({ covers: [{ publicId: 'p1', title: 'T', coverUrl: 'c' }] });
+    expect(covers.listProjectCoverProposals).toHaveBeenCalledWith('u1', ARTIST, 'Alb');
+    expect((await projCopy({ artistId: ARTIST, title: 'Alb', publicId: 'p1' })).json()).toEqual({ imageUrl: 'https://x/p.jpg' });
+    expect(covers.copyProjectCover).toHaveBeenCalledWith('u1', ARTIST, 'Alb', 'p1');
+  });
+
+  it('maps service errors and keeps upstream failures opaque', async () => {
+    covers.copyProjectCover.mockResolvedValue({ status: 404, code: 'CATALOG_COVER_PROPOSAL_NOT_FOUND', error: 'That cover is no longer available' });
+    const res = await projCopy({ artistId: ARTIST, title: 't', publicId: 'gone' });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('catalog_cover_proposal_not_found');
+    genius.searchGeniusAlbums.mockRejectedValue(new Error('secret-token'));
+    const up = await albums('?q=a');
+    expect(up.statusCode).toBe(502);
+    expect(up.body).not.toContain('secret-token');
+    genius.searchGeniusAlbums.mockResolvedValue(null);
+    expect((await albums('?q=a')).statusCode).toBe(503);
   });
 });

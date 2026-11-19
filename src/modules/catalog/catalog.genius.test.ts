@@ -6,7 +6,9 @@ vi.mock('../../config/env.js', () => ({ getEnv: () => env }));
 vi.mock('../genius/genius.client.js', async (orig) => ({
   ...(await orig<typeof import('../genius/genius.client.js')>()),
   searchSong: vi.fn(),
+  getSong: vi.fn(),
   getArtist: vi.fn(),
+  getAlbum: vi.fn(),
 }));
 vi.mock('./catalog.admin.service.js', async (orig) => ({
   ...(await orig<typeof import('./catalog.admin.service.js')>()),
@@ -17,10 +19,10 @@ vi.mock('../uploads/uploads.service.js', async (orig) => ({
   uploadCatalogImageBuffer: vi.fn(),
 }));
 
-import { searchSong, getArtist, type GeniusHit } from '../genius/genius.client.js';
+import { searchSong, getSong, getArtist, getAlbum, type GeniusHit, type GeniusSong } from '../genius/genius.client.js';
 import { assertManager } from './catalog.admin.service.js';
 import { uploadCatalogImageBuffer } from '../uploads/uploads.service.js';
-import { isGeniusImageUrl, searchGeniusArtists, copyGeniusArtistPhoto } from './catalog.genius.service.js';
+import { isGeniusImageUrl, searchGeniusArtists, copyGeniusArtistPhoto, searchGeniusAlbums, copyGeniusAlbumCover } from './catalog.genius.service.js';
 
 const hits = (): GeniusHit[] =>
   JSON.parse(readFileSync(new URL('../genius/__fixtures__/genius-search-artists.json', import.meta.url), 'utf8')).response.hits.map(
@@ -278,6 +280,102 @@ describe('copyGeniusArtistPhoto', () => {
     expect(await copyGeniusArtistPhoto(ADMIN, 11)).toMatchObject({ status: 503, code: 'CATALOG_GENIUS_UNAVAILABLE' });
     vi.mocked(getArtist).mockRejectedValue(new Error('genius_upstream secret-token-xyz'));
     const r = await copyGeniusArtistPhoto(ADMIN, 11);
+    expect(r).toMatchObject({ status: 502 });
+    expect(JSON.stringify(r)).not.toContain('secret-token-xyz');
+  });
+});
+
+describe('searchGeniusAlbums', () => {
+  const album = (id: number, over: Record<string, unknown> = {}) => ({
+    id, name: `Album ${id}`, url: `https://genius.com/albums/A/Album-${id}`, cover_art_url: `https://images.genius.com/${id}.800x800x1.jpg`, primary_artist_names: 'A', ...over,
+  });
+  const song = (id: number, a: Record<string, unknown> | null) => ({ id, title: 't', url: 'u', primary_artist: { name: 'A' }, album: a, song_relationships: [] }) as unknown as GeniusSong;
+  const hit = (id: number) => ({ id, title: 't', url: 'u', primary_artist: { name: 'A' } }) as GeniusHit;
+
+  beforeEach(() => {
+    vi.mocked(assertManager).mockReset().mockResolvedValue(null);
+    vi.mocked(getSong).mockReset();
+  });
+
+  it('returns distinct albums with usable art, in hit order', async () => {
+    search.mockResolvedValue([hit(1), hit(2), hit(3), hit(4), hit(5)]);
+    vi.mocked(getSong).mockImplementation(async (id) => ({
+      1: song(1, album(10)),
+      2: song(2, album(10)),
+      3: song(3, null),
+      4: song(4, album(11, { cover_art_url: 'https://assets.genius.com/images/default_cover_image.png' })),
+      5: song(5, album(12, { url: 'https://evil.test/albums/x' })),
+    })[id as 1]);
+    expect(await searchGeniusAlbums('u1', 'q')).toEqual([
+      { geniusId: 10, name: 'Album 10', artistName: 'A', imageUrl: 'https://images.genius.com/10.800x800x1.jpg', url: 'https://genius.com/albums/A/Album-10' },
+    ]);
+  });
+
+  it('fetches at most 5 songs', async () => {
+    search.mockResolvedValue(Array.from({ length: 8 }, (_, i) => hit(i + 1)));
+    vi.mocked(getSong).mockImplementation(async (id) => song(id, album(id)));
+    expect(await searchGeniusAlbums('u1', 'q')).toHaveLength(5);
+    expect(getSong).toHaveBeenCalledTimes(5);
+  });
+
+  it('survives one failed song fetch, but surfaces the failure when all fail', async () => {
+    search.mockResolvedValue([hit(1), hit(2)]);
+    vi.mocked(getSong).mockImplementation(async (id) => { if (id === 1) throw new Error('genius_upstream'); return song(2, album(20)); });
+    expect((await searchGeniusAlbums('u1', 'q') as { geniusId: number }[]).map((a) => a.geniusId)).toEqual([20]);
+    vi.mocked(getSong).mockRejectedValue(new Error('genius_upstream'));
+    await expect(searchGeniusAlbums('u1', 'q')).rejects.toThrow('genius_upstream');
+  });
+
+  it('denies a non-manager and returns null when unconfigured', async () => {
+    vi.mocked(assertManager).mockResolvedValueOnce({ error: 'x', status: 403, code: 'CATALOG_FORBIDDEN' });
+    expect(await searchGeniusAlbums('u1', 'q')).toMatchObject({ status: 403 });
+    expect(search).not.toHaveBeenCalled();
+    search.mockResolvedValue(null);
+    expect(await searchGeniusAlbums('u1', 'q')).toBeNull();
+  });
+});
+
+describe('copyGeniusAlbumCover', () => {
+  const ADMIN = '64b000000000000000000001';
+  const COVER = 'https://images.genius.com/63e3.800x800x1.jpg';
+  const PAGE = 'https://genius.com/albums/Radiohead/Ok-computer';
+  const CANON = `https://res.cloudinary.com/democloud/image/upload/v1/catalog/${ADMIN}/c.webp`;
+  const detail = (over: Record<string, unknown> = {}) => ({ id: 3, name: 'OK Computer', url: PAGE, cover_art_url: COVER, artist_name: 'Radiohead', ...over });
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.mocked(assertManager).mockReset().mockResolvedValue(null);
+    vi.mocked(getAlbum).mockReset().mockResolvedValue(detail());
+    vi.mocked(uploadCatalogImageBuffer).mockReset().mockResolvedValue(CANON);
+    fetchMock.mockReset().mockImplementation(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/jpeg', 'content-length': '1' } }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  it('re-resolves the album and copies its cover', async () => {
+    expect(await copyGeniusAlbumCover(ADMIN, 3)).toEqual({ imageUrl: CANON, sourceUrl: PAGE });
+    expect(getAlbum).toHaveBeenCalledWith(3);
+    expect(fetchMock).toHaveBeenCalledWith(COVER, expect.objectContaining({ redirect: 'error' }));
+    expect(copyGeniusAlbumCover.length).toBe(2);
+  });
+
+  it('refuses a non-manager, a placeholder/foreign cover and a foreign page', async () => {
+    vi.mocked(assertManager).mockResolvedValueOnce({ error: 'x', status: 403, code: 'CATALOG_FORBIDDEN' });
+    expect(await copyGeniusAlbumCover(ADMIN, 3)).toMatchObject({ status: 403 });
+    expect(getAlbum).not.toHaveBeenCalled();
+    for (const over of [{ cover_art_url: 'https://assets.genius.com/images/default_cover_image.png' }, { cover_art_url: null }, { cover_art_url: 'https://evil.test/a.jpg' }, { url: 'https://evil.test/albums/x' }]) {
+      vi.mocked(getAlbum).mockResolvedValue(detail(over));
+      expect(await copyGeniusAlbumCover(ADMIN, 3)).toMatchObject({ status: 422, code: 'CATALOG_GENIUS_IMAGE_REJECTED' });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('maps not found, unconfigured and upstream failures', async () => {
+    vi.mocked(getAlbum).mockRejectedValue(new Error('genius_not_found'));
+    expect(await copyGeniusAlbumCover(ADMIN, 3)).toMatchObject({ status: 404, code: 'CATALOG_GENIUS_NOT_FOUND' });
+    vi.mocked(getAlbum).mockResolvedValue(null);
+    expect(await copyGeniusAlbumCover(ADMIN, 3)).toMatchObject({ status: 503 });
+    vi.mocked(getAlbum).mockRejectedValue(new Error('genius_upstream secret-token-xyz'));
+    const r = await copyGeniusAlbumCover(ADMIN, 3);
     expect(r).toMatchObject({ status: 502 });
     expect(JSON.stringify(r)).not.toContain('secret-token-xyz');
   });

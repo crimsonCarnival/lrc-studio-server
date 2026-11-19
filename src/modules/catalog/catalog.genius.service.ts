@@ -1,7 +1,7 @@
-import { searchSong, getArtist } from '../genius/genius.client.js';
+import { searchSong, getSong, getArtist, getAlbum } from '../genius/genius.client.js';
 import { readCappedBody, CappedBodyError } from '../../utils/read-capped-body.js';
 import { uploadCatalogImageBuffer } from '../uploads/uploads.service.js';
-import { fail, type CatalogError } from './catalog.service.js';
+import { fail, isError, type CatalogError } from './catalog.service.js';
 import { artistKey } from '../artists/artist.service.js';
 import { assertManager, isGeniusPageUrl } from './catalog.admin.service.js';
 
@@ -54,30 +54,23 @@ export async function searchGeniusArtists(adminId: string, q: string): Promise<G
 const upstream = (): CatalogError => fail(502, 'CATALOG_GENIUS_UPSTREAM', 'Genius is unavailable right now');
 const rejected = (): CatalogError => fail(422, 'CATALOG_GENIUS_IMAGE_REJECTED', 'That Genius photo cannot be used');
 
+/** Maps a thrown Genius client error to the response the admin sees (null: not configured). */
+function geniusFailure(err: unknown, what: string): CatalogError {
+  const msg = err instanceof Error ? err.message : '';
+  if (msg === 'genius_unauthorized') return fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Genius is not configured');
+  if (msg === 'genius_not_found' || msg === 'genius_invalid_id') return fail(404, 'CATALOG_GENIUS_NOT_FOUND', `Genius ${what} not found`);
+  return upstream();
+}
+
 /**
- * Copies a Genius artist's photo into the admin's catalog folder. The image URL is never taken from the
- * client: the artist is re-resolved from the Genius API and only an allow-listed image host is fetched.
- * Errors are opaque codes; upstream text and the token never reach the message.
+ * Downloads `imageUrl` and stores it in the admin's catalog folder. The caller has already checked the
+ * URL against its own host allow-list; this adds the transport guards (no redirects, timeout, raster
+ * type, byte cap) and maps every failure to an opaque code.
  */
-export async function copyGeniusArtistPhoto(adminId: string, geniusId: number): Promise<{ imageUrl: string; sourceUrl: string } | CatalogError> {
-  const denied = await assertManager(adminId);
-  if (denied) return denied;
-
-  let artist: Awaited<ReturnType<typeof getArtist>>;
-  try {
-    artist = await getArtist(geniusId);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : '';
-    if (msg === 'genius_unauthorized') return fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Genius is not configured');
-    if (msg === 'genius_not_found' || msg === 'genius_invalid_id') return fail(404, 'CATALOG_GENIUS_NOT_FOUND', 'Genius artist not found');
-    return upstream();
-  }
-  if (!artist) return fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Genius is not configured');
-  if (!isGeniusImageUrl(artist.image_url) || !isGeniusPageUrl(artist.url)) return rejected();
-
+export async function storeRemoteImage(imageUrl: string, adminId: string): Promise<string | CatalogError> {
   let res: Response;
   try {
-    res = await fetch(artist.image_url, { redirect: 'error', signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
+    res = await fetch(imageUrl, { redirect: 'error', signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
   } catch {
     return upstream();
   }
@@ -96,12 +89,81 @@ export async function copyGeniusArtistPhoto(adminId: string, geniusId: number): 
   }
 
   try {
-    return { imageUrl: await uploadCatalogImageBuffer(data, contentType, adminId), sourceUrl: artist.url };
+    return await uploadCatalogImageBuffer(data, contentType, adminId);
   } catch (err) {
     // The client only sees an opaque 502, so without this a storage failure is indistinguishable from Genius being down.
-    console.warn('Genius photo copy: storage upload failed', { geniusId, message: err instanceof Error ? err.message : String(err) });
+    console.warn('Catalog image copy: storage upload failed', { message: err instanceof Error ? err.message : String(err) });
     return err instanceof Error && err.message === 'storage_unconfigured'
       ? fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Image storage is not configured')
       : upstream();
   }
+}
+
+/**
+ * Copies a Genius artist's photo into the admin's catalog folder. The image URL is never taken from the
+ * client: the artist is re-resolved from the Genius API and only an allow-listed image host is fetched.
+ * Errors are opaque codes; upstream text and the token never reach the message.
+ */
+export async function copyGeniusArtistPhoto(adminId: string, geniusId: number): Promise<{ imageUrl: string; sourceUrl: string } | CatalogError> {
+  const denied = await assertManager(adminId);
+  if (denied) return denied;
+
+  let artist: Awaited<ReturnType<typeof getArtist>>;
+  try {
+    artist = await getArtist(geniusId);
+  } catch (err) {
+    return geniusFailure(err, 'artist');
+  }
+  if (!artist) return fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Genius is not configured');
+  if (!isGeniusImageUrl(artist.image_url) || !isGeniusPageUrl(artist.url)) return rejected();
+
+  const stored = await storeRemoteImage(artist.image_url, adminId);
+  return isError(stored) ? stored : { imageUrl: stored, sourceUrl: artist.url };
+}
+
+export type GeniusAlbumMatch = { geniusId: number; name: string; artistName: string; imageUrl: string; url: string };
+
+/**
+ * Up to 5 distinct Genius albums (with usable cover art) behind the best song hits for `q`; null when Genius
+ * is unconfigured. A search hit carries no album, so each hit's song is fetched; a failed song fetch drops
+ * that hit, and only when every fetch failed does the failure surface.
+ */
+export async function searchGeniusAlbums(adminId: string, q: string): Promise<GeniusAlbumMatch[] | null | CatalogError> {
+  const denied = await assertManager(adminId);
+  if (denied) return denied;
+  const hits = await searchSong(q);
+  if (!hits) return null;
+
+  const settled = await Promise.allSettled(hits.slice(0, MAX_MATCHES).map((h) => getSong(h.id)));
+  const songs = settled.flatMap((s) => (s.status === 'fulfilled' && s.value ? [s.value] : []));
+  const firstFailure = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+  if (songs.length === 0 && firstFailure) throw firstFailure.reason;
+
+  const seen = new Set<number>();
+  const albums: GeniusAlbumMatch[] = [];
+  for (const { album } of songs) {
+    if (!album || !Number.isInteger(album.id) || typeof album.name !== 'string' || seen.has(album.id as number)) continue;
+    if (!isGeniusPageUrl(album.url) || !isGeniusImageUrl(album.cover_art_url)) continue;
+    seen.add(album.id as number);
+    albums.push({ geniusId: album.id as number, name: album.name, artistName: album.primary_artist_names ?? '', imageUrl: album.cover_art_url, url: album.url });
+  }
+  return albums;
+}
+
+/** Copies a Genius album's cover into the admin's catalog folder; the album is re-resolved server-side, like artist photos. */
+export async function copyGeniusAlbumCover(adminId: string, geniusId: number): Promise<{ imageUrl: string; sourceUrl: string } | CatalogError> {
+  const denied = await assertManager(adminId);
+  if (denied) return denied;
+
+  let album: Awaited<ReturnType<typeof getAlbum>>;
+  try {
+    album = await getAlbum(geniusId);
+  } catch (err) {
+    return geniusFailure(err, 'album');
+  }
+  if (!album) return fail(503, 'CATALOG_GENIUS_UNAVAILABLE', 'Genius is not configured');
+  if (!isGeniusImageUrl(album.cover_art_url) || !isGeniusPageUrl(album.url)) return rejected();
+
+  const stored = await storeRemoteImage(album.cover_art_url, adminId);
+  return isError(stored) ? stored : { imageUrl: stored, sourceUrl: album.url };
 }
