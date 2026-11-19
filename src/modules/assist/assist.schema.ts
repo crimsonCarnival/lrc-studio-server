@@ -7,12 +7,14 @@ export const nameCheckSchema = {
   body: {
     type: 'object',
     required: ['title'],
-    propertyNames: { enum: ['title', 'artist', 'album'] },
+    propertyNames: { enum: ['title', 'artist', 'album', 'field'] },
     anyOf: [{ required: ['artist'] }, { required: ['album'] }],
     properties: {
       title: { type: 'string', minLength: 1, maxLength: 500 },
       artist: { type: 'string', minLength: 1, maxLength: 300 },
       album: { type: 'string', minLength: 1, maxLength: 500 },
+      // Check only this field; the other values are context.
+      field: { type: 'string', enum: ['artist', 'album'] },
     },
   },
 } as const;
