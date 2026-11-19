@@ -7,8 +7,9 @@ export type GeniusArtist = { id?: number; name: string; url?: string; image_url?
 export type GeniusArtistDetail = { id: number; name: string; url: string; image_url: string | null };
 export type GeniusHit = { id: number; title: string; url: string; primary_artist: GeniusArtist };
 export type GeniusRelatedSong = GeniusHit & { song_art_image_thumbnail_url?: string };
+export type GeniusAlbumDetail = { id: number; name: string; url: string; cover_art_url: string | null; artist_name: string };
 export type GeniusSong = GeniusHit & {
-  album?: { name: string } | null;
+  album?: { id?: number; name: string; url?: string; cover_art_url?: string; primary_artist_names?: string } | null;
   release_date?: string | null;
   song_relationships: { relationship_type: string; songs: GeniusRelatedSong[] }[];
 };
@@ -59,6 +60,16 @@ export async function getSong(id: number): Promise<GeniusSong | null> {
   if (!body) return null;
   if (!body.response?.song) throw new Error('genius_upstream');
   return body.response.song;
+}
+
+export async function getAlbum(id: number): Promise<GeniusAlbumDetail | null> {
+  assertValidId(id);
+  const body = await geniusGet(`/albums/${id}`, { distinguishNotFound: true }) as
+    { response?: { album?: { id: number; name: string; url: string; cover_art_url?: string; artist?: { name?: string } } } } | null;
+  if (!body) return null;
+  const a = body.response?.album;
+  if (!a) throw new Error('genius_upstream');
+  return { id: a.id, name: a.name, url: a.url, cover_art_url: a.cover_art_url ?? null, artist_name: a.artist?.name ?? '' };
 }
 
 export async function getArtist(id: number): Promise<GeniusArtistDetail | null> {
