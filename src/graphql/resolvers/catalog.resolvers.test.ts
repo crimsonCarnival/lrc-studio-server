@@ -232,6 +232,52 @@ describe('catalog resolvers', () => {
     });
   });
 
+  describe('catalogSuggestions', () => {
+    const artist = async (name: string, status = 'approved', disambiguation = '') => {
+      const s = await seedUser();
+      return CatalogArtist.create({ name, nameKey: name.normalize('NFC').toLowerCase(), disambiguation, status, slug: status === 'approved' ? `${name.toLowerCase().replace(/\W/g, '')}${++seq}` : null, source: 'admin', submittedBy: s });
+    };
+    const album = (a: { _id: unknown; submittedBy: unknown }, title: string, year: string | null, status = 'approved') =>
+      CatalogAlbum.create({ artistId: a._id, title, titleKey: title.toLowerCase(), year, status, slug: status === 'approved' ? title.toLowerCase() : null, source: 'admin', submittedBy: a.submittedBy });
+    const names = (rows: Array<{ name: string }>) => rows.map((r) => r.name);
+
+    it('artists: approved names by case-insensitive prefix, A to Z, regex-safe', async () => {
+      await artist('Björk');
+      await artist('Bjarne', 'approved', 'Danish singer');
+      await artist('Bjorn', 'pending');
+      await artist('Rob');
+      const rows = await Q.catalogSuggestions({}, { kind: 'artist', prefix: 'BJ' }, ctx());
+      expect(names(rows)).toEqual(['Bjarne', 'Björk']);
+      expect(rows[0].disambiguation).toBe('Danish singer');
+      expect(await Q.catalogSuggestions({}, { kind: 'artist', prefix: '' }, ctx())).toEqual([]);
+      expect(await Q.catalogSuggestions({}, { kind: 'artist', prefix: '.*' }, ctx())).toEqual([]);
+    });
+
+    it('artists: limit is capped', async () => {
+      for (let i = 0; i < 25; i++) await artist(`Band ${String(i).padStart(2, '0')}`);
+      expect(await Q.catalogSuggestions({}, { kind: 'artist', prefix: 'band', limit: 100 }, ctx())).toHaveLength(20);
+      expect(await Q.catalogSuggestions({}, { kind: 'artist', prefix: 'band' }, ctx())).toHaveLength(8);
+    });
+
+    it("albums: the named artist's approved albums, newest first, by prefix", async () => {
+      const a = await artist('Robyn');
+      await album(a, 'Honey', '2018');
+      await album(a, 'Body Talk', '2010');
+      await album(a, 'Hidden', null, 'rejected');
+      expect(names(await Q.catalogSuggestions({}, { kind: 'album', artist: ' robyn ' }, ctx()))).toEqual(['Honey', 'Body Talk']);
+      expect(names(await Q.catalogSuggestions({}, { kind: 'album', artist: 'Robyn', prefix: 'bo' }, ctx()))).toEqual(['Body Talk']);
+    });
+
+    it('albums: nothing for an unknown artist, no artist, or homonyms', async () => {
+      const a = await artist('Nirvana');
+      await artist('Nirvana', 'approved', 'UK band');
+      await album(a, 'Nevermind', '1991');
+      expect(await Q.catalogSuggestions({}, { kind: 'album', artist: 'Nirvana' }, ctx())).toEqual([]);
+      expect(await Q.catalogSuggestions({}, { kind: 'album', artist: 'Nobody' }, ctx())).toEqual([]);
+      expect(await Q.catalogSuggestions({}, { kind: 'album' }, ctx())).toEqual([]);
+    });
+  });
+
   it('adminUpdateCatalogEntry passes imageSource and imageSourceUrl', async () => {
     const admin = await seedUser(['catalog.manage']);
     const a = await CatalogArtist.create({ name: 'Cr', nameKey: 'cr', status: 'approved', slug: 'cr', source: 'admin', submittedBy: admin });
