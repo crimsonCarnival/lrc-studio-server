@@ -54,14 +54,17 @@ export async function checkNames(userId: string, input: NameCheckInput): Promise
   const results: NameSuggestion[] = [];
   const pending: Array<{ field: NameField; typed: string; candidates: string[] }> = [];
 
-  for (const field of FIELDS) {
+  for (const field of input.field ? [input.field] : FIELDS) {
     const typed = input[field]?.trim();
     if (!typed) continue;
-    const candidates = await gatherCandidates(userId, field, input);
+    const { names: candidates, trusted } = await gatherCandidates(userId, field, input);
     if (candidates.length === 0 || candidates.includes(typed)) continue;
     const same = candidates.filter((c) => matchKey(c) === matchKey(typed));
-    if (same.length === 1) {
-      results.push({ field, suggestion: same[0], confidence: 1 });
+    if (same.length > 0) {
+      // Differing only in case or spacing means the value is not misspelled. Only a trusted source
+      // may restyle it; a provider's casing must not override a deliberate one ("deadmau5").
+      const fix = same.filter((c) => trusted.has(c));
+      if (fix.length === 1) results.push({ field, suggestion: fix[0], confidence: 1 });
       continue;
     }
     pending.push({ field, typed, candidates });
@@ -70,6 +73,8 @@ export async function checkNames(userId: string, input: NameCheckInput): Promise
   if (pending.length > 0) {
     const payload = {
       song: input.title,
+      // Context for album checks: which artist the album belongs to.
+      artist: input.artist ?? null,
       fields: pending.map((p) => ({ field: p.field, typed: p.typed, candidates: p.candidates })),
     };
     const answer = await chatJson<ModelAnswer>(
