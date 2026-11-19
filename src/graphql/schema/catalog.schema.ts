@@ -59,12 +59,31 @@ export const catalogSchema = `
     albums: [CatalogAlbum!]!
   }
 
+  # An approved album as the artist page shows it. songCount counts public songs crediting the artist
+  # as primary; coverUrl is the album cover, else the first such song's cover.
+  type CatalogAlbumCard {
+    album: CatalogAlbum!
+    songCount: Int!
+    coverUrl: String
+  }
+
   # Public: an approved artist with its approved albums. Reviewer-only fields are always null here.
   type CatalogArtistPage {
     artist: CatalogArtist!
     albums: [CatalogAlbum!]!
+    # The albums to show: approved catalog albums only, never titles taken from songs.
+    albumCards: [CatalogAlbumCard!]!
     # Every public song crediting this artist, from any user (capped at 500).
     songs: [Project!]!
+  }
+
+  # Public: one approved album of an approved artist, with the public songs that credit the artist
+  # as primary and name this album, in track order.
+  type CatalogAlbumPage {
+    artist: CatalogArtist!
+    album: CatalogAlbum!
+    songs: [Project!]!
+    coverUrl: String
   }
 
   type CatalogArtistRef {
@@ -87,6 +106,8 @@ export const catalogSchema = `
     catalogArtistSlugs(names: [String!]!): [CatalogArtistRef!]!
     # Null when the slug is unknown or the entry is not approved.
     catalogArtist(slug: String!): CatalogArtistPage
+    # Null when either slug is unknown or either entry is not approved.
+    catalogAlbum(artistSlug: String!, albumSlug: String!): CatalogAlbumPage
     myCatalogSubmissions: MyCatalogSubmissions!
     catalogReviewQueue: CatalogQueue!
     catalogAdminArtists(query: String, offset: Int, limit: Int): [CatalogArtist!]!

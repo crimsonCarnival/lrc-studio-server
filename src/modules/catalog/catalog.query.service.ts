@@ -2,7 +2,7 @@ import CatalogArtist from './catalog-artist.model.js';
 import CatalogAlbum from './catalog-album.model.js';
 import Project from '../projects/project.model.js';
 import { artistKey } from '../artists/artist.service.js';
-import { validId, oid } from './catalog.service.js';
+import { validId, oid, albumKey, cleanCatalogText } from './catalog.service.js';
 
 const QUEUE_CAP = 100;
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -29,23 +29,81 @@ export async function listApprovedAlbums(artistId: string) {
   return CatalogAlbum.find({ artistId: oid(artistId), status: 'approved' }).sort({ year: 1, titleKey: 1, _id: 1 }).lean();
 }
 
+const PUBLIC_FIELDS = '-reviewNote -submittedBy -reviewedBy -reviewedAt -creditAwarded';
+
+type SongRow = {
+  coverImage?: string | null;
+  metadata?: { songAlbum?: string | null; artists?: Array<{ name?: string | null; role?: string | null }> | null } | null;
+};
+
 /**
- * Public page data: an approved artist and its approved albums, by slug. Null for an unknown, pending or
- * rejected slug. Reviewer-only fields (note, submitter, reviewer) are dropped so nothing internal leaks.
+ * The album key of a song, derived exactly like catalog album keys (see cleanCatalogText), so a song
+ * and the catalog album it belongs to compare equal. Empty when the song names no album.
+ */
+export const songAlbumKey = (song: SongRow): string => albumKey(cleanCatalogText(String(song.metadata?.songAlbum ?? '')));
+
+/** True when `nameKey` is credited as a primary artist: featured credits never decide an artist's albums. */
+export const isPrimaryOf = (song: SongRow, nameKey: string): boolean =>
+  (song.metadata?.artists ?? []).some((c) => c?.role === 'primary' && artistKey(String(c.name ?? '').trim()) === nameKey);
+
+/**
+ * Public page data: an approved artist, its approved albums and its public songs, by slug. Null for an
+ * unknown, pending or rejected slug. Reviewer-only fields (note, submitter, reviewer) are dropped.
+ *
+ * `albumCards` is the album list the page shows. Only approved catalog albums appear, so a rejected
+ * or dismissed album title on someone's song never becomes a card. Song counts and the fallback cover
+ * come from primary credits only.
  */
 export async function getPublicArtistBySlug(slug: string) {
   const key = typeof slug === 'string' ? slug.trim().toLowerCase().slice(0, 200) : '';
   if (!key) return null;
-  const artist = await CatalogArtist.findOne({ slug: key, status: 'approved' })
-    .select('-reviewNote -submittedBy -reviewedBy -reviewedAt -creditAwarded')
-    .lean();
+  const artist = await CatalogArtist.findOne({ slug: key, status: 'approved' }).select(PUBLIC_FIELDS).lean();
   if (!artist) return null;
-  const albums = await CatalogAlbum.find({ artistId: artist._id, status: 'approved' })
-    .select('-reviewNote -submittedBy -reviewedBy -reviewedAt -creditAwarded')
-    .sort({ year: 1, titleKey: 1, _id: 1 })
-    .lean();
-  const songs = await listPublicSongsByArtist(artist.name);
-  return { artist, albums, songs };
+  const [albums, songs] = await Promise.all([
+    CatalogAlbum.find({ artistId: artist._id, status: 'approved' }).select(PUBLIC_FIELDS).sort({ year: 1, titleKey: 1, _id: 1 }).lean(),
+    listPublicSongsByArtist(artist.name),
+  ]);
+
+  const stats = new Map<string, { songCount: number; cover: string | null }>();
+  for (const song of songs as unknown as SongRow[]) {
+    if (!isPrimaryOf(song, artist.nameKey)) continue;
+    const k = songAlbumKey(song);
+    if (!k) continue;
+    const s = stats.get(k) ?? { songCount: 0, cover: null };
+    s.songCount += 1;
+    s.cover ??= song.coverImage || null;
+    stats.set(k, s);
+  }
+  const albumCards = albums.map((album) => {
+    const s = stats.get(album.titleKey);
+    return { album, songCount: s?.songCount ?? 0, coverUrl: album.coverUrl ?? s?.cover ?? null };
+  });
+  return { artist, albums, albumCards, songs };
+}
+
+/**
+ * Public album page: an approved album of an approved artist, addressed by both slugs, with the public
+ * songs that credit the artist as primary and name this album. Null when either is unknown or unapproved.
+ */
+export async function getPublicAlbumBySlugs(artistSlug: string, albumSlug: string) {
+  const clean = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase().slice(0, 200) : '');
+  const [aKey, bKey] = [clean(artistSlug), clean(albumSlug)];
+  if (!aKey || !bKey) return null;
+  const artist = await CatalogArtist.findOne({ slug: aKey, status: 'approved' }).select(PUBLIC_FIELDS).lean();
+  if (!artist) return null;
+  const album = await CatalogAlbum.findOne({ artistId: artist._id, slug: bKey, status: 'approved' }).select(PUBLIC_FIELDS).lean();
+  if (!album) return null;
+  const songs = (await listPublicSongsByArtist(artist.name)).filter((song) => {
+    const row = song as unknown as SongRow;
+    return isPrimaryOf(row, artist.nameKey) && songAlbumKey(row) === album.titleKey;
+  });
+  songs.sort((a, b) => {
+    const ta = (a as { metadata?: { trackNumber?: number | null } }).metadata?.trackNumber ?? Number.MAX_SAFE_INTEGER;
+    const tb = (b as { metadata?: { trackNumber?: number | null } }).metadata?.trackNumber ?? Number.MAX_SAFE_INTEGER;
+    return ta - tb;
+  });
+  const cover = album.coverUrl ?? (songs.find((s) => (s as unknown as SongRow).coverImage) as unknown as SongRow | undefined)?.coverImage ?? null;
+  return { artist, album, songs, coverUrl: cover };
 }
 
 const SONGS_CAP = 500;
@@ -53,6 +111,7 @@ const SONGS_CAP = 500;
 /**
  * Every publicly discoverable, non-subtitle project crediting `name` (primary or featured), from any user.
  * Matched by case-insensitive exact name; same discovery filter as explore, so hidden owners stay hidden.
+ * Callers that decide albums must keep only primary credits (`isPrimaryOf`).
  */
 export async function listPublicSongsByArtist(name: string) {
   const exact = new RegExp(`^${escapeRegex(name.normalize('NFC'))}$`, 'i');
