@@ -52,21 +52,27 @@ export interface ProjectState {
   saveTime?: string | null;
 }
 
-export type PrimaryGenre =
-  | 'pop' | 'rock' | 'hip_hop' | 'rnb' | 'electronic'
-  | 'jazz' | 'classical' | 'country' | 'folk' | 'metal'
-  | 'blues' | 'soul' | 'reggae' | 'latin' | 'alternative'
-  | 'soundtrack' | 'world' | 'other';
+export type PrimaryGenre = (typeof PRIMARY_GENRES)[number];
 
 /** `song` is lyrics synced to a track; `subtitles` is captions timed against a video (the subtitle studio). */
 export const PROJECT_KINDS = ['song', 'subtitles'] as const;
 export type ProjectKind = (typeof PROJECT_KINDS)[number];
 
-export const PRIMARY_GENRES: PrimaryGenre[] = [
-  'pop','rock','hip_hop','rnb','electronic','jazz','classical',
-  'country','folk','metal','blues','soul','reggae','latin',
-  'alternative','soundtrack','world','other',
-];
+/** Kept in step with PRIMARY_GENRES in the client (features/editor/constants/genre-tags.ts). */
+export const PRIMARY_GENRES = [
+  'pop', 'k_pop', 'j_pop', 'c_pop',
+  'rock', 'alternative', 'indie', 'punk', 'metal',
+  'hip_hop', 'rnb', 'soul', 'funk', 'disco', 'gospel',
+  'electronic', 'dance', 'ambient', 'experimental',
+  'jazz', 'blues', 'classical',
+  'country', 'folk', 'singer_songwriter',
+  'latin', 'reggaeton', 'regional_mexican', 'brazilian',
+  'reggae', 'afrobeats', 'bollywood', 'world',
+  'new_age', 'easy_listening',
+  'soundtrack', 'anime', 'vocaloid', 'musical',
+  'children', 'holiday', 'comedy', 'spoken_word',
+  'other',
+] as const;
 
 export interface ProjectMetadata {
   description?: string;
