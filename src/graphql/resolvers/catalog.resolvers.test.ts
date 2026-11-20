@@ -244,13 +244,17 @@ describe('catalog resolvers', () => {
     const names = (rows: Array<{ name: string }>) => rows.map((r) => r.name);
 
     it('artists: approved names by case-insensitive prefix, A to Z, regex-safe', async () => {
-      await artist('Björk');
+      const bjork = await artist('Björk');
       await artist('Bjarne', 'approved', 'Danish singer');
       await artist('Bjorn', 'pending');
       await artist('Rob');
       const rows = await Q.catalogSuggestions({}, { kind: 'artist', prefix: 'BJ' }, ctx());
       expect(names(rows)).toEqual(['Bjarne', 'Björk']);
       expect(rows[0].disambiguation).toBe('Danish singer');
+      expect(rows[0].imageUrl).toBeNull();
+      await CatalogArtist.updateOne({ _id: bjork._id }, { imageUrl: 'https://res.cloudinary.com/x/bjork.jpg' });
+      const again = await Q.catalogSuggestions({}, { kind: 'artist', prefix: 'bj' }, ctx());
+      expect(again[1].imageUrl).toBe('https://res.cloudinary.com/x/bjork.jpg');
       expect(await Q.catalogSuggestions({}, { kind: 'artist', prefix: '' }, ctx())).toEqual([]);
       expect(await Q.catalogSuggestions({}, { kind: 'artist', prefix: '.*' }, ctx())).toEqual([]);
     });

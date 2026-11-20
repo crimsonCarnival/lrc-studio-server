@@ -131,7 +131,7 @@ export async function listPublicSongsByArtist(name: string) {
 const SUGGEST_DEFAULT = 8;
 const SUGGEST_MAX = 20;
 
-export type CatalogSuggestion = { id: string; name: string; slug: string | null; disambiguation: string };
+export type CatalogSuggestion = { id: string; name: string; slug: string | null; disambiguation: string; imageUrl?: string | null };
 
 /**
  * Autocomplete over approved entries. Artists: names whose key starts with `prefix`, A to Z.
@@ -150,8 +150,8 @@ export async function suggestCatalog(
   if (kind === 'artist') {
     if (!startsWith) return [];
     const rows = await CatalogArtist.find({ status: 'approved', nameKey: startsWith })
-      .select('name slug disambiguation').sort({ nameKey: 1, _id: 1 }).limit(limit).lean();
-    return rows.map((r) => ({ id: String(r._id), name: r.name, slug: r.slug, disambiguation: r.disambiguation ?? '' }));
+      .select('name slug disambiguation imageUrl').sort({ nameKey: 1, _id: 1 }).limit(limit).lean();
+    return rows.map((r) => ({ id: String(r._id), name: r.name, slug: r.slug, disambiguation: r.disambiguation ?? '', imageUrl: r.imageUrl ?? null }));
   }
 
   const artistName = artistKey(String(opts.artist ?? '').trim().slice(0, 300));

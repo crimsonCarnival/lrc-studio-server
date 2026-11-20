@@ -95,6 +95,8 @@ export const catalogSchema = `
     name: String!
     slug: String
     disambiguation: String!
+    # Artists only; null when the artist has no photo.
+    imageUrl: String
   }
 
   type CatalogArtistList {
