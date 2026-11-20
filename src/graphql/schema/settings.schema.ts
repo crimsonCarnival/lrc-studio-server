@@ -125,6 +125,14 @@ export const settingsSchema = `
     toastPosition: String
     "Keep the chosen theme on this browser after signing out. Default true."
     keepThemeOnSignOut: Boolean
+    "Show the floating mini player after leaving the editor with media loaded. Default true."
+    miniPlayer: Boolean
+    "Corner of the mini player: bottom-right (default), bottom-left, top-right or top-left."
+    miniPlayerPosition: String
+    "Keep playing when leaving the editor; off, the mini player opens paused. Default true."
+    miniPlayerKeepPlaying: Boolean
+    "Show the current lyric line in the mini player. Default true."
+    miniPlayerLyrics: Boolean
     "Times the editor tour was shown automatically on a new project."
     editorTourShown: Int
     "Show the editor tour on new projects. Default true."
@@ -327,6 +335,14 @@ export const settingsSchema = `
     toastPosition: String
     "Keep the chosen theme on this browser after signing out. Default true."
     keepThemeOnSignOut: Boolean
+    "Show the floating mini player after leaving the editor with media loaded. Default true."
+    miniPlayer: Boolean
+    "Corner of the mini player: bottom-right (default), bottom-left, top-right or top-left."
+    miniPlayerPosition: String
+    "Keep playing when leaving the editor; off, the mini player opens paused. Default true."
+    miniPlayerKeepPlaying: Boolean
+    "Show the current lyric line in the mini player. Default true."
+    miniPlayerLyrics: Boolean
     "Times the editor tour was shown automatically on a new project."
     editorTourShown: Int
     "Show the editor tour on new projects. Default true."
