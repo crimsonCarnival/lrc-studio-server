@@ -105,7 +105,7 @@ export async function generateAvatarSignature(data: Record<string, unknown>, use
   const params = { 
     timestamp, 
     folder: userFolder,
-    transformation: 'c_fill,w_256,h_256,f_webp,q_auto'
+    transformation: 'c_fill,w_512,h_512,f_webp,q_auto'
   };
   const signature = cloudinary.utils.api_sign_request(params, apiSecret);
 
@@ -116,7 +116,7 @@ export async function generateAvatarSignature(data: Record<string, unknown>, use
     apiKey: process.env.CLOUDINARY_API_KEY,
     folder: userFolder,
     resourceType: 'image',
-    transformation: 'c_fill,w_256,h_256,f_webp,q_auto',
+    transformation: 'c_fill,w_512,h_512,f_webp,q_auto',
   };
 }
 
