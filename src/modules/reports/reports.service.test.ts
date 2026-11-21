@@ -289,7 +289,7 @@ describe('settling reports', () => {
     expect(await Report.countDocuments({ status: 'actioned' })).toBe(2);
     for (const reporter of [b, c]) {
       expect(await Notification.findOne({ userId: reporter, type: 'report_reviewed' }).lean())
-        .toMatchObject({ meta: { outcome: 'actioned', targetType: 'wall_comment', targetLabel: 'rude', wall: 'sam' } });
+        .toMatchObject({ meta: { outcome: 'actioned', targetType: 'wall_comment', targetLabel: '', wall: 'sam' } });
     }
     expect(await AdminLog.findOne({ action: 'report_action' }).lean()).toMatchObject({ targetName: 'ann' });
     expect(await openReportCount()).toBe(0);

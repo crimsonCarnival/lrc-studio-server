@@ -306,6 +306,11 @@ export interface ReportTargetMeta {
   wall?: string;
 }
 
+/** A comment's text never goes into a notification; every other target is named by its label. */
+function notifiedLabel(target: ReportTargetMeta): string {
+  return target.targetType === 'wall_comment' ? '' : target.targetLabel;
+}
+
 /**
  * Someone reported something: every moderator (users.ban) but the reporter hears it. Unread
  * ones fold into one notification per moderator ("ann and 2 others reported …"); its meta
@@ -313,7 +318,7 @@ export interface ReportTargetMeta {
  */
 export async function notifyReport(params: { moderatorIds: string[]; actor: Actor; target: ReportTargetMeta }): Promise<void> {
   const { moderatorIds, actor, target } = params;
-  const meta = { targetType: target.targetType, targetLabel: target.targetLabel, ...(target.wall !== undefined ? { wall: target.wall } : {}) };
+  const meta = { targetType: target.targetType, targetLabel: notifiedLabel(target), ...(target.wall !== undefined ? { wall: target.wall } : {}) };
   await Promise.all(moderatorIds.filter(id => id !== actor.userId).map(id => deliver(
     id,
     'report',
@@ -347,7 +352,7 @@ export async function notifyReportReviewed(params: {
         read: false,
         'meta.outcome': outcome,
         'meta.targetType': target.targetType,
-        'meta.targetLabel': target.targetLabel,
+        'meta.targetLabel': notifiedLabel(target),
         ...(target.wall !== undefined ? { 'meta.wall': target.wall } : {}),
       },
     },
