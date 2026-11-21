@@ -15,6 +15,8 @@ export const exploreSchema = `
     totalProjects: Int!
     totalUsers: Int!
     totalPlaylists: Int!
+    totalViews: Int!
+    totalStars: Int!
   }
 
   enum ExploreEventType {
