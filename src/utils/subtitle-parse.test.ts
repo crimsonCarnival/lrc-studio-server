@@ -71,6 +71,36 @@ describe('ASS / SSA', () => {
   });
 });
 
+describe('hostile input stays linear (the parse route is public, content up to 1 MiB)', () => {
+  const quick = (fn: () => unknown) => {
+    const t0 = performance.now();
+    fn();
+    return performance.now() - t0;
+  };
+
+  it('a long run of unclosed < or { does not backtrack quadratically', () => {
+    const lt = `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${'<'.repeat(200_000)}\n`;
+    const brace = `[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${'{'.repeat(200_000)}\n`;
+    expect(quick(() => parseSubtitleCues(lt, 'vtt'))).toBeLessThan(1000);
+    expect(quick(() => parseSubtitleCues(brace, 'ass'))).toBeLessThan(1000);
+  });
+
+  it('a Format line with absurdly many fields is ignored, not paid for on every event', () => {
+    const format = `Format: ${Array.from({ length: 50_000 }, (_, i) => `f${i}`).join(',')}`;
+    const events = Array.from({ length: 5_000 }, () => 'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,hi').join('\n');
+    const ass = `[Events]\n${format}\n${events}\n`;
+    let cues: unknown[] = [];
+    expect(quick(() => { cues = parseSubtitleCues(ass, 'ass'); })).toBeLessThan(1000);
+    // The default v4+ layout still applies, so the events are read.
+    expect(cues).toHaveLength(5_000);
+  });
+
+  it('an event with fewer fields than its Format line is skipped, not misread', () => {
+    const ass = '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00\n';
+    expect(parseSubtitleCues(ass, 'ass')).toEqual([]);
+  });
+});
+
 describe('POST /lyrics/parse with a subtitle file', () => {
   let app: FastifyInstance;
   beforeAll(async () => {

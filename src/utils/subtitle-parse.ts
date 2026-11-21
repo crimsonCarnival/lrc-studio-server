@@ -33,7 +33,9 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
 /** WebVTT cue text: drop tags (`<i>`, `<c.x>`, `<v Name>`, inline `<00:01.000>`), decode entities. */
 function vttText(raw: string): string {
   return raw
-    .replace(/<[^>]*>/g, '')
+    // `[^<>]`, not `[^>]`: a match attempt then stops at the next `<`, so a run of unclosed `<`
+    // costs linear time instead of each one scanning to the end of the line (this route is public).
+    .replace(/<[^<>]*>/g, '')
     .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (whole, name: string) => {
       if (name[0] === '#') {
         const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
@@ -79,7 +81,8 @@ function parseSbv(content: string): ParsedCue[] {
 /** ASS event text: drop `{…}` override blocks, `\N`/`\n` are line breaks, `\h` a hard space. */
 function assText(raw: string): string {
   return raw
-    .replace(/\{[^}]*\}/g, '')
+    // `[^{}]` keeps unclosed `{` runs linear, as in vttText.
+    .replace(/\{[^{}]*\}/g, '')
     .replace(/\\[Nn]/g, '\n')
     .replace(/\\h/g, ' ')
     .split('\n').map((s) => s.trim()).filter(Boolean).join('\n');
@@ -88,8 +91,13 @@ function assText(raw: string): string {
 function parseAss(content: string): ParsedCue[] {
   const cues: ParsedCue[] = [];
   let inEvents = false;
-  // Field order comes from the section's `Format:` line; these are the v4+ defaults.
-  let fields = ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text'];
+  // Field order comes from the section's `Format:` line; these are the v4+ defaults. Positions are
+  // looked up once per Format line, not per event, and a Format line with more fields than any real
+  // script (v4+ has 10) is ignored, so per-event work stays bounded by the event's own length.
+  const DEFAULT_FIELDS = ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text'];
+  const MAX_FIELDS = 32;
+  const layout = (fields: string[]) => ({ count: fields.length, start: fields.indexOf('start'), end: fields.indexOf('end'), text: fields.indexOf('text') });
+  let at = layout(DEFAULT_FIELDS);
   for (const row of content.split('\n')) {
     const line = row.trim();
     if (line.startsWith('[')) { inEvents = line.toLowerCase() === '[events]'; continue; }
@@ -98,15 +106,20 @@ function parseAss(content: string): ParsedCue[] {
     if (colon === -1) continue;
     const kind = line.slice(0, colon).trim().toLowerCase();
     const body = line.slice(colon + 1);
-    if (kind === 'format') { fields = body.split(',').map((f) => f.trim().toLowerCase()); continue; }
+    if (kind === 'format') {
+      const fields = body.split(',', MAX_FIELDS + 1).map((f) => f.trim().toLowerCase());
+      if (fields.length <= MAX_FIELDS) at = layout(fields);
+      continue;
+    }
     if (kind !== 'dialogue') continue; // Comment: lines are not shown
-    // Text is the last field and may itself contain commas.
-    const parts = body.split(',');
-    const values = [...parts.slice(0, fields.length - 1), parts.slice(fields.length - 1).join(',')];
-    const get = (name: string) => values[fields.indexOf(name)] ?? '';
-    const start = toSeconds(get('start'));
-    const end = toSeconds(get('end'));
-    const text = assText(get('text'));
+    if (at.start < 0 || at.end < 0 || at.text < 0) continue;
+    // Text is the last field and may itself contain commas: split off the fields before it only.
+    const parts = body.split(',', at.count - 1);
+    const head = parts.reduce((n, p) => n + p.length + 1, 0);
+    const values = [...parts, body.slice(head)];
+    const start = toSeconds(values[at.start] ?? '');
+    const end = toSeconds(values[at.end] ?? '');
+    const text = assText(values[at.text] ?? '');
     if (start != null && end != null && text) cues.push({ start, end, text });
   }
   // Events are stored in any order; the editor's lines run in time order.
