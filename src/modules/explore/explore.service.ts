@@ -221,7 +221,7 @@ export async function getSuggestedUsers(viewerId: string, limit: number): Promis
 // invalidation hook: these are advisory totals shown on an explore page, not
 // values anything else reads back for correctness, so going briefly stale
 // between recomputes is the right trade against recounting on every view.
-let cachedExploreStats: { totalProjects: number; totalUsers: number; totalPlaylists: number } | null = null;
+let cachedExploreStats: { totalProjects: number; totalUsers: number; totalPlaylists: number; totalViews: number; totalStars: number } | null = null;
 let exploreStatsCachedAt = 0;
 const EXPLORE_STATS_TTL_MS = 60_000; // 1 minute
 
@@ -229,13 +229,20 @@ export async function getExploreStats() {
   const now = Date.now();
   if (cachedExploreStats && now - exploreStatsCachedAt < EXPLORE_STATS_TTL_MS) return cachedExploreStats;
 
-  const [totalProjects, totalUsers, totalPlaylists] = await Promise.all([
-    Project.countDocuments({ public: true, ownerListed: true, listed: { $ne: false } }),
+  const projectFilter = { public: true, ownerListed: true, listed: { $ne: false } };
+  const [totalProjects, totalUsers, totalPlaylists, engagement] = await Promise.all([
+    Project.countDocuments(projectFilter),
     User.countDocuments({ isVerified: true }),
     Playlist.countDocuments({ isPublic: true, ownerListed: true, listed: { $ne: false } }),
+    Project.aggregate<{ views: number; stars: number }>([
+      { $match: projectFilter },
+      { $group: { _id: null, views: { $sum: { $ifNull: ['$viewCount', 0] } }, stars: { $sum: { $ifNull: ['$starCount', 0] } } } },
+    ]),
   ]);
 
-  cachedExploreStats = { totalProjects, totalUsers, totalPlaylists };
+  const totalViews = engagement[0]?.views ?? 0;
+  const totalStars = engagement[0]?.stars ?? 0;
+  cachedExploreStats = { totalProjects, totalUsers, totalPlaylists, totalViews, totalStars };
   exploreStatsCachedAt = now;
   return cachedExploreStats;
 }
