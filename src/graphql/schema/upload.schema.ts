@@ -25,4 +25,10 @@ export const uploadSchema = `
     # totals stay at zero, since nothing else ever supplies it.
     sizeBytes: Float
   }
+
+  input UpdateMediaInput {
+    title: String
+    fileName: String
+    duration: Float
+  }
 `;

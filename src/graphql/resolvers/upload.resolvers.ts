@@ -1,6 +1,6 @@
 import Upload from '../../modules/uploads/upload.model.js';
 import Project from '../../modules/projects/project.model.js';
-import { createMedia } from '../../modules/uploads/uploads.service.js';
+import { createMedia, updateMedia } from '../../modules/uploads/uploads.service.js';
 import { Context } from './context.js';
 import { canViewPrivateContent } from './auth-guards.js';
 import { triggerBadgeCheck } from '../../modules/badges/badge.service.js';
@@ -13,6 +13,12 @@ export interface SaveMediaInput {
   sizeBytes?: number;
 }
 
+export interface UpdateMediaInput {
+  title?: string | null;
+  fileName?: string | null;
+  duration?: number | null;
+}
+
 export interface UploadDoc {
   _id?: { toString(): string };
   id?: string;
@@ -22,6 +28,8 @@ export interface UploadDoc {
 
 const GENERIC_TITLES = ['Sin título', 'Untitled', '無題', 'test'];
 const MAX_UPLOADS_PAGE = 100;
+// Same cap the REST updateMedia schema enforced (uploads.schema.ts); the model's maxlength is only checked on save, not findByIdAndUpdate.
+const MAX_MEDIA_TEXT = 500;
 
 export const uploadResolvers = {
   Query: {
@@ -62,6 +70,19 @@ export const uploadResolvers = {
       const upload = await createMedia(context.userId, { ...input, title: isGeneric ? '' : input.title });
       triggerBadgeCheck(context.userId, 'upload_create').catch(() => {});
       return upload;
+    },
+
+    // Replaces REST PATCH /uploads/media/:id. Null fields count as omitted, so
+    // a null can't blank a non-null title on the wire.
+    updateMedia: async (_root: unknown, { id, input }: { id: string; input: UpdateMediaInput }, context: Context) => {
+      if (!context.userId) throw new Error('Unauthorized');
+      const updates = Object.fromEntries(Object.entries(input).filter(([, v]) => v != null));
+      if (typeof updates.title === 'string' && updates.title.length > MAX_MEDIA_TEXT) throw new Error('Title too long');
+      if (typeof updates.fileName === 'string' && updates.fileName.length > MAX_MEDIA_TEXT) throw new Error('File name too long');
+      // Service returns { error, status } rather than throwing; 403/404 map to codes via deriveErrorCode.
+      const result = await updateMedia(id, context.userId, updates);
+      if ('error' in result) throw Object.assign(new Error(String(result.error)), { status: result.status });
+      return result;
     },
 
     deleteMedia: async (_root: unknown, { id }: { id: string }, context: Context) => {

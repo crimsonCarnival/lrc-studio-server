@@ -91,6 +91,7 @@ export const rootSchema = `
     updateSettings(input: UpdateSettingsInput!): Settings!
     resetSettings: Boolean!
     saveMedia(input: SaveMediaInput!): Upload!
+    updateMedia(id: ID!, input: UpdateMediaInput!): Upload!
     deleteMedia(id: ID!): Boolean!
     cloneProject(id: ID!): Project!
     starProject(id: ID!): Project!
