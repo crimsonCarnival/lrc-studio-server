@@ -38,6 +38,7 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
   const parsedLines: ReturnType<typeof parseLrcSrtFile> = subtitleFormat
     ? parseSubtitleCues(content, subtitleFormat).map((cue) => ({
       text: cue.text, timestamp: cue.start, endTime: cue.end, secondary: '', translation: '', id: randomUUID(),
+      ...(cue.words && { words: cue.words }),
     }))
     : parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {});
   // Timings that come from a file or a lyrics search are imported work, not hand-synced: they count

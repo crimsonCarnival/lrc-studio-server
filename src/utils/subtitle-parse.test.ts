@@ -37,8 +37,20 @@ describe('WebVTT', () => {
     ].join('\r\n');
     expect(parseSubtitleCues(vtt, 'vtt')).toEqual([
       { start: 1.5, end: 4, text: 'Hello & welcome' },
-      { start: 5, end: 7.25, text: 'second line\nwraps here' },
+      {
+        start: 5, end: 7.25, text: 'second line\nwraps here',
+        words: [{ word: 'second', time: 5 }, { word: 'line', time: 6 }, { word: 'wraps', time: null }, { word: 'here', time: null }],
+      },
     ]);
+  });
+
+  it('times words from inline timestamps, YouTube-style and inside a word', () => {
+    const vtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nso<00:00:01.500><c> to</c><00:00:02.000>mor<00:00:02.400>row\n';
+    expect(parseSubtitleCues(vtt, 'vtt')[0]).toEqual({
+      start: 1, end: 4, text: 'so tomorrow',
+      // `mor` and `row` are syllables of the word that started at 1.5: the editor times whole words.
+      words: [{ word: 'so', time: 1 }, { word: 'tomorrow', time: 1.5 }],
+    });
   });
 });
 
@@ -66,7 +78,22 @@ describe('ASS / SSA', () => {
     ].join('\n');
     expect(parseSubtitleCues(ass, 'ass')).toEqual([
       { start: 1.2, end: 3, text: 'First\nsecond row' },
-      { start: 5, end: 7.5, text: 'Later, with a comma' },
+      { start: 5, end: 7.5, text: 'Later, with a comma', words: [{ word: 'Later,', time: 5 }, { word: 'with', time: null }, { word: 'a', time: null }, { word: 'comma', time: null }] },
+    ]);
+  });
+
+  it('turns karaoke lengths into word times: pauses end the word before, syllables join, CJK splits', () => {
+    const ass = [
+      '[Events]',
+      'Dialogue: 0,0:00:01.00,0:00:05.00,Default,,0,0,0,,{\\k50}{\\kf20}Hel{\\kf30}lo {\\K40}world{\\k10}{\\k30} again',
+      'Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,{\\k30}你{\\k30}好',
+    ].join('\n');
+    expect(parseSubtitleCues(ass, 'ass')).toEqual([
+      {
+        start: 1, end: 5, text: 'Hello world again',
+        words: [{ word: 'Hello', time: 1.5 }, { word: 'world', time: 2, end: 2.4 }, { word: 'again', time: 2.5 }],
+      },
+      { start: 10, end: 12, text: '你好', words: [{ word: '你', time: 10 }, { word: '好', time: 10.3 }] },
     ]);
   });
 });
@@ -83,6 +110,13 @@ describe('hostile input stays linear (the parse route is public, content up to 1
     const brace = `[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${'{'.repeat(200_000)}\n`;
     expect(quick(() => parseSubtitleCues(lt, 'vtt'))).toBeLessThan(1000);
     expect(quick(() => parseSubtitleCues(brace, 'ass'))).toBeLessThan(1000);
+  });
+
+  it('a cue made of a huge number of word timings stays fast', () => {
+    const ass = `[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${'{\\k1}a '.repeat(150_000)}\n`;
+    const vtt = `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${'<00:00:01.500>a '.repeat(60_000)}\n`;
+    expect(quick(() => parseSubtitleCues(ass, 'ass'))).toBeLessThan(1000);
+    expect(quick(() => parseSubtitleCues(vtt, 'vtt'))).toBeLessThan(1000);
   });
 
   it('a Format line with absurdly many fields is ignored, not paid for on every event', () => {
