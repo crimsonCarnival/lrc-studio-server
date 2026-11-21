@@ -94,6 +94,8 @@ const exportSchema = sub({
   stripEmptyLines: Boolean,
   normalizeTimestamps: Boolean,
   wordTimestampPrecision: { type: String, enum: ['hundredths', 'thousandths', 'milliseconds', 'seconds'] },
+  // Which subtitle file the SRT export writes (and the subtitle studio starts on).
+  subtitleFormat: { type: String, enum: ['srt', 'vtt', 'sbv', 'ass', 'ttml'] },
 });
 
 const interfaceSchema = sub({

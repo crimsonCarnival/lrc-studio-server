@@ -101,6 +101,7 @@ export const settingsSchema = `
     stripEmptyLines: Boolean
     normalizeTimestamps: Boolean
     wordTimestampPrecision: String
+    subtitleFormat: String
   }
 
   type InterfaceSettings {
@@ -309,6 +310,7 @@ export const settingsSchema = `
     includeFeaturedInTitle: Boolean
     stripEmptyLines: Boolean
     normalizeTimestamps: Boolean
+    subtitleFormat: String
   }
 
   input InterfaceSettingsInput {

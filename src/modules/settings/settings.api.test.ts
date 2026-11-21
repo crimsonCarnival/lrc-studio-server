@@ -85,6 +85,14 @@ describe('newly persisted client settings', () => {
     expect(stored).toMatchObject({ hourCycle: '24', dateStyle: 'short', showUtcOffset: false });
   });
 
+  it('stores the default subtitle format beside the other export settings', async () => {
+    const u = uid();
+    await update(u, { export: { stripEmptyLines: true } });
+    await update(u, { export: { subtitleFormat: 'ass' } });
+    const stored = ((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).export;
+    expect(stored).toMatchObject({ stripEmptyLines: true, subtitleFormat: 'ass' });
+  });
+
   it('stores keepThemeOnSignOut', async () => {
     const u = uid();
     await update(u, { interface: { keepThemeOnSignOut: false } });
