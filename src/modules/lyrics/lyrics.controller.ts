@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { LineEntry } from '../../types/index.js';
 import JobLog from '../../db/job-log.model.js';
@@ -13,6 +14,7 @@ import {
 } from '../../utils/lrc.js';
 
 import { compileSRT } from '../../utils/srt.js';
+import { parseSubtitleCues, subtitleImportFormat } from '../../utils/subtitle-parse.js';
 import { tagTimedLines } from '../badges/sync-stats.js';
 import { parseArtists, formatArtistDisplay } from '../../utils/artists.js';
 
@@ -27,21 +29,28 @@ export async function parse(req: FastifyRequest, reply: FastifyReply) {
   }
 
   const normalizedName = ((filename as string) || 'lyrics.lrc').toLowerCase();
-  if (!normalizedName.endsWith('.lrc') && !normalizedName.endsWith('.srt') && !normalizedName.endsWith('.txt')) {
+  // WebVTT, SBV and ASS/SSA: cues with start and end, read like SRT.
+  const subtitleFormat = subtitleImportFormat(normalizedName);
+  if (!subtitleFormat && !normalizedName.endsWith('.lrc') && !normalizedName.endsWith('.srt') && !normalizedName.endsWith('.txt')) {
     return reply.code(400).send({ error: 'Unsupported lyrics format' });
   }
 
+  const parsedLines: ReturnType<typeof parseLrcSrtFile> = subtitleFormat
+    ? parseSubtitleCues(content, subtitleFormat).map((cue) => ({
+      text: cue.text, timestamp: cue.start, endTime: cue.end, secondary: '', translation: '', id: randomUUID(),
+    }))
+    : parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {});
   // Timings that come from a file or a lyrics search are imported work, not hand-synced: they count
   // at a reduced rate in sync stats until the user re-times the line.
-  const lines = tagTimedLines(parseLrcSrtFile(content, filename as string, options && typeof options === 'object' ? options : {}), 'import');
+  const lines = tagTimedLines(parsedLines, 'import');
   // Header tags ([ti:], [ar:], …) and what the shared parser makes of them, so the
-  // client can prefill artists and a cleaned title. SRT has no header tags.
-  const isSrt = normalizedName.endsWith('.srt');
+  // client can prefill artists and a cleaned title. Subtitle files have no header tags.
+  const isSrt = normalizedName.endsWith('.srt') || !!subtitleFormat;
   const metadata = isSrt ? {} : parseLrcMetaTags(content);
   const parsed = metadata.ar || metadata.ti ? parseArtists(metadata.ar ?? '', metadata.ti) : null;
   return reply.send({
     lines,
-    detectedFormat: filename?.toLowerCase().endsWith('.srt') ? 'srt' : 'lrc',
+    detectedFormat: isSrt ? 'srt' : 'lrc',
     count: lines.length,
     metadata,
     artists: parsed && {
