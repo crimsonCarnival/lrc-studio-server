@@ -58,6 +58,8 @@ const displaySchema = sub({
   readingFormat: { type: String, enum: ['hiragana', 'katakana', 'romaji'] },
   karaokeFillTrack: { type: String, enum: ['main', 'secondary', 'both'] },
   karaokeFillEasing: { type: String, enum: ['linear', 'ease-in-out'], default: 'linear' },
+  // How the sung part looks: `glow` (a soft halo behind it, the default) or `plain` (colour only).
+  karaokeFillStyle: { type: String, enum: ['glow', 'plain'], default: 'glow' },
   singerColors: { type: [String] },
 });
 
@@ -119,6 +121,13 @@ const interfaceSchema = sub({
   mobileTab: { type: String, enum: ['editor', 'preview'], default: 'editor' },
   toastPosition: { type: String, enum: ['bottom-right', 'bottom-center', 'bottom-left'], default: 'bottom-right' },
   keepThemeOnSignOut: { type: Boolean, default: true },
+  // The floating mini player shown after leaving the editor with media loaded.
+  miniPlayer: { type: Boolean, default: true },
+  miniPlayerPosition: { type: String, enum: ['bottom-right', 'bottom-left', 'top-right', 'top-left'], default: 'bottom-right' },
+  // Keep playing when leaving the editor; off, the mini player opens paused.
+  miniPlayerKeepPlaying: { type: Boolean, default: true },
+  // The current lyric line under the title.
+  miniPlayerLyrics: { type: Boolean, default: true },
   // Editor tour: times shown automatically on a new project, and the opt-out. The count's range is enforced in updateSettings.
   editorTourShown: { type: Number, min: 0, max: 1000, default: 0 },
   editorTourEnabled: { type: Boolean, default: true },

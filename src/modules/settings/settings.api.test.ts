@@ -91,6 +91,22 @@ describe('newly persisted client settings', () => {
     expect(((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).interface.keepThemeOnSignOut).toBe(false);
   });
 
+  it('stores the karaoke fill style beside the other display settings', async () => {
+    const u = uid();
+    await update(u, { editor: { display: { karaokeFillEasing: 'ease-in-out' } } });
+    await update(u, { editor: { display: { karaokeFillStyle: 'plain' } } });
+    const stored = ((await Settings.findOne({ userId: u }))!.toObject() as { editor: { display: Record<string, unknown> } }).editor.display;
+    expect(stored).toMatchObject({ karaokeFillEasing: 'ease-in-out', karaokeFillStyle: 'plain' });
+  });
+
+  it('stores the mini player settings without touching their siblings', async () => {
+    const u = uid();
+    await update(u, { interface: { theme: 'light' } });
+    await update(u, { interface: { miniPlayer: false, miniPlayerPosition: 'top-left', miniPlayerKeepPlaying: false, miniPlayerLyrics: false } });
+    const stored = ((await Settings.findOne({ userId: u }))!.toObject() as Record<string, Record<string, unknown>>).interface;
+    expect(stored).toMatchObject({ theme: 'light', miniPlayer: false, miniPlayerPosition: 'top-left', miniPlayerKeepPlaying: false, miniPlayerLyrics: false });
+  });
+
   it('stores a palette theme id', async () => {
     const u = uid();
     await update(u, { interface: { theme: 'rose-pine-dawn' } });
