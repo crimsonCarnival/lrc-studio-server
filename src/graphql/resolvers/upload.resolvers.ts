@@ -28,7 +28,7 @@ export interface UploadDoc {
 
 const GENERIC_TITLES = ['Sin título', 'Untitled', '無題', 'test'];
 const MAX_UPLOADS_PAGE = 100;
-// Same cap the REST updateMedia schema enforced (uploads.schema.ts); the model's maxlength is only checked on save, not findByIdAndUpdate.
+// Model maxlength runs only on save, not findByIdAndUpdate, so updateMedia checks this itself.
 const MAX_MEDIA_TEXT = 500;
 
 export const uploadResolvers = {

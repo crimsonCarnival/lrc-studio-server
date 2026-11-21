@@ -60,14 +60,6 @@ export async function deleteMedia(req: FastifyRequest, reply: FastifyReply): Pro
   return reply.code(204).send();
 }
 
-export async function updateMedia(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const result = await uploadService.updateMedia((req.params as Record<string, string>).id, req.userId!, req.body as Record<string, unknown>);
-  if ((result as Record<string, unknown>).error) {
-    return reply.code((result as Record<string, number>).status).send({ error: (result as Record<string, unknown>).error });
-  }
-  return reply.send({ upload: result });
-}
-
 export async function getMedia(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const result = await uploadService.getMedia((req.params as Record<string, string>).id, req.userId!);
   if ((result as Record<string, unknown>).error) {

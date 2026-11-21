@@ -28,18 +28,6 @@ export const createMediaSchema = {
   },
 };
 
-export const updateMediaSchema = {
-  body: {
-    type: 'object',
-    properties: {
-      title: { type: 'string', maxLength: 500 },
-      fileName: { type: 'string', maxLength: 500 },
-      duration: { type: 'number' },
-    },
-    additionalProperties: false,
-  },
-};
-
 export const listMediaSchema = {
   querystring: {
     type: 'object',

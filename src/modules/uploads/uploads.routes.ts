@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import * as uploadController from './uploads.controller.js';
-import { signatureSchema, updateMediaSchema } from './uploads.schema.js';
+import { signatureSchema } from './uploads.schema.js';
 
 export default async function uploadRoutes(fastify: FastifyInstance): Promise<void> {
   // Authenticated only: the client never uploads audio for guests (useLocalAudio
@@ -43,8 +43,4 @@ export default async function uploadRoutes(fastify: FastifyInstance): Promise<vo
       }
     }
   }, uploadController.catalogImageSignature);
-  // Media reads and the create/delete writes are served by GraphQL
-  // (uploads / upload / saveMedia / deleteMedia). updateMedia has no GraphQL
-  // equivalent yet, so it stays here.
-  fastify.patch('/media/:id', { schema: updateMediaSchema, preHandler: [fastify.requireActiveUser] }, uploadController.updateMedia);
 }
