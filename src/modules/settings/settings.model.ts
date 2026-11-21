@@ -58,6 +58,8 @@ const displaySchema = sub({
   readingFormat: { type: String, enum: ['hiragana', 'katakana', 'romaji'] },
   karaokeFillTrack: { type: String, enum: ['main', 'secondary', 'both'] },
   karaokeFillEasing: { type: String, enum: ['linear', 'ease-in-out'], default: 'linear' },
+  // How the sung part looks: `glow` (a soft halo behind it, the default) or `plain` (colour only).
+  karaokeFillStyle: { type: String, enum: ['glow', 'plain'], default: 'glow' },
   singerColors: { type: [String] },
 });
 

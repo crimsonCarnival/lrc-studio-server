@@ -83,6 +83,8 @@ export const settingsSchema = `
     readingFormat: String
     karaokeFillTrack: String
     karaokeFillEasing: String
+    "How the sung part of a karaoke line looks: glow (soft halo, default) or plain (colour only)."
+    karaokeFillStyle: String
     singerColors: [String!]
   }
 
@@ -274,6 +276,8 @@ export const settingsSchema = `
     readingFormat: String
     karaokeFillTrack: String
     karaokeFillEasing: String
+    "How the sung part of a karaoke line looks: glow (soft halo, default) or plain (colour only)."
+    karaokeFillStyle: String
     singerColors: [String!]
   }
 
