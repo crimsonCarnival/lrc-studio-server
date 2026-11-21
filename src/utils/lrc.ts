@@ -408,7 +408,7 @@ export function parseLrcSrtFile(content: string, filename: string, options: { pr
 }
 
 export function inferEndTimes(lines: LineEntry[], duration?: number | null, srtConfig: SrtConfig = {}): LineEntry[] {
-  const minGap = srtConfig.minSubtitleGap || 0.05;
+  const minGap = srtConfig.minSubtitleGap ?? 0.05;
   const defaultDur = srtConfig.defaultSubtitleDuration || 5;
 
   return lines.map((line, i) => {

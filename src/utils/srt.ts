@@ -23,7 +23,7 @@ export function compileSRT(
   includeSecondary = false,
   exportTranslationIndex = 0
 ): string {
-  const minGap = srtConfig.minSubtitleGap || 0.05;
+  const minGap = srtConfig.minSubtitleGap ?? 0.05;
   const defaultDur = srtConfig.defaultSubtitleDuration || 5;
 
   const synced = lines.filter((l) => l.timestamp != null);
