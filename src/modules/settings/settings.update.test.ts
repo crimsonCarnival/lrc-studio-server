@@ -53,7 +53,7 @@ const CLIENT_SETTINGS = {
   },
   editor: {
     autoPauseOnMark: false,
-    nudge: { fine: 0.01, coarse: 0.1, default: 0.1 },
+    nudge: { fine: 0.01, default: 0.1 },
     autoAdvance: { enabled: true, skipBlank: false, mode: 'next' },
     preserveEmptyLines: false, showShiftAll: true, shiftAllAmount: 0.5,
     playerPosition: 'bottom', showLineNumbers: true, timestampPrecision: 'thousandths',
@@ -61,7 +61,7 @@ const CLIENT_SETTINGS = {
     srt: { defaultSubtitleDuration: 5, minSubtitleGap: 0, snapToNextLine: false },
     history: { limit: 250, groupingThresholdMs: 1000 },
     display: {
-      activeHighlight: 'glow', showNextLine: true, dualLine: false, languageLayout: 'stacked',
+      activeHighlight: 'glow',
       translationLayout: 'side-by-side', readingFormat: 'hiragana', karaokeFillTrack: 'main',
       karaokeFillEasing: 'linear',
     },

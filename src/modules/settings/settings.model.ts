@@ -28,7 +28,6 @@ const playbackSchema = sub({
 
 const nudgeSchema = sub({
   fine: { type: Number, min: 0 },
-  coarse: { type: Number, min: 0 },
   default: { type: Number, min: 0 },
 });
 
@@ -51,9 +50,6 @@ const historySchema = sub({
 
 const displaySchema = sub({
   activeHighlight: { type: String, enum: ['glow', 'zoom', 'color', 'dim', 'underline', 'none'] },
-  showNextLine: Boolean,
-  dualLine: Boolean,
-  languageLayout: { type: String, enum: ['stacked', 'side-by-side'] },
   translationLayout: { type: String, enum: ['stacked', 'side-by-side'] },
   readingFormat: { type: String, enum: ['hiragana', 'katakana', 'romaji'] },
   karaokeFillTrack: { type: String, enum: ['main', 'secondary', 'both'] },
