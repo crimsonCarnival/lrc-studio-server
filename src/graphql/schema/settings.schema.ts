@@ -53,7 +53,7 @@ export const settingsSchema = `
 
   type NudgeSettings {
     fine: Float
-    coarse: Float
+    coarse: Float @deprecated(reason: "Legacy: unused; the editor has fine and default nudge steps only.")
     default: Float
   }
 
@@ -76,9 +76,9 @@ export const settingsSchema = `
 
   type DisplaySettings {
     activeHighlight: String
-    showNextLine: Boolean
-    dualLine: Boolean
-    languageLayout: String
+    showNextLine: Boolean @deprecated(reason: "Legacy: dual-line preview was removed; no client reads it. Kept so older clients still validate.")
+    dualLine: Boolean @deprecated(reason: "Legacy: dual-line preview was removed; no client reads it. Kept so older clients still validate.")
+    languageLayout: String @deprecated(reason: "Legacy: dual-line preview was removed; no client reads it. Kept so older clients still validate.")
     translationLayout: String
     readingFormat: String
     karaokeFillTrack: String
@@ -246,7 +246,7 @@ export const settingsSchema = `
 
   input NudgeSettingsInput {
     fine: Float
-    coarse: Float
+    coarse: Float @deprecated(reason: "Legacy: unused; the editor has fine and default nudge steps only.")
     default: Float
   }
 
@@ -269,9 +269,9 @@ export const settingsSchema = `
 
   input DisplaySettingsInput {
     activeHighlight: String
-    showNextLine: Boolean
-    dualLine: Boolean
-    languageLayout: String
+    showNextLine: Boolean @deprecated(reason: "Legacy: dual-line preview was removed; no client reads it. Kept so older clients still validate.")
+    dualLine: Boolean @deprecated(reason: "Legacy: dual-line preview was removed; no client reads it. Kept so older clients still validate.")
+    languageLayout: String @deprecated(reason: "Legacy: dual-line preview was removed; no client reads it. Kept so older clients still validate.")
     translationLayout: String
     readingFormat: String
     karaokeFillTrack: String
